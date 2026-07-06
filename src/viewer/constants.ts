@@ -21,10 +21,10 @@ export const HEMI_INTENSITY = 0.5;
 export const FOG_COLOR = "#a9b6c6";
 /**
  * FogExp2 密度 = FOG_DENSITY_FACTOR / ワールド一辺。
- * 基準 0.9(旧 2.2 は初期構図で箱庭中心まで霧に沈むため 2026-07-06 改定。
- * art-direction 3節)
+ * 基準 0.6(2.2→0.9: 初期構図で箱庭中心まで霧に沈むため 2026-07-06 改定。
+ * 0.9→0.6: 実機確認のフィードバックでさらに減量 2026-07-07。art-direction 3節)
  */
-export const FOG_DENSITY_FACTOR = 0.9;
+export const FOG_DENSITY_FACTOR = 0.6;
 
 /** トーンマッピング露出(ACESFilmic) */
 export const EXPOSURE = 1.05;
