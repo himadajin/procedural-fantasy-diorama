@@ -21,6 +21,7 @@ import {
   type WaterField,
 } from "../model/waterfield";
 import { buildCanalSurfaces, buildPaving, gradeColor } from "./paving";
+import { buildBuildings } from "./buildings";
 import { buildPlanMarks } from "./planmarks";
 
 /**
@@ -429,6 +430,9 @@ export function buildWorld(model: WorldModel): THREE.Group {
   const { paving, piles } = buildPaving(model, field);
   if (paving) group.add(paving);
   if (piles) group.add(piles);
+
+  // 建物(躯体マージ+屋根マージ+杭 InstancedMesh。mesh/buildings.ts)
+  for (const obj of buildBuildings(model)) group.add(obj);
 
   // 計画デバッグ描画(結界環ライン+マーカー。PHASE 5b で立体に置換)
   const planMarks = buildPlanMarks(model);

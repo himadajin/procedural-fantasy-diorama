@@ -15,14 +15,27 @@
  *   ±数度の揺らぎ(tidiness 高で減。乱数は "building/<id>" サブストリーム)
  * - 水辺建築は背面の水面(河川・湖)へ張り出し、杭または石基礎で
  *   水面下 y=-1.6(岸スカート下端)まで到達する(機械判定可能な契約)
+ *
+ * PHASE 4a commit 13(本実装)の追加分:
+ * - materials(wall/roof/trim)を役割+wallTier/roofTier+seed で決定
+ *   (基準色の語彙は contracts/worldmodel.md「materialId の語彙」=
+ *   art-direction 5.1節)
+ * - 骨格文法: footprint を翼(wing)へ分解し、基壇(plinth / 杭 pile)→
+ *   壁体(階数×翼)→ 屋根(gable / hip。複合は翼ごとの gable)の
+ *   「型+パラメータ」部品リストへ展開する(同「Part の型語彙」)
+ * - 建物 footprint による zoneMask の土/舗装上書き(段10 と同じ流儀)
+ * - 部品の乱数は派生サブストリーム "building/<id>/parts" のみ消費
+ *   (commit 12 の骨格データの乱数消費を変えない)
  */
 import { makeRng, type Rng } from "../rng";
 import {
   SHORE_SKIRT_BOTTOM_Y,
+  ZONE_KINDS,
   type Building,
   type BuildingRole,
   type Foundation,
   type Parcel,
+  type Part,
   type Polygon,
   type Vec2,
   type WorldModel,
@@ -39,6 +52,11 @@ import {
   polylineTouchesPolygon,
   type SiteContext,
 } from "./parcels";
+import {
+  applyCoverageToChannel,
+  maskCellGrid,
+  stampPolygon,
+} from "./paving";
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
@@ -79,9 +97,57 @@ const OVERHANG_ROAD_CLEAR = 0.3;
 const ROOF_PITCH_MIN = 50;
 const ROOF_PITCH_MAX = 58;
 
+// --- 部品展開(contracts/worldmodel.md「Part の型語彙」) ---
+/** 階高(壁体 1 階ぶんの高さ)。水面の低さ 0.6 = 壁1階高の 1/5(art-direction 7節) */
+export const FLOOR_HEIGHT = 3.0;
+/** 軒の張り出し(スパン側)。深めに取る(art-direction 6節) */
+const EAVE_OVERHANG = 0.65;
+/** 妻側(棟方向)の張り出し */
+const GABLE_END_OVERHANG = 0.4;
+/** 屋根の底面を壁天端より沈める量(接合部の線を隠す) */
+const ROOF_BASE_SINK = 0.12;
+/** 基壇の壁面からのはね出し */
+const PLINTH_OUTSET = 0.12;
+/** 従属翼を主翼へ食い込ませる量(共平面の Z ファイティング回避) */
+const WING_JOIN_OVERLAP = 0.06;
+/** 杭の間隔・太さ・外周からの引き込み */
+const PILE_SPACING = 2.4;
+const PILE_WIDTH = 0.3;
+const PILE_EDGE_INSET = 0.25;
+
+// --- 素材(contracts/worldmodel.md「materialId の語彙」= art-direction 5.1節) ---
+const WALL_MATERIALS = ["rough-wood", "plaster", "stone", "ashlar"] as const;
+const ROOF_MATERIALS = ["thatch", "shingle", "tile", "slate"] as const;
+/** 石造系の壁(zoneMask 上書きが paved になる。trim も stone) */
+const STONE_WALLS = new Set<string>(["stone", "ashlar"]);
+/** 素材階層への役割補正(契約) */
+const MATERIAL_TIER_ROLE_ADJUST: Record<BuildingRole, number> = {
+  house: 0,
+  waterside: -0.2,
+  bridgehead: 0.2,
+  hall: 0.6,
+  warehouse: -0.5,
+  outskirt: -0.7,
+  center: 0,
+};
+/** 素材階層の seed 揺らぎ幅(±) */
+const MATERIAL_TIER_JITTER = 0.6;
+
+// --- zoneMask の建物上書き(段10 と同じ流儀。契約) ---
+const BUILDING_ZONE_BLEND = 1.2;
+const BLEND_CELL_RATIO = 0.9;
+
 interface LocalPoint {
   u: number;
   v: number;
+}
+
+/** 翼(wing): footprint ローカル軸(u=間口、v=奥行き)に整列した矩形 */
+interface Wing {
+  u0: number;
+  u1: number;
+  v0: number;
+  v1: number;
 }
 
 /** 役割ごとの階数補正 */
@@ -174,13 +240,17 @@ function decideRole(
   return "house";
 }
 
-/** 形状(ローカル座標。u=間口方向、v=前面からの奥行き) */
+/**
+ * 形状(ローカル座標。u=間口方向、v=前面からの奥行き)。
+ * wings は部品展開用の翼分解(契約: 矩形=1翼、T=前面棟+背面中央翼、
+ * L=前面棟+背面隅の翼。従属翼は主翼へ WING_JOIN_OVERLAP 食い込ませる)。
+ */
 function shapeVertices(
   rng: Rng,
   role: BuildingRole,
   bw: number,
   bd: number,
-): { verts: LocalPoint[]; compound: boolean } {
+): { verts: LocalPoint[]; compound: boolean; wings: Wing[] } {
   const w2 = bw / 2;
   if (role === "hall" && bw >= 8 && bd >= 8) {
     // T字: 前面棟+背面へ伸びる中央翼
@@ -198,6 +268,10 @@ function shapeVertices(
         { u: -w2, v: fd },
       ],
       compound: true,
+      wings: [
+        { u0: -w2, u1: w2, v0: 0, v1: fd },
+        { u0: -ww, u1: ww, v0: fd - WING_JOIN_OVERLAP, v1: bd },
+      ],
     };
   }
   if (role === "house" && bw >= 7.5 && bd >= 7.5 && rng.chance(0.35)) {
@@ -222,7 +296,16 @@ function shapeVertices(
           { u: -w2 + nw, v: bd - nd },
           { u: -w2, v: bd - nd },
         ];
-    return { verts, compound: true };
+    return {
+      verts,
+      compound: true,
+      wings: [
+        { u0: -w2, u1: w2, v0: 0, v1: bd - nd },
+        right
+          ? { u0: -w2, u1: w2 - nw, v0: bd - nd - WING_JOIN_OVERLAP, v1: bd }
+          : { u0: -w2 + nw, u1: w2, v0: bd - nd - WING_JOIN_OVERLAP, v1: bd },
+      ],
+    };
   }
   return {
     verts: [
@@ -232,6 +315,7 @@ function shapeVertices(
       { u: -w2, v: bd },
     ],
     compound: false,
+    wings: [{ u0: -w2, u1: w2, v0: 0, v1: bd }],
   };
 }
 
@@ -279,7 +363,193 @@ function overhangBlocked(
   return false;
 }
 
-/** パイプライン段の実体: buildings(骨格)を埋める */
+/**
+ * 素材の決定(契約: derived の tier + 役割補正 + seed 揺らぎを丸めて添字)。
+ * 乱数消費は建物あたり 2 回で固定。基準色の語彙は
+ * contracts/worldmodel.md「materialId の語彙」(art-direction 5.1節)。
+ * 壁材階層・屋根パレットの本格移行は PHASE 4b(ここは基準色の選定まで)。
+ */
+function decideMaterials(
+  rng: Rng,
+  role: BuildingRole,
+  wallTier: number,
+  roofTier: number,
+): Building["materials"] {
+  const adj = MATERIAL_TIER_ROLE_ADJUST[role];
+  const wallIdx = clamp(
+    Math.round(
+      wallTier + adj + rng.range(-MATERIAL_TIER_JITTER, MATERIAL_TIER_JITTER),
+    ),
+    0,
+    WALL_MATERIALS.length - 1,
+  );
+  const roofIdx = clamp(
+    Math.round(
+      roofTier + adj + rng.range(-MATERIAL_TIER_JITTER, MATERIAL_TIER_JITTER),
+    ),
+    0,
+    ROOF_MATERIALS.length - 1,
+  );
+  const wall = WALL_MATERIALS[wallIdx] ?? "plaster";
+  const roof = ROOF_MATERIALS[roofIdx] ?? "shingle";
+  return { wall, roof, trim: STONE_WALLS.has(wall) ? "stone" : "wood" };
+}
+
+/** 翼分解のワールド変換(揺らぎ回転込みの最終フレーム) */
+interface WingFrame {
+  /** ローカル (u=0, v=0) のワールド位置 */
+  origin: Vec2;
+  /** 間口方向(u)の単位ベクトル */
+  u: Vec2;
+  /** 奥行き方向(v)の単位ベクトル */
+  v: Vec2;
+}
+
+/**
+ * 骨格文法: 翼ごとに 基壇(plinth。kind "piles" では杭列)→ 壁体(階数ぶん)→
+ * 屋根(gable / hip)の順で部品を展開する(contracts/worldmodel.md
+ * 「Part の型語彙」「建物部品の性質」)。乱数は消費しない(骨格データと
+ * materials から決定的)。
+ * 窓・扉・梁・煙突が無いのは PHASE 4b のスコープ外であり正常。
+ */
+function expandParts(
+  wings: Wing[],
+  frame: WingFrame,
+  foundation: Foundation,
+  floors: number,
+  roof: Building["roof"],
+  materials: Building["materials"],
+): Part[] {
+  const parts: Part[] = [];
+  // rotation は Y 軸まわり(ローカル +x → ワールド (cosθ, 0, −sinθ)。契約)
+  const rotU = -Math.atan2(frame.u.z, frame.u.x);
+  const rotV = -Math.atan2(frame.v.z, frame.v.x);
+  const toWorld = (u: number, v: number): Vec2 => ({
+    x: frame.origin.x + frame.u.x * u + frame.v.x * v,
+    z: frame.origin.z + frame.u.z * u + frame.v.z * v,
+  });
+  const plinthTop = foundation.plinthHeight;
+  const plinthMaterial = materials.wall === "ashlar" ? "ashlar" : "stone";
+
+  for (const w of wings) {
+    const du = w.u1 - w.u0;
+    const dv = w.v1 - w.v0;
+    const c = toWorld((w.u0 + w.u1) / 2, (w.v0 + w.v1) / 2);
+
+    // --- 基壇 / 杭(接地)。stonebase / 杭は bottomY = -1.6 から立ち上げ、
+    //     水面下到達(接地契約)を部品として表す
+    if (foundation.kind === "piles") {
+      const height = plinthTop - foundation.bottomY;
+      const uu0 = w.u0 + PILE_EDGE_INSET;
+      const uu1 = w.u1 - PILE_EDGE_INSET;
+      const vv0 = w.v0 + PILE_EDGE_INSET;
+      const vv1 = w.v1 - PILE_EDGE_INSET;
+      const corners: [number, number][] = [
+        [uu0, vv0],
+        [uu1, vv0],
+        [uu1, vv1],
+        [uu0, vv1],
+      ];
+      for (let k = 0; k < corners.length; k++) {
+        const a = corners[k];
+        const b = corners[(k + 1) % corners.length];
+        if (!a || !b) continue;
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const n = Math.max(1, Math.ceil(len / PILE_SPACING));
+        for (let i = 0; i < n; i++) {
+          const t = i / n;
+          const p = toWorld(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+          parts.push({
+            type: "pile",
+            transform: {
+              position: [p.x, foundation.bottomY, p.z],
+              rotation: rotU,
+              scale: [PILE_WIDTH, height, PILE_WIDTH],
+            },
+            materialId: "wood",
+          });
+        }
+      }
+    } else {
+      const bottom = foundation.kind === "stonebase" ? foundation.bottomY : 0;
+      parts.push({
+        type: "plinth",
+        transform: {
+          position: [c.x, bottom, c.z],
+          rotation: rotU,
+          scale: [
+            du + 2 * PLINTH_OUTSET,
+            plinthTop - bottom,
+            dv + 2 * PLINTH_OUTSET,
+          ],
+        },
+        materialId: plinthMaterial,
+      });
+    }
+
+    // --- 壁体(1 階ぶん × 階数。params.floor は 4b の開口・ジェッティのフック)
+    for (let i = 0; i < floors; i++) {
+      parts.push({
+        type: "wall",
+        transform: {
+          position: [c.x, plinthTop + i * FLOOR_HEIGHT, c.z],
+          rotation: rotU,
+          scale: [du, FLOOR_HEIGHT, dv],
+        },
+        materialId: materials.wall,
+        params: { floor: i },
+      });
+    }
+
+    // --- 屋根: 棟は翼の長手方向。切妻基本、hip は矩形のみ、
+    //     複合(L/T)は翼ごとの gable の組(契約)
+    const ridgeAlongU = du >= dv;
+    const length = (ridgeAlongU ? du : dv) + 2 * GABLE_END_OVERHANG;
+    const span = (ridgeAlongU ? dv : du) + 2 * EAVE_OVERHANG;
+    const height = Math.tan((roof.pitch * Math.PI) / 180) * (span / 2);
+    parts.push({
+      type: roof.type === "hip" ? "hip" : "gable",
+      transform: {
+        position: [
+          c.x,
+          plinthTop + floors * FLOOR_HEIGHT - ROOF_BASE_SINK,
+          c.z,
+        ],
+        rotation: ridgeAlongU ? rotU : rotV,
+        scale: [length, height, span],
+      },
+      materialId: materials.roof,
+      params: { pitch: roof.pitch },
+    });
+  }
+  return parts;
+}
+
+const DIRT_CHANNEL = ZONE_KINDS.indexOf("dirt");
+const PAVED_CHANNEL = ZONE_KINDS.indexOf("paved");
+
+/**
+ * 建物 footprint による zoneMask の土/舗装上書き(契約: 段10 と同じ流儀の
+ * ポリゴンスタンプ max 合成 → (1−p) 縮め。石造系の壁は paved、他は dirt。
+ * dirt → paved の順で適用。乱数サブストリームは消費しない)。
+ */
+function stampBuildingsZone(model: WorldModel): void {
+  const mask = model.ground.zoneMask;
+  if (mask.resolution <= 0 || model.buildings.length === 0) return;
+  const grid = maskCellGrid(mask);
+  const blend = Math.max(BUILDING_ZONE_BLEND, mask.cellSize * BLEND_CELL_RATIO);
+  const cells = mask.resolution * mask.resolution;
+  const dirt = new Float64Array(cells);
+  const paved = new Float64Array(cells);
+  for (const b of model.buildings) {
+    const target = STONE_WALLS.has(b.materials.wall) ? paved : dirt;
+    stampPolygon(grid, target, b.footprint, blend);
+  }
+  applyCoverageToChannel(mask, dirt, DIRT_CHANNEL);
+  applyCoverageToChannel(mask, paved, PAVED_CHANNEL);
+}
+
+/** パイプライン段の実体: buildings(骨格+素材+部品)を埋める */
 export function runBuildings(model: WorldModel): void {
   const { seed, derived } = model.meta;
   const final = model.density.final;
@@ -333,7 +603,7 @@ export function runBuildings(model: WorldModel): void {
     bw = clamp(bw, 2.2, usableW);
     bd = clamp(bd, 2.2, usableD);
     // waterside は shapeVertices が矩形を返す(張り出しの合成を単純に保つ。契約)
-    const { verts: localVerts, compound } = shapeVertices(rng, role, bw, bd);
+    const { verts: localVerts, compound, wings } = shapeVertices(rng, role, bw, bd);
 
     // ローカル → ワールド
     let verts: Vec2[] = localVerts.map((lp) => ({
@@ -394,21 +664,20 @@ export function runBuildings(model: WorldModel): void {
     };
     backX = backRot.x;
     backZ = backRot.z;
+    // 揺らぎ回転後のローカルフレーム(部品展開の翼が footprint と同じ変換を共有する)
+    const uDir = { x: tx * cosJ - tz * sinJ, z: tx * sinJ + tz * cosJ };
+    const originRot = rotate(origin);
 
     // --- 水上張り出し(waterside × 河川・湖) ---
     // 背面・左右の3辺の中点から水面を探索し、最も近い水面へ向けて
     // その辺を延長する(正面=接道側は張り出さない)。
     let overWater = false;
     if (role === "waterside" && verts.length === 4) {
-      const tRot = {
-        x: tx * cosJ - tz * sinJ,
-        z: tx * sinJ + tz * cosJ,
-      };
       // 矩形の頂点順は [fl, fr, br, bl]
       const sides: { d: Vec2; a: number; b: number }[] = [
         { d: { x: backX, z: backZ }, a: 2, b: 3 }, // 背面(br, bl)
-        { d: tRot, a: 1, b: 2 }, // 右側面(fr, br)
-        { d: { x: -tRot.x, z: -tRot.z }, a: 3, b: 0 }, // 左側面(bl, fl)
+        { d: uDir, a: 1, b: 2 }, // 右側面(fr, br)
+        { d: { x: -uDir.x, z: -uDir.z }, a: 3, b: 0 }, // 左側面(bl, fl)
       ];
       let best: { d: Vec2; a: number; b: number; gap: number } | null = null;
       for (const side of sides) {
@@ -450,6 +719,13 @@ export function runBuildings(model: WorldModel): void {
               x: vb.x + best.d.x * ext,
               z: vb.z + best.d.z * ext,
             };
+            // 翼(部品展開)にも同じ張り出しを反映する(footprint と一致させる)
+            const wing0 = wings[0];
+            if (wing0) {
+              if (best.a === 2) wing0.v1 += ext; // 背面
+              else if (best.a === 1) wing0.u1 += ext; // 右側面
+              else wing0.u0 -= ext; // 左側面
+            }
           }
         }
       }
@@ -491,6 +767,24 @@ export function runBuildings(model: WorldModel): void {
         }
       : { kind: "plinth", plinthHeight, overWater: false, bottomY: 0 };
 
+    // --- 素材と部品展開(commit 13。乱数は派生サブストリーム
+    //     "building/<id>/parts" のみ・建物あたり固定消費) ---
+    const partsRng = makeRng(seed, `${id}/parts`);
+    const materials = decideMaterials(
+      partsRng,
+      role,
+      derived.wallTier,
+      derived.roofTier,
+    );
+    const parts = expandParts(
+      wings,
+      { origin: originRot, u: uDir, v: { x: backX, z: backZ } },
+      foundation,
+      floors,
+      { type: roofType, pitch },
+      materials,
+    );
+
     buildings.push({
       id,
       parcelId: parcel.id,
@@ -500,12 +794,15 @@ export function runBuildings(model: WorldModel): void {
       floors,
       roof: { type: roofType, pitch },
       foundation,
-      materials: { wall: "", roof: "", trim: "" },
-      parts: [],
+      materials,
+      parts,
     });
   }
 
   model.buildings = buildings;
+
+  // --- 建物 footprint による zoneMask の土/舗装上書き(commit 13) ---
+  stampBuildingsZone(model);
 
   // --- パイプライン内アサーション(throw せず件数を console に出す) ---
   const parcelById = new Map(model.parcels.map((p) => [p.id, p]));

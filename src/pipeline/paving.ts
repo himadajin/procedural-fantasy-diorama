@@ -57,10 +57,19 @@ function distToSegment(
 }
 
 /** セル中心座標系(zonemask.ts の sampleZoneMask と同じ張り)のヘルパー */
-interface CellGrid {
+export interface CellGrid {
   resolution: number;
   cellSize: number;
   half: number;
+}
+
+/** ZoneMask のセル中心座標系(段12「建物」の footprint 上書きも共有する) */
+export function maskCellGrid(mask: ZoneMask): CellGrid {
+  return {
+    resolution: mask.resolution,
+    cellSize: mask.cellSize,
+    half: (mask.resolution * mask.cellSize) / 2,
+  };
 }
 
 function cellCenter(grid: CellGrid, ix: number, iz: number): Vec2 {
@@ -123,8 +132,12 @@ function stampPath(
   }
 }
 
-/** 閉多角形の被覆をセルへスタンプする(内側 1、縁で blend 幅のフォールオフ) */
-function stampPolygon(
+/**
+ * 閉多角形の被覆をセルへスタンプする(内側 1、縁で blend 幅のフォールオフ)。
+ * max 合成なのでスタンプ順に依存しない。段12「建物」の footprint 上書きも
+ * 同じ流儀を共有する(contracts/worldmodel.md ZoneMask 節)。
+ */
+export function stampPolygon(
   grid: CellGrid,
   coverage: Float64Array,
   polygon: Polygon,
@@ -189,20 +202,33 @@ export function computePavedCoverage(model: WorldModel): Float64Array {
   return coverage;
 }
 
-/** 被覆度で zoneMask を上書きする(既存チャネルを (1−p) 倍、paved に p) */
-export function applyPavedCoverage(mask: ZoneMask, coverage: Float64Array): void {
+/**
+ * 被覆度で zoneMask の指定チャネルを上書きする
+ * (他チャネルを (1−p) 倍へ縮め、対象チャネルに p を置く。
+ * 「非負・合計 1」の規約を保つ。段12「建物」の上書きも共有する)。
+ */
+export function applyCoverageToChannel(
+  mask: ZoneMask,
+  coverage: Float64Array,
+  channel: number,
+): void {
   const cells = mask.resolution * mask.resolution;
   for (let c = 0; c < cells; c++) {
     const p = coverage[c] ?? 0;
     if (p <= 1e-4) continue;
     const base = c * ZONE_COUNT;
     for (let k = 0; k < ZONE_COUNT; k++) {
-      if (k === PAVED_INDEX) continue;
+      if (k === channel) continue;
       mask.weights[base + k] = (mask.weights[base + k] ?? 0) * (1 - p);
     }
-    mask.weights[base + PAVED_INDEX] =
-      (mask.weights[base + PAVED_INDEX] ?? 0) * (1 - p) + p;
+    mask.weights[base + channel] =
+      (mask.weights[base + channel] ?? 0) * (1 - p) + p;
   }
+}
+
+/** 被覆度で zoneMask を上書きする(既存チャネルを (1−p) 倍、paved に p) */
+export function applyPavedCoverage(mask: ZoneMask, coverage: Float64Array): void {
+  applyCoverageToChannel(mask, coverage, PAVED_INDEX);
 }
 
 /** パイプライン段の実体: zoneMask の舗装チャネルを上書きする */

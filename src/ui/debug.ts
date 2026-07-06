@@ -9,6 +9,9 @@ export interface DebugOverlay {
   setRenderInfo(calls: number, triangles: number): void;
 }
 
+/** draw call 予算(implementation-spec 1.8節)。表示は「実測/予算」の常時比較 */
+const DRAW_CALL_BUDGET = 50;
+
 export function createDebugOverlay(container: HTMLElement): DebugOverlay {
   const el = document.createElement("div");
   el.className = "pfd-debug";
@@ -22,7 +25,7 @@ export function createDebugOverlay(container: HTMLElement): DebugOverlay {
       hashEl.textContent = `#${hash}`;
     },
     setRenderInfo: (calls, triangles) => {
-      infoEl.textContent = `${calls} calls · ${(triangles / 1000).toFixed(1)}k tri`;
+      infoEl.textContent = `${calls}/${DRAW_CALL_BUDGET} calls · ${(triangles / 1000).toFixed(1)}k tri`;
     },
   };
 }

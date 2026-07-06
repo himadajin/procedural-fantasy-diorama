@@ -39,19 +39,21 @@ describe("hashWorldModel: 決定性(contracts/pipeline.md)", () => {
 describe("hashWorldModel: 代表 seed×params のスナップショット固定", () => {
   // 意図した生成変更でこの表が変わる場合は、スナップショット更新を同一commitに
   // 含め、意図を commit メッセージに記す(implementation-spec 1.10節)
-  // commit 12 で全組を更新済み。意図した変更:
-  // 段11「区画」・段12「建物」の追加により density.final / parcels /
-  // buildings(骨格データ)が新たに埋まる(全組に影響。既存の段1〜10の
-  // 出力は不変で、変化は追加フィールドのみ)
+  // commit 13 で全組を更新済み。意図した変更:
+  // 段12「建物」の commit 13 分(materials / parts の展開と
+  // zoneMask の建物 footprint 上書き)により、全建物の materials / parts が
+  // 新たに埋まり、zoneMask の重みが建物足元で変わる(全組に影響。
+  // commit 12 までの骨格データ・乱数消費は不変で、部品の乱数は派生
+  // サブストリーム "building/<id>/parts" のみ消費する)
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "4cb0e90c"],
-    ["everdusk-101", { water: 0 }, "226b5be2"],
-    ["everdusk-101", { water: 95 }, "db00be3a"],
-    ["everdusk-101", { worldScale: 0 }, "15005752"],
-    ["everdusk-101", { worldScale: 100 }, "b9673f24"],
-    ["seed-a", {}, "4326560d"],
-    ["seed-b", {}, "2f8ddb58"],
-    ["seed-b", { water: 70 }, "c1664ae5"],
+    ["everdusk-101", {}, "7c989ebe"],
+    ["everdusk-101", { water: 0 }, "0437a8b0"],
+    ["everdusk-101", { water: 95 }, "88f24ac2"],
+    ["everdusk-101", { worldScale: 0 }, "93c689e9"],
+    ["everdusk-101", { worldScale: 100 }, "f9f32fd5"],
+    ["seed-a", {}, "5e6a8d20"],
+    ["seed-b", {}, "bb3d188f"],
+    ["seed-b", { water: 70 }, "75614523"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

@@ -82,7 +82,7 @@ describe("buildings: 決定性(contracts/worldmodel.md Building 節)", () => {
 });
 
 describe("buildings: 骨格データの性質", () => {
-  it("区画と 1:1 で、id・parcelId が区画由来。materials / parts は commit 13 の担当(空)", () => {
+  it("区画と 1:1 で、id・parcelId が区画由来。materials / parts が展開済み(commit 13)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
       expect(model.buildings.length).toBe(model.parcels.length);
@@ -94,8 +94,10 @@ describe("buildings: 骨格データの性質", () => {
         expect(parcelIds.has(b.parcelId)).toBe(true);
         expect(b.id).toBe(`building/${b.parcelId.slice("parcel/".length)}`);
         expect(ROLES).toContain(b.role);
-        expect(b.materials).toEqual({ wall: "", roof: "", trim: "" });
-        expect(b.parts).toEqual([]);
+        expect(b.materials.wall).not.toBe("");
+        expect(b.materials.roof).not.toBe("");
+        expect(b.materials.trim).not.toBe("");
+        expect(b.parts.length).toBeGreaterThan(0);
       }
     }
   });
