@@ -1,9 +1,6 @@
 import * as THREE from "three";
 import { createViewer } from "./viewer/viewer";
-import {
-  CAMERA_INITIAL_AZIMUTH,
-  CAMERA_INITIAL_PITCH,
-} from "./viewer/constants";
+import { OrbitController } from "./viewer/orbit";
 
 const app = document.getElementById("app");
 if (!app) throw new Error("#app not found");
@@ -30,14 +27,25 @@ if (!viewer) {
   ground.receiveShadow = true;
   viewer.worldGroup.add(ground);
 
-  // 初期構図(art-direction 8節)。orbit操作は commit 5(自前コントローラー)で追加
-  const distance = worldSize * 0.75;
-  const pitch = CAMERA_INITIAL_PITCH;
-  const az = CAMERA_INITIAL_AZIMUTH;
-  viewer.camera.position.set(
-    Math.sin(az) * Math.cos(pitch) * distance,
-    Math.sin(pitch) * distance,
-    Math.cos(az) * Math.cos(pitch) * distance,
-  );
-  viewer.camera.lookAt(0, 0, 0);
+  // 自前 orbit コントローラー。初期構図は art-direction 8節
+  const controls = new OrbitController(viewer.camera, viewer.renderer.domElement);
+  controls.configure(worldSize);
+  viewer.onFrame((dt) => controls.update(dt));
+
+  // Reset Camera: ビューポート左下の円形ゴーストボタン(パネル外)
+  const resetButton = document.createElement("button");
+  resetButton.type = "button";
+  resetButton.ariaLabel = "Reset Camera";
+  resetButton.title = "Reset Camera";
+  resetButton.textContent = "⌂";
+  resetButton.style.cssText = `
+    position: absolute; left: 16px; bottom: 16px;
+    width: 44px; height: 44px; border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(16, 20, 26, 0.55); color: #e8e4da;
+    font-size: 20px; line-height: 1; cursor: pointer;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  `;
+  resetButton.addEventListener("click", () => controls.resetCamera());
+  app.appendChild(resetButton);
 }
