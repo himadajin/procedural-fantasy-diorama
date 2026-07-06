@@ -39,15 +39,16 @@ describe("hashWorldModel: 決定性(contracts/pipeline.md)", () => {
 describe("hashWorldModel: 代表 seed×params のスナップショット固定", () => {
   // 意図した生成変更でこの表が変わる場合は、スナップショット更新を同一commitに
   // 含め、意図を commit メッセージに記す(implementation-spec 1.10節)
+  // commit 9(段4「立地評価」・段5「道路網」の追加)で全組を更新済み
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "742e9e7c"],
-    ["everdusk-101", { water: 0 }, "9aee8b55"],
-    ["everdusk-101", { water: 95 }, "9491752a"],
-    ["everdusk-101", { worldScale: 0 }, "b4c8b01b"],
-    ["everdusk-101", { worldScale: 100 }, "f9ac0c05"],
-    ["seed-a", {}, "b6c07f41"],
-    ["seed-b", {}, "cc1826cd"],
-    ["seed-b", { water: 70 }, "f6078f4c"],
+    ["everdusk-101", {}, "b7cc33e3"],
+    ["everdusk-101", { water: 0 }, "f1e45e44"],
+    ["everdusk-101", { water: 95 }, "ad1bea94"],
+    ["everdusk-101", { worldScale: 0 }, "5d4ace64"],
+    ["everdusk-101", { worldScale: 100 }, "316465ef"],
+    ["seed-a", {}, "0df7c817"],
+    ["seed-b", {}, "15ae959d"],
+    ["seed-b", { water: 70 }, "52caebc3"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

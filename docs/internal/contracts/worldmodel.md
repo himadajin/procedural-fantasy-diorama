@@ -207,7 +207,23 @@ interface BridgeSite {
 - 水が完全に消える入力(riverCount=0 かつ湖なし)では `rivers` / `lakes` /
   `shoreline.loops` は空で、`ground.edgeStyle` は `"fog"`。
   乾いた土地として後段が成立すること
-- `canals`・`bridges` は PHASE 3 の担当(PHASE 2 では空配列)
+- `canals` は段6「水路」の担当(それまでは空配列)。`bridges` は
+  段5「道路網」が抽出する(性質は下記)
+
+`bridges` の性質(段5「道路網」が抽出し、段6「水路」が追加、
+段8「結界計画」が再抽出する):
+
+- 抽出保証: 水域(waterfield の waterSdf < 0)を渡る道路 edge は、渡る区間
+  ごとに必ず対応する BridgeSite を持つ(段5のパイプライン内アサーション。
+  違反は throw せず件数を console に出す)。渡り区間は edge.path 沿いの
+  waterSdf 標本化で検出し、水際は隣接標本間の線形補間で確定する
+- `position` は渡り区間の中点。`angle` は同地点の道路方向(xz 平面の偏角
+  `atan2(dz, dx)`。ラジアン)。`width` は道路幅(= edge.width)。
+  `length` は渡り長(水際から水際までの経路長)
+- `over` は渡る水域の種別(中点に最も近い水域要素で判定)。`roadClass` は
+  渡る edge の種別(石造/木橋の選択に使う。PHASE 5b)
+- `id` は中点座標由来 `"bridge/<x>_<z>"`(座標は小数1桁へ丸め)で安定。
+  同一キーの衝突時は抽出順の連番を後置する
 
 `Shoreline` は岸線(境界内の陸地と水域の境界)の実体表現:
 
@@ -252,11 +268,34 @@ interface Network {
   nodes: { id: string; position: Vec2 }[];
   edges: { id: string; from: string; to: string;
            class: RoadClass; width: number;
-           path: Vec2[];         // 経路の折れ線(A*の結果を平滑化)
-           grade: number }[];    // 等級(土/砂利/石畳。Prosperity駆動)
+           path: Vec2[];         // 経路の折れ線(A*の結果を間引き・平滑化)
+           grade: number }[];    // 等級。0〜2 連続(0=土、1=砂利、2=石畳)
   entryPoints: { id: string; position: Vec2 }[]; // 外縁の進入点(2〜4)
 }
 ```
+
+道路網の性質(段4「立地評価」・段5「道路網」が保証し、後段・メッシュビルダーが
+前提としてよい):
+
+- `entryPoints` は段4が外縁(`ground.boundary` 上)に
+  `derived.entryPointCount` 点(2〜4)置く。id は `"entry/<n>"`(生成順で安定)。
+  位置は水域を避け(waterSdf ≥ 0)、主河川がある場合は進入点が川の両岸に
+  分かれるよう配置して橋の必然性を作る
+- `nodes` は道路グラフの交差点・端点。id は経路探索グリッドのセル座標由来
+  `"node/<ix>_<iz>"` で安定。進入点セルのノードは進入点と同一座標を、
+  中心セルのノードは `centerPlan.position` と同一座標を持つ
+- `edges` の `path` は A* のグリッド経路を間引き(Douglas–Peucker)・
+  平滑化(Chaikin 1回)した点列。両端点は from / to ノードの position に
+  一致する(座標値も同一)
+- `class` は本PHASEでは `"main"`(進入点→中心の主道)と `"connector"`
+  (進入点間の補完路)のみ。`"lane"`(小道)は PHASE 4b が追加する。
+  小道の追加は nodes / edges への追記のみで行い、既存 edge の id を壊さない
+- `width` は種別ごとの実寸(main 3.6 / connector 2.6。lane は PHASE 4b で確定)
+- `grade` は道の等級 0〜2 の連続値(0=土、1=砂利、2=石畳)。
+  `derived.roadGrade` を基準に main は +0.3 の格上げ(上限 2)。
+  メッシュビルダーは頂点カラーの補間に使う(描画は PHASE 3 commit 11)
+- 到達性: すべての進入点ノードは中心ノードへ `edges` のグラフ上で到達できる
+  (段5のパイプライン内アサーションで検証し、違反件数を console に出す)
 
 ### Plaza(PHASE 3)
 
@@ -281,6 +320,29 @@ interface CenterPlan {
   heightHint: number;            // 高さ目安(スカイライン検証の基準)
 }
 ```
+
+CenterPlan は2段階で埋まる。段4「立地評価」が `position` / `footprint` /
+`axes` を確定し、`facing` / `heightHint` は段9「広場」(PHASE 3 commit 10)が
+中心前広場・主道の収束方向の確定後に埋める。それまでは両者とも 0 のままとする。
+
+段4が保証する性質:
+
+- `position` はグリッド各点のスコアリングによる1点。
+  スコア = 水辺近接×√Water + 中央寄り + 進入点からのアクセス性 −
+  水中ペナルティ(implementation-spec PHASE 3。Water項は平方根で飽和させ、
+  Water の微小変化で主中心が跳ばない)。seed はタイブレーク
+  (格子ハッシュノイズの微小加点)にのみ使う
+- `position` は水中になく(waterSdf > 0)、`footprint` の全頂点は
+  `ground.boundary` の内側に収まる
+- `footprint` は `position` 中心・一辺 `derived.centerFootprint` の
+  軸平行な正方形(時計回り)。正面方向が未確定の段階の予約領域であり、
+  向き付けは行わない
+- `axes` は implementation-spec 1.7節の4軸(0〜1目安):
+  魔導 = Monumentality × `derived.centerArcaneBias`、
+  権威 = Monumentality × Prosperity、
+  水辺 = Monumentality × Water × 水辺近接度(中心の岸距離の指数減衰)、
+  素朴 = (1−Monumentality) × (1−Settlement)。
+  seed 揺らぎは同点付近のタイブレーク用の微小量(±0.02)のみ
 
 ### Wards(PHASE 3 で計画、立体化は PHASE 5b)
 
