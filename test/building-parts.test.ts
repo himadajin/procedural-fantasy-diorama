@@ -118,6 +118,14 @@ function partsOf(b: Building, type: string): Part[] {
   return b.parts.filter((p) => p.type === type);
 }
 
+/**
+ * 一般建物(中心建築は専用文法・専用語彙のため除外。
+ * 中心建築の検証は test/center.test.ts)
+ */
+function general(model: WorldModel): Building[] {
+  return model.buildings.filter((b) => b.role !== "center");
+}
+
 describe("building parts: 決定性", () => {
   it("同一 seed + params で全建物の parts / materials が完全一致する", () => {
     for (const seed of SEEDS) {
@@ -133,7 +141,7 @@ describe("building parts: 決定性", () => {
 describe("building parts: 語彙(contracts/worldmodel.md)", () => {
   it("materials が語彙に収まり、trim は石造壁のとき stone", () => {
     for (const [seed, over] of COMBOS) {
-      for (const b of cached(seed, over).buildings) {
+      for (const b of general(cached(seed, over))) {
         expect(WALL_IDS).toContain(b.materials.wall);
         expect(ROOF_IDS).toContain(b.materials.roof);
         expect(TRIM_IDS).toContain(b.materials.trim);
@@ -146,7 +154,7 @@ describe("building parts: 語彙(contracts/worldmodel.md)", () => {
 
   it("部品の型・materialId が語彙に収まる", () => {
     for (const [seed, over] of COMBOS) {
-      for (const b of cached(seed, over).buildings) {
+      for (const b of general(cached(seed, over))) {
         for (const p of b.parts) {
           expect(PART_TYPES.has(p.type)).toBe(true);
           expect(ALL_MATERIAL_IDS.has(p.materialId)).toBe(true);
@@ -160,7 +168,7 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
   it("壁体は階高 3.0 固定で、翼ごとに階数ぶん(高さの合計 = floors × 3.0)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
-      for (const b of model.buildings) {
+      for (const b of general(model)) {
         const walls = partsOf(b, "wall");
         expect(walls.length).toBeGreaterThan(0);
         // 翼数 × 階数(矩形 1 翼、L/T 2 翼)
@@ -187,7 +195,7 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
   it("屋根は勾配 50〜58度(params.pitch = roof.pitch)で、棟高 = tan(pitch)×スパン/2", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
-      for (const b of model.buildings) {
+      for (const b of general(model)) {
         const roofs = b.parts.filter((p) => p.type === "gable" || p.type === "hip");
         // 複合(L/T)は翼ごとの gable、それ以外は 1 部品
         expect(roofs.length).toBe(b.roof.type === "compound" ? 2 : 1);
@@ -208,7 +216,7 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
   it("杭部品は bottomY = -1.6 から基壇天端まで(kind 'piles' の建物のみ)", () => {
     let pileBuildings = 0;
     for (const [seed, over] of COMBOS) {
-      for (const b of cached(seed, over).buildings) {
+      for (const b of general(cached(seed, over))) {
         const piles = partsOf(b, "pile");
         if (b.foundation.kind === "piles") {
           pileBuildings++;
@@ -244,7 +252,7 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
-      for (const b of model.buildings) {
+      for (const b of general(model)) {
         // ジェッティのある建物は上階壁・屋根・開口が張り出しぶんさらに出る
         const limit = b.parts.some((p) => p.type === "jetty") ? 1.2 : 0.9;
         const parcel = b.parcelId ? parcelById.get(b.parcelId) : undefined;

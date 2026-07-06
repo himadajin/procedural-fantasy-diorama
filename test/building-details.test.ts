@@ -127,8 +127,16 @@ function openingOnWall(b: Building, opening: Part): boolean {
 /** 建物ごとの窓・扉・煙突などの型別集計 */
 function countType(model: WorldModel, type: string): number {
   let n = 0;
-  for (const b of model.buildings) n += partsOf(b, type).length;
+  for (const b of general(model)) n += partsOf(b, type).length;
   return n;
+}
+
+/**
+ * 一般建物(中心建築は専用文法・専用語彙のため除外。
+ * 中心建築の検証は test/center.test.ts)
+ */
+function general(model: WorldModel): Building[] {
+  return model.buildings.filter((b) => b.role !== "center");
 }
 
 /**
@@ -146,8 +154,8 @@ describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
-      expect(model.buildings.length).toBeGreaterThan(0);
-      for (const b of model.buildings) {
+      expect(general(model).length).toBeGreaterThan(0);
+      for (const b of general(model)) {
         const doors = partsOf(b, "door");
         expect(doors.length).toBe(1);
         const door = doors[0];
@@ -174,7 +182,7 @@ describe("building details: 窓(壁面上・少なく大きく)", () => {
     let windowTotal = 0;
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
-      for (const b of model.buildings) {
+      for (const b of general(model)) {
         for (const w of partsOf(b, "window")) {
           windowTotal++;
           expect(openingOnWall(b, w)).toBe(true);
@@ -195,7 +203,7 @@ describe("building details: 煙突(実寸比 15% 過大。art-direction 6節)", 
     let chimneyTotal = 0;
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
-      for (const b of model.buildings) {
+      for (const b of general(model)) {
         for (const c of partsOf(b, "chimney")) {
           chimneyTotal++;
           expect(c.transform.scale[0]).toBeCloseTo(
@@ -223,7 +231,7 @@ describe("building details: 素材階層と木組みの連動", () => {
   it("木組み梁・ジェッティは wall='plaster' の建物にのみ付く", () => {
     let beamBuildings = 0;
     for (const [seed, over] of COMBOS) {
-      for (const b of cached(seed, over).buildings) {
+      for (const b of general(cached(seed, over))) {
         const hasBeam = partsOf(b, "beam").length > 0;
         const hasJetty = partsOf(b, "jetty").length > 0;
         if (hasBeam) beamBuildings++;
@@ -237,7 +245,7 @@ describe("building details: 素材階層と木組みの連動", () => {
   it("ジェッティの建物は上階の壁が正面へ張り出す(1階より奥行きが大きい)", () => {
     let jettyBuildings = 0;
     for (const [seed, over] of COMBOS) {
-      for (const b of cached(seed, over).buildings) {
+      for (const b of general(cached(seed, over))) {
         if (partsOf(b, "jetty").length === 0) continue;
         jettyBuildings++;
         const walls = partsOf(b, "wall");
@@ -286,7 +294,7 @@ describe("building details: Prosperity 20/60/95 の素材階層移行(implementa
     let n = 0;
     for (const seed of SEEDS) {
       const model = cached(seed, { prosperity });
-      for (const b of model.buildings) {
+      for (const b of general(model)) {
         n++;
         wallSum += WALL_ORDER.indexOf(b.materials.wall);
         roofSum += ROOF_ORDER.indexOf(b.materials.roof);
@@ -355,7 +363,7 @@ describe("building details: 役割による部品構成の差", () => {
       // 同一モデル内の役割比較(detailAmount が共通の条件で比べる)
       let hallWindowH = -Infinity;
       let houseWindowH = -Infinity;
-      for (const b of model.buildings) {
+      for (const b of general(model)) {
         const door = partsOf(b, "door")[0];
         if (b.role === "warehouse") {
           warehouses++;

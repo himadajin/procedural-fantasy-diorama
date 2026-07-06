@@ -55,7 +55,7 @@ describe("plazas: 決定性", () => {
 });
 
 describe("plazas: 空地ポリゴンの確定(contracts/worldmodel.md Plaza 節)", () => {
-  it("中心前広場が存在し、種別が契約の範囲(courtyard は生成しない)", async () => {
+  it("中心前広場が存在し、種別が契約の範囲(courtyard は段12 の中庭のみ)", async () => {
     for (const seed of SEEDS) {
       for (const over of [{}, { water: 70 }, { monumentality: 95 }]) {
         const model = await build(seed, over);
@@ -63,9 +63,17 @@ describe("plazas: 空地ポリゴンの確定(contracts/worldmodel.md Plaza 節)
         expect(kinds).toContain("center");
         expect(kinds.filter((k) => k === "center").length).toBe(1);
         for (const p of model.plazas) {
-          expect(["center", "gate", "bridgehead", "crossing"]).toContain(p.kind);
+          expect(["center", "gate", "bridgehead", "crossing", "courtyard"]).toContain(
+            p.kind,
+          );
           expect(p.radius).toBeGreaterThan(0);
-          expect(p.polygon.length).toBeGreaterThanOrEqual(8);
+          if (p.kind === "courtyard") {
+            // 中庭は段12 の中心建築展開が追加する矩形(契約の例外)
+            expect(p.id).toBe("plaza/courtyard");
+            expect(p.polygon.length).toBe(4);
+          } else {
+            expect(p.polygon.length).toBeGreaterThanOrEqual(8);
+          }
           expect(p.id).toMatch(/^plaza\//);
         }
         expect(new Set(model.plazas.map((p) => p.id)).size).toBe(
@@ -81,10 +89,12 @@ describe("plazas: 空地ポリゴンの確定(contracts/worldmodel.md Plaza 節)
         const model = await build(seed, over);
         for (let i = 0; i < model.plazas.length; i++) {
           const a = model.plazas[i];
-          if (!a) continue;
+          // 中庭(courtyard)は中心建築の中庭壁の内側にあり、
+          // 段9 の円距離規約の対象外(contracts「中心建築」)
+          if (!a || a.kind === "courtyard") continue;
           for (let j = i + 1; j < model.plazas.length; j++) {
             const b = model.plazas[j];
-            if (!b) continue;
+            if (!b || b.kind === "courtyard") continue;
             const d = Math.hypot(
               a.position.x - b.position.x,
               a.position.z - b.position.z,
@@ -106,6 +116,9 @@ describe("plazas: 空地ポリゴンの確定(contracts/worldmodel.md Plaza 節)
         const wsdf = combinedWaterSdf(model);
         const foot = model.centerPlan.footprint;
         for (const plaza of model.plazas) {
+          // 中庭(courtyard)は centerPlan.footprint の内側に置かれる設計
+          // (contracts「中心建築」)のため footprint 検査の対象外
+          if (plaza.kind === "courtyard") continue;
           for (const v of plaza.polygon) {
             expect(
               wsdf(v.x, v.z),

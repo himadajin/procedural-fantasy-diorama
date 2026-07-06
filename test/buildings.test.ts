@@ -81,14 +81,27 @@ describe("buildings: 決定性(contracts/worldmodel.md Building 節)", () => {
   });
 });
 
+/** 一般建物(中心建築は role "center"・parcelId null の別契約) */
+function general(model: WorldModel): WorldModel["buildings"] {
+  return model.buildings.filter((b) => b.role !== "center");
+}
+
 describe("buildings: 骨格データの性質", () => {
-  it("区画と 1:1 で、id・parcelId が区画由来。materials / parts が展開済み(commit 13)", () => {
+  it("一般建物は区画と 1:1、中心建築(role center)が末尾に 1 棟(PHASE 5a)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
-      expect(model.buildings.length).toBe(model.parcels.length);
-      expect(model.buildings.length).toBeGreaterThan(0);
+      const generals = general(model);
+      expect(generals.length).toBe(model.parcels.length);
+      expect(generals.length).toBeGreaterThan(0);
+      // 中心建築はちょうど 1 棟、末尾、parcelId null(契約)
+      const centers = model.buildings.filter((b) => b.role === "center");
+      expect(centers.length).toBe(1);
+      expect(model.buildings[model.buildings.length - 1]?.role).toBe("center");
+      expect(centers[0]?.id).toBe("building/center");
+      expect(centers[0]?.parcelId).toBeNull();
+      expect(centers[0]?.parts.length).toBeGreaterThan(0);
       const parcelIds = new Set(model.parcels.map((p) => p.id));
-      for (const b of model.buildings) {
+      for (const b of generals) {
         expect(b.parcelId).not.toBeNull();
         if (!b.parcelId) continue;
         expect(parcelIds.has(b.parcelId)).toBe(true);
@@ -102,12 +115,12 @@ describe("buildings: 骨格データの性質", () => {
     }
   });
 
-  it("全建物が接道正面を持つ(親区画の frontEdge と道路の距離で機械検証)", () => {
+  it("全一般建物が接道正面を持つ(親区画の frontEdge と道路の距離で機械検証)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
       const edgeById = new Map(model.network.edges.map((e) => [e.id, e]));
-      for (const b of model.buildings) {
+      for (const b of general(model)) {
         const parcel = b.parcelId ? parcelById.get(b.parcelId) : undefined;
         expect(parcel).toBeDefined();
         if (!parcel) continue;
@@ -124,16 +137,18 @@ describe("buildings: 骨格データの性質", () => {
     }
   });
 
-  it("floors は 1〜3 の整数、屋根勾配は 50〜58 度、L/T は複合屋根", () => {
+  it("floors は 1〜3 の整数(中心建築は 1〜5)、屋根勾配は 50〜58 度、L/T は複合屋根", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
       for (const b of model.buildings) {
         expect(Number.isInteger(b.floors)).toBe(true);
         expect(b.floors).toBeGreaterThanOrEqual(1);
-        expect(b.floors).toBeLessThanOrEqual(3);
+        expect(b.floors).toBeLessThanOrEqual(b.role === "center" ? 5 : 3);
         expect(b.roof.pitch).toBeGreaterThanOrEqual(50);
         expect(b.roof.pitch).toBeLessThanOrEqual(58);
-        if (b.footprint.length > 4) expect(b.roof.type).toBe("compound");
+        if (b.role !== "center" && b.footprint.length > 4) {
+          expect(b.roof.type).toBe("compound");
+        }
       }
     }
   });
@@ -230,10 +245,12 @@ describe("buildings: 重なりゼロ(建物どうし・道路・広場)", () => 
     }
   });
 
-  it("建物が道路・広場に重ならない", () => {
+  it("一般建物が道路・広場に重ならない(中心建築は契約の例外)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
-      for (const b of model.buildings) {
+      // 中心建築は主道が footprint 下で終端する設計のため対象外
+      // (contracts「中心建築」の一般建物アサーションの例外)
+      for (const b of general(model)) {
         for (const edge of model.network.edges) {
           expect(
             polylineTouchesPolygon(edge.path, b.footprint, edge.width / 2),

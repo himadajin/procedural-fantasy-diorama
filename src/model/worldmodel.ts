@@ -15,6 +15,11 @@ export type { FieldGrid } from "./fieldgrid";
 export const WATER_SURFACE_Y = -0.6;
 /** 岸スカート下端(水面より 1.0 低い。implementation-spec 1.8節) */
 export const SHORE_SKIRT_BOTTOM_Y = WATER_SURFACE_Y - 1.0;
+/**
+ * 階高(壁体 1 階ぶんの高さ)。水面の低さ 0.6 = 壁1階高の 1/5
+ * (art-direction 7節)。建物文法(pipeline/buildings, pipeline/center)が共有する。
+ */
+export const FLOOR_HEIGHT = 3.0;
 
 /** xz平面上の点(y-up。地面は y=0) */
 export interface Vec2 {
@@ -400,7 +405,7 @@ export interface Building {
   footprint: Polygon;
   /** 正面方位(xz 偏角。広場 > 道路 > 水面の優先+揺らぎ込み) */
   facing: number;
-  /** 階数。1〜3 の整数 */
+  /** 階数。1〜3 の整数(中心建築の主棟のみ 1〜5。contracts「中心建築」) */
   floors: number;
   /** pitch は度数(50〜58。art-direction 6節) */
   roof: { type: "gable" | "hip" | "compound"; pitch: number };

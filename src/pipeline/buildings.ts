@@ -41,9 +41,18 @@
  *   (骨格・materials の乱数消費は commit 13 から不変)
  * - 小道(lane)の追加と窓・扉・梁・煙突の InstancedMesh 化は
  *   commit 15 の担当(本段のスコープ外であり仮実装ではない)
+ *
+ * PHASE 5a commit 16(本実装)の追加分:
+ * - 一般建物の展開後、中心建築 1 棟(role "center"、parcelId null)を
+ *   専用の拡張文法(pipeline/center.ts)で展開して buildings の末尾に追加し、
+ *   中庭の Plaza(kind "courtyard")を plazas へ追記する
+ * - スカイライン契約(中心最高点 ≥ 周辺一般建物の最高点 × skylineRatio)と
+ *   発光面積の上限をパイプライン内アサーションで検証する
+ * - 中心建築は接道正面・道路/広場の重なり検査の対象外(契約の例外)
  */
 import { makeRng, type Rng } from "../rng";
 import {
+  FLOOR_HEIGHT,
   SHORE_SKIRT_BOTTOM_Y,
   ZONE_KINDS,
   type Building,
@@ -73,6 +82,12 @@ import {
   maskCellGrid,
   stampPolygon,
 } from "./paving";
+import {
+  CENTER_GLOW_SHARE,
+  buildingTopY,
+  expandCenterBuilding,
+  glowPartArea,
+} from "./center";
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
@@ -114,8 +129,8 @@ const ROOF_PITCH_MIN = 50;
 const ROOF_PITCH_MAX = 58;
 
 // --- 部品展開(contracts/worldmodel.md「Part の型語彙」) ---
-/** 階高(壁体 1 階ぶんの高さ)。水面の低さ 0.6 = 壁1階高の 1/5(art-direction 7節) */
-export const FLOOR_HEIGHT = 3.0;
+// 階高は model/worldmodel.ts の FLOOR_HEIGHT を正とする(中心建築文法と共有)
+export { FLOOR_HEIGHT } from "../model/worldmodel";
 /** 軒の張り出し(スパン側)。深めに取る(art-direction 6節) */
 const EAVE_OVERHANG = 0.65;
 /** 妻側(棟方向)の張り出し */
@@ -1391,6 +1406,11 @@ export function runBuildings(model: WorldModel): void {
     });
   }
 
+  // --- 中心建築(PHASE 5a commit 16。一般建物の後に展開する:
+  //     スカイライン検証が周辺一般建物の最高点を入力とするため。
+  //     契約は contracts/worldmodel.md「中心建築(PHASE 5a commit 16)」) ---
+  const centerBuilding = expandCenterBuilding(model, ctx, buildings);
+  buildings.push(centerBuilding);
   model.buildings = buildings;
 
   // --- 建物 footprint による zoneMask の土/舗装上書き(commit 13) ---
@@ -1405,9 +1425,12 @@ export function runBuildings(model: WorldModel): void {
     if (!b) continue;
 
     // (1) 接道正面: 親区画の frontEdge が接道 edge の近傍にある
+    //     (中心建築は親区画を持たないため対象外。契約の例外)
     const parcel = b.parcelId ? parcelById.get(b.parcelId) : undefined;
     const edge = parcel ? edgeById.get(parcel.roadEdgeId) : undefined;
-    if (!parcel || !edge) {
+    if (b.role === "center") {
+      // 接道検査なし
+    } else if (!parcel || !edge) {
       violations++;
     } else {
       const [a, c] = parcel.frontEdge;
@@ -1461,6 +1484,9 @@ export function runBuildings(model: WorldModel): void {
       }
       if (polygonsOverlap(b.footprint, other.footprint)) violations++;
     }
+    // 道路・広場との重なり(中心建築は対象外: 主道は中心へ収束して
+    // footprint 下で終端する設計。契約の例外)
+    if (b.role === "center") continue;
     for (const e of model.network.edges) {
       if (polylineTouchesPolygon(e.path, b.footprint, e.width / 2)) {
         violations++;
@@ -1470,6 +1496,30 @@ export function runBuildings(model: WorldModel): void {
       if (polygonsOverlap(b.footprint, plaza.polygon)) violations++;
     }
   }
+
+  // --- スカイライン契約(PHASE 5a): 中心最高点 ≥ 周辺最高点 × skylineRatio ---
+  let peripheralTop = 0;
+  for (const b of buildings) {
+    if (b.role !== "center") peripheralTop = Math.max(peripheralTop, buildingTopY(b));
+  }
+  const centerTop = buildingTopY(centerBuilding);
+  if (centerTop + 1e-6 < peripheralTop * derived.skylineRatio) {
+    violations++;
+    console.warn(
+      `buildings: スカイライン契約違反 center=${centerTop.toFixed(2)} < ` +
+        `${(peripheralTop * derived.skylineRatio).toFixed(2)}`,
+    );
+  }
+
+  // --- 発光面積の上限(PHASE 5a): glowAreaCap × 箱庭面積 × 中心の取り分 ---
+  let glowArea = 0;
+  for (const p of centerBuilding.parts) glowArea += glowPartArea(p);
+  const glowBudget =
+    Math.abs(polygonArea(model.ground.boundary)) *
+    derived.glowAreaCap *
+    CENTER_GLOW_SHARE;
+  if (glowArea > glowBudget + 1e-6) violations++;
+
   if (violations > 0) {
     console.warn(`buildings: パイプライン内アサーション違反 ${violations} 件`);
   }

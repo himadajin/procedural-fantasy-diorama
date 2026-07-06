@@ -418,21 +418,21 @@ export function buildWorld(model: WorldModel): THREE.Group {
     model.water.lakes,
   );
   group.add(buildGround(model, field));
+  // ビューワー側の時間 uniform(表示演出。WorldModel には影響しない)。
+  // 水面の揺らぎと建物発光束の明滅が共有する(reduced-motion では
+  // main が更新を止めるため両方とも静止する)
   const timeUniform: WaterTimeUniform = { value: 0 };
+  group.userData.waterTime = timeUniform;
   const water = buildWater(model, field, timeUniform);
-  if (water) {
-    group.add(water);
-    // ビューワー側の時間 uniform(表示演出。WorldModel には影響しない)
-    group.userData.waterTime = timeUniform;
-  }
+  if (water) group.add(water);
 
   // 道路・広場・水路の護岸(マージ 1 メッシュ)+杭(InstancedMesh 1)
   const { paving, piles } = buildPaving(model, field);
   if (paving) group.add(paving);
   if (piles) group.add(piles);
 
-  // 建物(躯体マージ+屋根マージ+杭 InstancedMesh。mesh/buildings.ts)
-  for (const obj of buildBuildings(model)) group.add(obj);
+  // 建物(躯体マージ+屋根マージ+発光束+杭 InstancedMesh。mesh/buildings.ts)
+  for (const obj of buildBuildings(model, timeUniform)) group.add(obj);
 
   // 計画デバッグ描画(結界環ライン+マーカー。PHASE 5b で立体に置換)
   const planMarks = buildPlanMarks(model);

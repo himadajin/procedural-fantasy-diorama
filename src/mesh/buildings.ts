@@ -19,9 +19,20 @@
  *   持ち、形状・寸法はマージ展開と同一(経路変更で絵を変えない)
  * - 影: castShadow は統合ジオメトリ(躯体・屋根)と主要 InstancedMesh
  *   (building-trim)に限定する(1.8節の影キャスター規律)
+ * - 発光束(PHASE 5a): crystal / sigil / glow-window の発光面は
+ *   独立の小さなマージ束 `buildings-glow` 1 つに集約する(draw call +1)。
+ *   emissive #5fd4c0 / emissiveIntensity 2.0、明滅 ±0.3 はビューワーの
+ *   時間 uniform(水面と共有)で行い、reduced-motion では静止する
+ *   (contracts/worldmodel.md「PHASE 5a commit 16 の追加語彙」、
+ *   art-direction 5.4節)。Bloom・動的光源は使わない
  */
 import * as THREE from "three";
 import type { Building, Part, WorldModel } from "../model/worldmodel";
+
+/** ビューワーが毎フレーム更新する時間 uniform(mesh/build.ts と共有の形) */
+export interface TimeUniform {
+  value: number;
+}
 
 /**
  * materialId → 基準色(contracts/worldmodel.md「materialId の語彙」の正。
@@ -74,6 +85,19 @@ const DOOR_LEAF_Z = 0.16;
 const FENCE_FOOT_AO = 0.85;
 /** 屋根小窓の躯体(頬・前面)の沈み(勾配面より一段暗く) */
 const DORMER_BODY_SHADE = 0.88;
+
+// --- 発光束(PHASE 5a。art-direction 5.4節の数値規範) ---
+/** 発光面のベース(拡散)色。夕光の加算で濁らせない暗色に固定 */
+const GLOW_BASE_COLOR = "#2a3a38";
+/** 発光コア(emissive)の色 */
+const GLOW_EMISSIVE_COLOR = "#5fd4c0";
+/** 発光強度の基準(明滅 ±0.3 はシェーダーの時間 uniform で行う) */
+const GLOW_EMISSIVE_INTENSITY = 2.0;
+/** 発光の重み: コア(水晶・発光開口)1.0 / 紋様・縁 0.35(実効 0.7 ≒ 0.6〜0.8 帯) */
+const GLOW_CORE_WEIGHT = 1.0;
+const GLOW_EDGE_WEIGHT = 0.35;
+/** 中庭壁の笠より下の壁体の暗まり */
+const COURTYARD_BODY_SHADE = 0.97;
 
 /** 位置ハッシュ(0〜1)。乱数ストリームを消費しない決定論的なムラの元 */
 function hash3(x: number, y: number, z: number): number {
@@ -455,6 +479,271 @@ function roofPart(part: Part, buf: GeoBuffer, base: THREE.Color, hip: boolean): 
   face(buf, xf, [A, B, C, D], soff, inside, base);
 }
 
+// --- PHASE 5a: 中心建築の部品(contracts/worldmodel.md
+//     「PHASE 5a commit 16 の追加語彙」) ---
+
+/** 塔身: 先細りの角柱(上端の辺長 = 底辺 × taper)+天端面 */
+function towerPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  const inside = xf([0, 0.5, 0]);
+  const t = Math.min(1, Math.max(0.3, part.params?.taper ?? 0.85));
+  const h = t * 0.5;
+  const bs = [WALL_FOOT_AO, WALL_FOOT_AO, 1, 1];
+  face(buf, xf, [[-0.5, 0, -0.5], [0.5, 0, -0.5], [h, 1, -h], [-h, 1, -h]], bs, inside, base);
+  face(buf, xf, [[0.5, 0, -0.5], [0.5, 0, 0.5], [h, 1, h], [h, 1, -h]], bs, inside, base);
+  face(buf, xf, [[0.5, 0, 0.5], [-0.5, 0, 0.5], [-h, 1, h], [h, 1, h]], bs, inside, base);
+  face(buf, xf, [[-0.5, 0, 0.5], [-0.5, 0, -0.5], [-h, 1, -h], [-h, 1, h]], bs, inside, base);
+  face(buf, xf, [[-h, 1, -h], [h, 1, -h], [h, 1, h], [-h, 1, h]], [1, 1, 1, 1], inside, base);
+}
+
+/** 尖塔屋根: 四角錐+軒裏 */
+function spirePart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  const inside = xf([0, 0.25, 0]);
+  const A: L = [-0.5, 0, -0.5];
+  const B: L = [0.5, 0, -0.5];
+  const C: L = [0.5, 0, 0.5];
+  const D: L = [-0.5, 0, 0.5];
+  const E: L = [0, 1, 0];
+  face(buf, xf, [A, B, E], [1, 1, 1], inside, base);
+  face(buf, xf, [B, C, E], [1, 1, 1], inside, base);
+  face(buf, xf, [C, D, E], [1, 1, 1], inside, base);
+  face(buf, xf, [D, A, E], [1, 1, 1], inside, base);
+  const soff = [ROOF_SOFFIT_SHADE, ROOF_SOFFIT_SHADE, ROOF_SOFFIT_SHADE, ROOF_SOFFIT_SHADE];
+  face(buf, xf, [A, B, C, D], soff, inside, base);
+}
+
+/** 中庭壁: 壁体(内側へ絞る)+笠 */
+function courtyardWallPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  subBox(buf, xf, base, -0.5, 0.5, 0, 0.88, -0.38, 0.38, COURTYARD_BODY_SHADE);
+  subBox(buf, xf, base, -0.5, 0.5, 0.88, 1, -0.5, 0.5);
+}
+
+/** 発光の重み色(頂点カラー = 発光束の emissive・拡散の両方に乗る) */
+function glowWeightColor(weight: number): THREE.Color {
+  return new THREE.Color(weight, weight, weight);
+}
+
+/**
+ * 頂部水晶: 八面体(全面が発光コア)。発光束へ集約する。
+ * 位置ハッシュのムラは使わない(発光の重みを正確に保つ)。
+ */
+function crystalPart(part: Part, glow: GeoBuffer): void {
+  const xf = makeXform(part);
+  const inside = xf([0, 0.45, 0]);
+  const eq = 0.42; // 赤道(最大断面)の高さ
+  const bottom: L = [0, 0, 0];
+  const top: L = [0, 1, 0];
+  const ring: L[] = [
+    [-0.5, eq, 0],
+    [0, eq, -0.5],
+    [0.5, eq, 0],
+    [0, eq, 0.5],
+  ];
+  const w = glowWeightColor(GLOW_CORE_WEIGHT);
+  for (let i = 0; i < 4; i++) {
+    const a = ring[i] as L;
+    const b = ring[(i + 1) % 4] as L;
+    const verts = [a, b, top].map(xf);
+    pushFace(glow, verts, [1, 1, 1], inside, w, 1);
+    const verts2 = [a, b, bottom].map(xf);
+    pushFace(glow, verts2, [1, 1, 1], inside, w, 1);
+  }
+}
+
+/**
+ * 結界紋様の発光帯: 壁面上の薄い面(縁の弱い光)。
+ * params.tilt は面内回転(菱形紋の合成用。ローカル矩形の中心まわり)。
+ */
+function sigilPart(part: Part, glow: GeoBuffer): void {
+  const xf = makeXform(part);
+  const tilt = part.params?.tilt ?? 0;
+  const cosT = Math.cos(tilt);
+  const sinT = Math.sin(tilt);
+  const rot = (x: number, y: number): L => {
+    const dx = x;
+    const dy = y - 0.5;
+    return [dx * cosT - dy * sinT, 0.5 + dx * sinT + dy * cosT, 0];
+  };
+  const verts = [rot(-0.5, 0), rot(0.5, 0), rot(0.5, 1), rot(-0.5, 1)].map(xf);
+  const inside = xf([0, 0.5, -1]);
+  pushFace(glow, verts, [1, 1, 1, 1], inside, glowWeightColor(GLOW_EDGE_WEIGHT), 1);
+}
+
+/** 開口枠の 2D 輪郭(x, y)。z は framedOpening が付ける */
+type P2 = [number, number];
+
+/**
+ * 枠付き開口の汎用形状: 外輪郭と内輪郭の間の枠(前面+外周の返し)、
+ * 内輪郭の奥面(暗色または発光面)、奥面までのリベール(見込み)を張る。
+ * 開口部品の変換規約(枠 z −0.2〜+0.5、奥面は枠より低い +z)に従う。
+ */
+function framedOpening(
+  solid: GeoBuffer,
+  xf: (p: L) => W,
+  base: THREE.Color,
+  outer: P2[],
+  inner: P2[],
+  innerFace: { buf: GeoBuffer; color: THREE.Color; mottle: number },
+): void {
+  const zf = 0.5; // 枠の前面
+  const zd = OPENING_INSET_Z; // 奥面
+  const zb = -0.2; // 枠の背(壁へ埋まる側)
+  const n = outer.length;
+  let icx = 0;
+  let icy = 0;
+  for (const [x, y] of inner) {
+    icx += x;
+    icy += y;
+  }
+  icx /= inner.length;
+  icy /= inner.length;
+  const axisFront = xf([icx, icy, -1]); // 開口の奥(壁の中)
+  // 奥面
+  const faceVerts = inner.map(([x, y]) => xf([x, y, zd]));
+  pushFace(
+    innerFace.buf,
+    faceVerts,
+    inner.map(() => 1),
+    axisFront,
+    innerFace.color,
+    innerFace.mottle,
+  );
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const o0 = outer[i] as P2;
+    const o1 = outer[j] as P2;
+    const i0 = inner[i] as P2;
+    const i1 = inner[j] as P2;
+    // 枠の前面(外輪郭 ↔ 内輪郭)
+    pushFace(
+      solid,
+      [xf([o0[0], o0[1], zf]), xf([o1[0], o1[1], zf]), xf([i1[0], i1[1], zf]), xf([i0[0], i0[1], zf])],
+      [1, 1, 1, 1],
+      axisFront,
+      base,
+      1,
+    );
+    // リベール(内輪郭に沿って奥面 → 前面)。法線は開口の中心軸を向く
+    const mid = xf([(i0[0] + i1[0]) / 2, (i0[1] + i1[1]) / 2, (zd + zf) / 2]);
+    const axis = xf([icx, icy, (zd + zf) / 2]);
+    const away: W = [mid[0] * 2 - axis[0], mid[1] * 2 - axis[1], mid[2] * 2 - axis[2]];
+    pushFace(
+      solid,
+      [xf([i0[0], i0[1], zd]), xf([i1[0], i1[1], zd]), xf([i1[0], i1[1], zf]), xf([i0[0], i0[1], zf])],
+      [0.82, 0.82, 0.82, 0.82],
+      away,
+      base,
+      1,
+    );
+    // 枠の外周の返し(壁へ埋まる側 → 前面)。法線は中心軸から外向き
+    const oaxis = xf([icx, icy, zf / 2]);
+    pushFace(
+      solid,
+      [xf([o0[0], o0[1], zb]), xf([o1[0], o1[1], zb]), xf([o1[0], o1[1], zf]), xf([o0[0], o0[1], zf])],
+      [1, 1, 1, 1],
+      oaxis,
+      base,
+      1,
+    );
+  }
+}
+
+/** 正 n 角形の輪郭(中心 (cx, cy)、半径 r) */
+function ngon(cx: number, cy: number, r: number, n: number): P2[] {
+  const pts: P2[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  return pts;
+}
+
+/** 矩形の輪郭(枠の見付け t を内側へ取るときは inset に渡す) */
+function rectOutline(inset: number, insetY: number): P2[] {
+  return [
+    [-0.5 + inset, insetY],
+    [0.5 - inset, insetY],
+    [0.5 - inset, 1 - insetY],
+    [-0.5 + inset, 1 - insetY],
+  ];
+}
+
+/** 発光開口: 枠(躯体)+発光面(発光束)。開口部品の変換規約に従う */
+function glowWindowPart(
+  part: Part,
+  solid: GeoBuffer,
+  glow: GeoBuffer,
+  base: THREE.Color,
+): void {
+  const xf = makeXform(part);
+  const [sx, sy] = part.transform.scale;
+  const tx = Math.min(0.3, FRAME_T / Math.max(sx, 1e-6));
+  const ty = Math.min(0.3, FRAME_T / Math.max(sy, 1e-6));
+  framedOpening(solid, xf, base, rectOutline(0, 0), rectOutline(tx, ty), {
+    buf: glow,
+    color: glowWeightColor(GLOW_CORE_WEIGHT),
+    mottle: 1,
+  });
+}
+
+/** 薔薇窓風: 16角形の枠+スポーク+暗色奥面(非発光) */
+function roseWindowPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  framedOpening(buf, xf, base, ngon(0, 0.5, 0.5, 16), ngon(0, 0.5, 0.36, 16), {
+    buf,
+    color: OPENING_COLOR,
+    mottle: 1,
+  });
+  // スポーク(車輪の桟): 中心のハブ+十字・斜めの細い桟
+  const zs = OPENING_INSET_Z + 0.06;
+  const inside = xf([0, 0.5, -1]);
+  const spoke = (angle: number): void => {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const r = 0.36;
+    const w = 0.035;
+    const verts = [
+      xf([-c * r - s * w, 0.5 - s * r + c * w, zs]),
+      xf([-c * r + s * w, 0.5 - s * r - c * w, zs]),
+      xf([c * r + s * w, 0.5 + s * r - c * w, zs]),
+      xf([c * r - s * w, 0.5 + s * r + c * w, zs]),
+    ];
+    pushFace(buf, verts, [1, 1, 1, 1], inside, base, 1);
+  };
+  spoke(0);
+  spoke(Math.PI / 4);
+  spoke(Math.PI / 2);
+  spoke((3 * Math.PI) / 4);
+  const hub = ngon(0, 0.5, 0.09, 8).map(([x, y]) => xf([x, y, zs + 0.02]));
+  pushFace(buf, hub, ngon(0, 0.5, 0.09, 8).map(() => 1), inside, base, 1);
+}
+
+/** 尖頭窓風: 五角形(尖りアーチ)の枠+暗色奥面(非発光) */
+function archWindowPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  const outer: P2[] = [
+    [-0.5, 0],
+    [0.5, 0],
+    [0.5, 0.72],
+    [0, 1],
+    [-0.5, 0.72],
+  ];
+  const inner: P2[] = [
+    [-0.36, 0.04],
+    [0.36, 0.04],
+    [0.36, 0.66],
+    [0, 0.88],
+    [-0.36, 0.66],
+  ];
+  framedOpening(buf, xf, base, outer, inner, {
+    buf,
+    color: OPENING_COLOR,
+    mottle: 1,
+  });
+}
+
 /**
  * マージ経路の型ハンドラ(PHASE 5 以降もここへ追加登録する)。
  * 経路の切替は MERGE_HANDLERS / INSTANCED_TYPES の型キー単位の登録移動で
@@ -480,6 +769,26 @@ const MERGE_HANDLERS: Record<
   fence: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
   stair: (part, buf, base) => stairPart(part, buf, base),
   dormer: (part, buf, base) => dormerPart(part, buf, base),
+  // --- PHASE 5a commit 16: 中心建築(塔・尖塔・中庭壁・大型開口) ---
+  tower: (part, buf, base) => towerPart(part, buf, base),
+  spire: (part, buf, base) => spirePart(part, buf, base),
+  "courtyard-wall": (part, buf, base) => courtyardWallPart(part, buf, base),
+  "rose-window": (part, buf, base) => roseWindowPart(part, buf, base),
+  "arch-window": (part, buf, base) => archWindowPart(part, buf, base),
+};
+
+/**
+ * 発光束の型ハンドラ(PHASE 5a)。crystal / sigil は発光束のみ、
+ * glow-window は枠を躯体束へ・発光面を発光束へ振り分ける。
+ */
+const GLOW_HANDLERS: Record<
+  string,
+  (part: Part, solid: GeoBuffer, glow: GeoBuffer, base: THREE.Color) => void
+> = {
+  crystal: (part, _solid, glow) => crystalPart(part, glow),
+  sigil: (part, _solid, glow) => sigilPart(part, glow),
+  "glow-window": (part, solid, glow, base) =>
+    glowWindowPart(part, solid, glow, base),
 };
 
 /**
@@ -589,14 +898,69 @@ function buildPoolMesh(
 }
 
 /**
- * 建物一式のメッシュを構築する。
- * 戻り値: 躯体マージ 1 + 屋根マージ 1 + インスタンスプールの
- * InstancedMesh(building-trim / building-openings / building-piles。
- * 存在するもののみ)。draw call は建物全体で 5 前後に収まる(1.8節の予算)。
+ * 発光束のマテリアル: ベース #2a3a38 + emissive #5fd4c0 ×
+ * emissiveIntensity 2.0(art-direction 5.4節)。頂点カラーは発光の重み
+ * (コア 1.0 / 紋様 0.35)として拡散と emissive の両方に乗る。
+ * 明滅(±0.3 = ±15%、周期約 5.5 秒)はビューワーの時間 uniform で行い、
+ * 位相は位置ハッシュ由来。reduced-motion では uniform が更新されず静止する。
  */
-export function buildBuildings(model: WorldModel): THREE.Object3D[] {
+function glowMaterial(timeUniform: TimeUniform): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    color: new THREE.Color(GLOW_BASE_COLOR),
+    emissive: new THREE.Color(GLOW_EMISSIVE_COLOR),
+    emissiveIntensity: GLOW_EMISSIVE_INTENSITY,
+    roughness: 0.55,
+    metalness: 0,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uGlowTime = timeUniform;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vGlowWorld;")
+      .replace(
+        "#include <begin_vertex>",
+        "#include <begin_vertex>\nvGlowWorld = transformed;",
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform float uGlowTime;\nvarying vec3 vGlowWorld;",
+      )
+      .replace(
+        "#include <emissivemap_fragment>",
+        `#include <emissivemap_fragment>
+        {
+          // 明滅 ±15%(= 2.0 ± 0.3)・周期 約5.5秒。位相は位置ハッシュ由来
+          float phase = fract(sin(dot(floor(vGlowWorld.xz * 0.5),
+            vec2(12.9898, 78.233))) * 43758.5453) * 6.2832;
+          totalEmissiveRadiance *= 1.0 + 0.15 * sin(uGlowTime * 1.14 + phase);
+          #ifdef USE_COLOR
+          // 頂点カラー = 発光の重み(コア 1.0 / 紋様 0.35)。
+          // three r185 では vColor は vec4(color_pars_fragment)
+          totalEmissiveRadiance *= vColor.rgb;
+          #endif
+        }`,
+      );
+  };
+  material.customProgramCacheKey = () => "pfd-buildings-glow";
+  return material;
+}
+
+/**
+ * 建物一式のメッシュを構築する。
+ * 戻り値: 躯体マージ 1 + 屋根マージ 1 + 発光束マージ 1(発光部品が
+ * あるときのみ)+ インスタンスプールの InstancedMesh(building-trim /
+ * building-openings / building-piles。存在するもののみ)。
+ * draw call は建物全体で 6 前後に収まる(1.8節の予算)。
+ * timeUniform はビューワーが毎フレーム更新する共有の時間(水面と同じ流儀)。
+ */
+export function buildBuildings(
+  model: WorldModel,
+  timeUniform: TimeUniform,
+): THREE.Object3D[] {
   const solid: GeoBuffer = { positions: [], normals: [], colors: [], indices: [] };
   const roof: GeoBuffer = { positions: [], normals: [], colors: [], indices: [] };
+  const glow: GeoBuffer = { positions: [], normals: [], colors: [], indices: [] };
   const pools: InstancePools = { boxes: [], planes: [], piles: [] };
   let unknown = 0;
 
@@ -606,6 +970,11 @@ export function buildBuildings(model: WorldModel): THREE.Object3D[] {
       if (handler) {
         const buf = ROOF_MATERIAL_IDS.has(part.materialId) ? roof : solid;
         handler(part, buf, materialColor(part.materialId));
+        continue;
+      }
+      const glowHandler = GLOW_HANDLERS[part.type];
+      if (glowHandler) {
+        glowHandler(part, solid, glow, materialColor(part.materialId));
         continue;
       }
       const instanced = INSTANCED_TYPES[part.type];
@@ -634,6 +1003,15 @@ export function buildBuildings(model: WorldModel): THREE.Object3D[] {
   };
   addMerged(solid, "buildings-solid", 1);
   addMerged(roof, "buildings-roof", 0.92);
+
+  // 発光束(1 マージ束のみ。影は落とさない。Bloom・動的光源は使わない)
+  if (glow.indices.length > 0) {
+    const mesh = new THREE.Mesh(buildGeoBuffer(glow), glowMaterial(timeUniform));
+    mesh.name = "buildings-glow";
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    out.push(mesh);
+  }
 
   // インスタンス経路(共有プールごとに 1 InstancedMesh)。
   // 影は building-trim(主要 InstancedMesh)のみ落とす(1.8節)

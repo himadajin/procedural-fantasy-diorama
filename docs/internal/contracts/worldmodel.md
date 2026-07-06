@@ -483,8 +483,9 @@ interface Plaza {
   footprint と衝突する場合は方位回転と半径縮小の決定論的な候補探索で
   回避する。`"gate"` は各結界門の内側(中心側)、`"bridgehead"` は橋の袂
   (中心に近い側を優先。採択は watersideRate 駆動の確率)、`"crossing"` は
-  主道どうしの交差ノード(確率的)。`"courtyard"` は PHASE 5a の担当
-  (本PHASEでは生成しない)
+  主道どうしの交差ノード(確率的)。`"courtyard"` は段12「建物」の
+  中心建築展開(PHASE 5a)が中庭壁の内側に追加する
+  (Parcel / Building 節「中心建築」)
 - `polygon` は `position` 中心の不整形 n 角形(時計回り。radius 基準で
   0.88〜1.0 倍の揺らぎ。頂点は radius の円内)
 - 衝突回避: 採択順(center → gate → bridgehead → crossing)で、既採択
@@ -627,8 +628,9 @@ interface Building {
   role: "house" | "waterside" | "bridgehead" | "hall"
       | "warehouse" | "outskirt" | "center";
   footprint: Polygon;            // 矩形/L字/T字。セットバック込み。時計回り・自己交差なし
+                                 // (中心建築は主棟+翼棟の外形。矩形/L/U。下記「中心建築」)
   facing: number;                // 正面方位(xz 偏角。広場 > 道路 > 水面の優先+揺らぎ込み)
-  floors: number;                // 階数。1〜3 の整数
+  floors: number;                // 階数。1〜3 の整数(中心建築の主棟のみ 1〜5)
   roof: { type: "gable" | "hip" | "compound"; pitch: number };
                                  // pitch は度数(50〜58。art-direction 6節)
   foundation: Foundation;        // 接地(基壇・杭・石基礎)。段12の骨格データ(commit 12)
@@ -734,6 +736,34 @@ PHASE 4b commit 14 の追加語彙(開口・木組み・煙突・付属):
   奥面の色は art-direction 5.1節の開口暗色 `#352c22` 固定
   (発光させない。窓明かりの emissive は使わない)
 
+PHASE 5a commit 16 の追加語彙(中心建築の拡張文法):
+
+| type | 経路 | 形状 | scale の意味 | params |
+|---|---|---|---|---|
+| `tower` | マージ(躯体) | 塔身(先細りの角柱+天端面。上端の辺長 = 底辺 × taper) | 幅×高さ×奥行き | `taper`: 先細り率(0.3〜1) |
+| `spire` | マージ(屋根束) | 尖塔屋根(四角錐+軒裏。魔導塔の尖り屋根・物見塔の屋根と共用の文法) | 底辺×高さ×底辺 | なし |
+| `crystal` | マージ(発光束) | 頂部水晶(八面体。全面が発光コア `#5fd4c0`。細身に保つ=発光面の幅を絞る) | 幅×全高×奥行き | なし |
+| `glow-window` | マージ(枠は躯体、発光面は発光束) | 発光開口(枠+枠より奥の発光面。開口部品の変換規約に従う) | 開口幅×開口高×枠の突出 | なし |
+| `sigil` | マージ(発光束) | 結界紋様の発光帯(壁・塔面上の薄い面。position は帯下端中心、ローカル z=0 の面。取り付け面から浮かせる量は position 側で持つ) | 帯長×帯幅×(未使用 1) | `tilt`: 面内回転(rad。菱形紋の合成用) |
+| `rose-window` | マージ(躯体) | 薔薇窓風の円形大開口(16角形の枠+スポーク+暗色奥面 `#352c22`。非発光。開口部品の変換規約) | 直径×直径×枠の突出 | なし |
+| `arch-window` | マージ(躯体) | 尖頭窓風の大開口(五角形の枠+暗色奥面 `#352c22`。非発光。開口部品の変換規約) | 開口幅×開口高(頂点まで)×枠の突出 | なし |
+| `courtyard-wall` | マージ(躯体) | 中庭壁のセグメント(壁体+笠。胸壁・狭間は作らない) | 長さ×高さ×厚み | なし |
+
+- 再利用する既存語彙: `plinth` / `wall` / `gable` / `hip` / `window` /
+  `door` / `chimney` / `stair`。`stair` の `steps` は一般建物 2〜4、
+  中心建築の前庭階段では 2〜10 に拡張する
+- 発光束(メッシュビルダーの第3のマージ束): `crystal` / `sigil` /
+  `glow-window` の発光面を 1 つの統合ジオメトリ `buildings-glow` に
+  集約する(draw call +1 のみ)。マテリアルは
+  ベース(拡散)`#2a3a38` 固定 + emissive `#5fd4c0` +
+  emissiveIntensity 2.0(art-direction 5.4節)。頂点カラーは発光の
+  重み(コア 1.0 / 紋様・縁 0.35 → 実効 0.7 = 同節の 0.6〜0.8 帯)として
+  拡散と emissive の両方に乗る。明滅はビューワーの時間 uniform
+  (水面と共有の `userData.waterTime`)で ±15%(= 2.0 ± 0.3)、
+  周期約 5.5 秒、位相は位置ハッシュ由来(乱数ストリーム非消費)。
+  prefers-reduced-motion では uniform が更新されず静止する。
+  Bloom・動的光源は使わない。castShadow は false
+
 #### materialId の語彙(基準色は art-direction 5.1節)
 
 | materialId | 基準色 | 用途 |
@@ -747,6 +777,7 @@ PHASE 4b commit 14 の追加語彙(開口・木組み・煙突・付属):
 | `shingle` | `#7a6a52` | 木羽屋根 |
 | `tile` | `#a0563c` | 瓦屋根 |
 | `slate` | `#5c6b7a` | スレート屋根 |
+| `glow` | (art-direction 5.4節) | 発光部品(`crystal` / `sigil`)。基準色表は使わず、発光束のマテリアル規範(上記)に従う |
 
 - 色の正はメッシュビルダーの基準色表(`src/mesh/buildings.ts`)とし、
   art-direction 5.1節と同期させる。頂点カラーは基準色 × 面ごとの
@@ -939,6 +970,94 @@ PHASE 4b commit 14 の詳細部品の性質(開口・木組み・煙突・付属
   beam / chimney の InstancedMesh 化(「インスタンス経路のピース分解」)は
   commit 15 で完了。小道は段13 の担当で、建物の部品リスト・乱数消費は
   commit 14 から変わらない
+
+#### 中心建築(PHASE 5a commit 16)
+
+段12「建物」が、一般建物(区画 1:1)の展開後に中心建築 1 棟を
+専用の拡張文法で展開し、`buildings` の末尾に追加する。専用段は設けない
+(スカイライン検証が「周辺一般建物の最高点」を入力とするため、
+一般建物の後・同一段内で生成する)。立体化は PHASE 5a で完成品質
+(浮遊要素クラスタの立体化のみ PHASE 5b の担当。中心建築は
+towers / gates / shrines と同様に floaters の anchor にはならない=
+接続は既存の wards.floaters 計画のまま変更しない)。
+
+- **入力**: `centerPlan`(position / footprint / axes / facing / heightHint)
+  と `derived`(centerFootprint / centerHeight / skylineRatio /
+  glowAreaCap 等)。部品の配置は centerPlan.footprint(軸平行正方形)に
+  内接する facing 向きの正方形 = 使用領域
+  (一辺 = centerFootprint × 1/(|cos δ|+|sin δ|) − マージン 1.2。
+  δ = facing の 90° 剰余)の中で行い、前庭階段を含む全部品が
+  centerPlan.footprint 内に収まる
+- **Building フィールド**: id `"building/center"`、parcelId null、
+  role `"center"`、facing = centerPlan.facing、floors = 主棟の階数
+  (1〜5。一般建物の 1〜3 の例外)、roof = 主棟の屋根
+  (翼棟・塔を伴うため合成時は "compound")、materials は支配軸から
+  (下表)、foundation は kind "plinth"・bottomY 0
+  (footprint 頂点が水面(河川・湖)にかかる場合は接地契約に従い
+  kind "stonebase"・bottomY −1.6・overWater true)
+- **footprint**: 主棟+翼棟の外形(矩形 4 / L字 6 / U字 8 頂点。
+  時計回り・自己交差なし)。中庭・前庭・中庭壁・塔の張り出しは
+  footprint に含めない(塔は主棟に接して立つ)。zoneMask の建物上書きは
+  一般建物と同じ流儀(石造系 → paved)
+- **4軸 → 骨格・装飾**(implementation-spec 1.7節。axes の最大軸が骨格、
+  2位軸が装飾傾向。同点は arcane > authority > waterside > rustic の
+  固定順で解決):
+  - 骨格(最大軸):
+    - arcane: 主棟+大魔導塔(細長い塔身 taper 0.8+頂部水晶。
+      様式言語 6節の高さの誇張。塔身幅は高さの 1/5 以下)+
+      発光開口の列+結界紋様。Monumentality ≥ 0.65 で中庭奥の隅に
+      小塔(頂部水晶)2 基
+    - authority: 主棟+正面両脇の双塔(尖塔屋根)+正面の薔薇窓+
+      整列した尖頭窓(大聖堂・宮殿風)
+    - waterside: 主棟(館)+最も水面に近い背面隅の塔(尖塔屋根)。
+      屋根は瓦(湖畔の館・川沿いの塔)
+    - rustic: 大農家の主棟(茅/木羽・煙突・低層)+物見塔
+      (木造・尖り屋根)+低い中庭壁(宿場・物見塔の趣)
+  - 装飾(2位軸。スコア ≥ 0.15 のときのみ付加し、微小スコアの
+    seed 揺らぎで装飾が跳ばないようにする): arcane → 結界紋様(sigil)と
+    発光開口を付加、authority → 薔薇窓・尖頭窓を付加(例:「装飾的な窓と
+    大屋根を持つ魔導城」)。waterside / rustic が2位のときは
+    付加装飾なし(素の骨格)
+  - 共通: 翼棟(Monumentality と敷地規模で 0〜2。U字の中庭を作る)、
+    大屋根(勾配 50〜58 度・深い軒)、正面の大扉+前庭階段
+    (stair。steps 2〜10)、中庭壁(courtyard-wall)
+- **materials**(支配軸 → 基準素材。trim は一般建物と同じ規則
+  (石造系 → stone、他 → wood)):
+
+  | 支配軸 | wall | roof |
+  |---|---|---|
+  | arcane | `stone`(wallTier ≥ 2.2 で `ashlar`) | `slate` |
+  | authority | `ashlar` | `slate` |
+  | waterside | `stone` | `tile` |
+  | rustic | `rough-wood`(wallTier ≥ 0.8 で `plaster`) | `thatch`(roofTier ≥ 1.0 で `shingle`) |
+
+- **中庭**: 中庭壁の内側に kind `"courtyard"` の Plaza を段12 が追加する
+  (中庭の奥行きが 6 以上のときのみ。id `"plaza/courtyard"`、polygon は
+  壁・主棟から 0.8 内側の矩形、radius は外接円半径。Plaza 節の
+  「position 中心の不整形 n 角形」の例外)。描画は既存の広場描画を共用し、
+  zoneMask には触れない(段10 は変更しない)
+- **スカイライン契約**: 周辺最高点 P = 一般建物の全部品の最高点
+  (`position.y + scale.y` の最大。一般建物が無い場合は 0)。
+  中心建築の最高点(同じ定義)は `P × derived.skylineRatio` 以上で
+  なければならない。生成時に主塔(最も高い塔)の塔身高を
+  `max(centerPlan.heightHint, P × skylineRatio × 1.03)` の頂部高まで
+  引き上げてこれを満たし、段12 のパイプライン内アサーションが
+  事後検証する(違反は throw せず件数を console に出す)
+- **発光の規律**(art-direction 5.4節): 発光部品は `crystal` /
+  `sigil` / `glow-window` の発光面のみ(発光は青緑=魔法のみ。
+  窓明かりの琥珀 emissive は存在しない)。発光開口の開口寸法は
+  1 階高(3.0)の 1/3 以下、水晶は幅 1.0 以下の細身。
+  発光面積(発光ジオメトリの面積合計。`src/pipeline/center.ts` の
+  `glowPartArea` が正)は `glowAreaCap × 箱庭面積(boundary の面積)×
+  0.35`(中心建築の取り分。残りは PHASE 5b の結界要素)以下とし、
+  超えないよう発光開口・紋様の追加を打ち切る。段12 のアサーションで検証
+- **乱数**: 骨格は `"building/center"`、開口・窓の詳細は
+  `"building/center/details"` のみ消費する(一般建物のストリームに
+  波及しない)。骨格ストリームの消費数は入力に依らず固定
+- **一般建物アサーションの例外**: 中心建築は接道正面(親区画なし)と
+  道路・広場の重なり検査の対象外(主道は中心へ収束して footprint 下で
+  終端し、前庭・基壇の下へ潜る設計判断)。建物どうしの重なり・
+  接地契約(overWater ⇔ 頂点の水上)は一般建物と同様に対象
 
 ```ts
 interface Vegetation {

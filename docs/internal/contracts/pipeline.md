@@ -62,7 +62,7 @@ interface Rng {
 | 9 | 広場 | pipeline/plazas | 〜wards | plazas、centerPlan.facing/heightHint |
 | 10 | 舗装 | pipeline/paving | 〜plazas(network / water.canals / plazas) | ground.zoneMask(舗装チャネル上書き) |
 | 11 | 区画 | pipeline/parcels | 〜舗装 | density.final、parcels |
-| 12 | 建物 | pipeline/buildings | 〜parcels | buildings(骨格+部品リスト) |
+| 12 | 建物 | pipeline/buildings | 〜parcels | buildings(骨格+部品リスト。中心建築を含む)、plazas(中庭 "courtyard" の追記) |
 | 13 | 小道 | pipeline/lanes | 〜buildings | network.nodes/edges(lane の追記のみ)、ground.zoneMask(小道の舗装追記)、summary.scale.roadLength(加算) |
 | 14 | 植生 | pipeline/vegetation | 〜lanes | vegetation |
 | 15 | サマリー | pipeline/summary | 全部 | summary |
@@ -101,6 +101,14 @@ interface Rng {
   段11は要素サブストリーム `"parcel/<id>"`、段12は `"building/<id>"` のみを
   消費する(段レベルの共有ストリームを持たない)。density.final の算出は
   乱数を消費しない(worldmodel.md Density 節)。
+- 段12「建物」は一般建物の展開後、中心建築 1 棟(role "center"、
+  parcelId null)を専用の拡張文法(pipeline/center)で展開して
+  buildings の末尾に追加し、中庭の Plaza(kind "courtyard")を
+  plazas へ追記する(PHASE 5a。worldmodel.md Parcel / Building 節
+  「中心建築」)。乱数は `"building/center"` /
+  `"building/center/details"` のみを消費する。スカイライン検証
+  (中心最高点 ≥ 周辺一般建物の最高点 × derived.skylineRatio)と
+  発光面積の上限は段12 のパイプライン内アサーションで検証する。
 
 ## チャンク実行フレームワーク
 
