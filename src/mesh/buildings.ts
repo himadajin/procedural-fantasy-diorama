@@ -3,17 +3,22 @@
  * 一括処理する(implementation-spec 1.8節・9節、contracts/worldmodel.md
  * 「Part の型語彙」)。WorldModel のみを入力とする(contracts/pipeline.md)。
  *
- * - マージ経路(plinth / wall / gable / hip): マテリアル束(躯体/屋根)別の
- *   頂点カラー付き統合ジオメトリへ集約する(束ごとに 1 draw call)
- * - インスタンス経路(pile): 型ごとの InstancedMesh
- * - PHASE 4b 以降の部品型(窓・扉・梁・煙突など)は MERGE_HANDLERS /
- *   INSTANCED_TYPES へのハンドラ追加登録のみで加える(後付けの最適化に
- *   しない。同 9節)。未知の型は warn を出して読み飛ばす(生成は壊さない)
- * - 頂点カラー: 基準色(art-direction 5.1節)× 面ごとの ±8% 明度ムラ
+ * - マージ経路(plinth / wall / gable / hip / jetty / fence / stair /
+ *   dormer): マテリアル束(躯体/屋根)別の頂点カラー付き統合ジオメトリへ
+ *   集約する(束ごとに 1 draw call)
+ * - インスタンス経路(pile / window / door / beam / chimney):
+ *   型ごとのハンドラが部品を共有プールのピース(軸平行の箱・+z 向きの面)へ
+ *   分解し、`building-trim`(箱)/ `building-openings`(面)/
+ *   `building-piles`(杭)の InstancedMesh へ集約する
+ *   (contracts/worldmodel.md「インスタンス経路のピース分解」)。
+ *   経路の切替は MERGE_HANDLERS / INSTANCED_TYPES の型キー単位の登録移動
+ *   のみで行える。未知の型は warn を出して読み飛ばす(生成は壊さない)
+ * - 頂点カラー / instanceColor: 基準色(art-direction 5.1節)× ±8% 明度ムラ
  *   (位置ハッシュ由来。乱数ストリーム非消費)× 壁足元・基壇下端・軒裏の
- *   焼き込みAO(同 3節)
- * - 影: castShadow は統合ジオメトリ(躯体・屋根)に限定し、
- *   杭 InstancedMesh は受けるだけにする(1.8節の影キャスター規律)
+ *   焼き込みAO(同 3節)。インスタンスは基準色×個体ムラを instanceColor に
+ *   持ち、形状・寸法はマージ展開と同一(経路変更で絵を変えない)
+ * - 影: castShadow は統合ジオメトリ(躯体・屋根)と主要 InstancedMesh
+ *   (building-trim)に限定する(1.8節の影キャスター規律)
  */
 import * as THREE from "three";
 import type { Building, Part, WorldModel } from "../model/worldmodel";
@@ -263,58 +268,118 @@ function subBox(
   face(buf, xf, [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]], s4, inside, base);
 }
 
+// --- インスタンス経路のピース分解(PHASE 4b commit 15。
+//     contracts/worldmodel.md「インスタンス経路のピース分解」) ---
+
+/** 共有プールへ積むピース(色は基準色×個体ムラを掛けた最終値) */
+interface Piece {
+  position: W;
+  rotation: number;
+  scale: [number, number, number];
+  color: THREE.Color;
+}
+
+/** インスタンス経路の共有プール */
+interface InstancePools {
+  /** 単位箱 [-0.5,0.5]×[0,1]×[-0.5,0.5](building-trim) */
+  boxes: Piece[];
+  /** +z 向きの単位面 [-0.5,0.5]×[0,1](building-openings) */
+  planes: Piece[];
+  /** 杭(building-piles。従来どおり部品 1 つ = 1 インスタンス) */
+  piles: Piece[];
+}
+
+/** ピース中心の位置ハッシュによる ±8% の個体ムラ(faceMottle と同係数) */
+function pieceColor(base: THREE.Color, center: W): THREE.Color {
+  const mottle =
+    1 + MOTTLE_AMP * (hash3(center[0], center[1], center[2]) * 2 - 1);
+  return base.clone().multiplyScalar(mottle);
+}
+
+/**
+ * 部品ローカルの軸平行の箱 [x0,x1]×[y0,y1]×[z0,z1] を箱ピースとして積む。
+ * ワールド形状はマージ経路の subBox / boxPart と同一になる
+ * (makeXform と同じ変換をピースのトランスフォームへ畳み込む)。
+ */
+function boxPiece(
+  pools: InstancePools,
+  part: Part,
+  color: THREE.Color,
+  x0: number,
+  x1: number,
+  y0: number,
+  y1: number,
+  z0: number,
+  z1: number,
+): void {
+  const xf = makeXform(part);
+  const [sx, sy, sz] = part.transform.scale;
+  pools.boxes.push({
+    position: xf([(x0 + x1) / 2, y0, (z0 + z1) / 2]),
+    rotation: part.transform.rotation,
+    scale: [(x1 - x0) * sx, (y1 - y0) * sy, (z1 - z0) * sz],
+    color: pieceColor(color, xf([(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2])),
+  });
+}
+
+/** 部品ローカルの +z 向きの矩形(z 固定)を面ピースとして積む */
+function planePiece(
+  pools: InstancePools,
+  part: Part,
+  color: THREE.Color,
+  x0: number,
+  x1: number,
+  y0: number,
+  y1: number,
+  z: number,
+): void {
+  const xf = makeXform(part);
+  const [sx, sy] = part.transform.scale;
+  pools.planes.push({
+    position: xf([(x0 + x1) / 2, y0, z]),
+    rotation: part.transform.rotation,
+    scale: [(x1 - x0) * sx, (y1 - y0) * sy, 1],
+    color: pieceColor(color, xf([(x0 + x1) / 2, (y0 + y1) / 2, z])),
+  });
+}
+
 /**
  * 開口(窓・扉): 壁面上の枠+枠より奥まった暗色面(壁に穴は開けない。
  * art-direction 6節のセットバック表現)。position は壁面上の開口下端中心、
  * ローカル +z が外向き法線(contracts/worldmodel.md 開口部品の変換規約)。
  * 枠は z −0.2〜+0.5 で壁へ半ば埋まり、奥面は枠より低い +z に置く。
+ * 枠の見付け(FRAME_T)は部品寸法からピース生成時に計算するため実寸固定。
  */
-function openingPart(
+function openingPieces(
+  pools: InstancePools,
   part: Part,
-  buf: GeoBuffer,
   base: THREE.Color,
   kind: "window" | "door",
 ): void {
-  const xf = makeXform(part);
   const [sx, sy] = part.transform.scale;
   const tx = Math.min(0.3, FRAME_T / Math.max(sx, 1e-6));
   const ty = Math.min(0.3, FRAME_T / Math.max(sy, 1e-6));
   // 枠: 左右+上(窓は下枠=窓台も)
-  subBox(buf, xf, base, -0.5, -0.5 + tx, 0, 1, -0.2, 0.5);
-  subBox(buf, xf, base, 0.5 - tx, 0.5, 0, 1, -0.2, 0.5);
-  subBox(buf, xf, base, -0.5 + tx, 0.5 - tx, 1 - ty, 1, -0.2, 0.5);
+  boxPiece(pools, part, base, -0.5, -0.5 + tx, 0, 1, -0.2, 0.5);
+  boxPiece(pools, part, base, 0.5 - tx, 0.5, 0, 1, -0.2, 0.5);
+  boxPiece(pools, part, base, -0.5 + tx, 0.5 - tx, 1 - ty, 1, -0.2, 0.5);
   if (kind === "window") {
-    subBox(buf, xf, base, -0.5 + tx, 0.5 - tx, 0, ty, -0.2, 0.5);
+    boxPiece(pools, part, base, -0.5 + tx, 0.5 - tx, 0, ty, -0.2, 0.5);
   }
   // 奥面(窓は開口の暗色固定、扉は木部を沈めた扉板。発光させない)
   const y0 = kind === "window" ? ty : 0;
   const z = kind === "window" ? OPENING_INSET_Z : DOOR_LEAF_Z;
   const inner =
     kind === "window" ? OPENING_COLOR : base.clone().multiplyScalar(DOOR_LEAF_SHADE);
-  const inside = xf([0, 0.5, -0.5]);
-  face(
-    buf,
-    xf,
-    [[-0.5 + tx, y0, z], [0.5 - tx, y0, z], [0.5 - tx, 1 - ty, z], [-0.5 + tx, 1 - ty, z]],
-    [1, 1, 1, 1],
-    inside,
-    inner,
-  );
+  planePiece(pools, part, inner, -0.5 + tx, 0.5 - tx, y0, 1 - ty, z);
 }
 
-/** 煙突: 胴+笠(過大な冠)。頂面の焚き口は開口の暗色 */
-function chimneyPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
-  const xf = makeXform(part);
-  subBox(buf, xf, base, -0.5, 0.5, 0, 0.88, -0.5, 0.5);
-  subBox(buf, xf, base, -0.66, 0.66, 0.86, 1, -0.66, 0.66);
-  face(
-    buf,
-    xf,
-    [[-0.34, 1.002, -0.34], [0.34, 1.002, -0.34], [0.34, 1.002, 0.34], [-0.34, 1.002, 0.34]],
-    [1, 1, 1, 1],
-    xf([0, 0.5, 0]),
-    OPENING_COLOR,
-  );
+/** 煙突: 胴+笠(過大な冠)+頂部の焚き口(開口の暗色の薄箱) */
+function chimneyPieces(pools: InstancePools, part: Part, base: THREE.Color): void {
+  boxPiece(pools, part, base, -0.5, 0.5, 0, 0.88, -0.5, 0.5);
+  boxPiece(pools, part, base, -0.66, 0.66, 0.86, 1, -0.66, 0.66);
+  // 頂面の暗色(マージ経路の y=1.002 の面と同等。笠へ薄く埋めた箱で表す)
+  boxPiece(pools, part, OPENING_COLOR, -0.34, 0.34, 0.996, 1.004, -0.34, 0.34);
 }
 
 /** 外階段: 踏面の直方体の段列(−z が壁側、+z へ降りる) */
@@ -392,9 +457,9 @@ function roofPart(part: Part, buf: GeoBuffer, base: THREE.Color, hip: boolean): 
 
 /**
  * マージ経路の型ハンドラ(PHASE 5 以降もここへ追加登録する)。
- * PHASE 4b commit 14 の window / door / beam / chimney は commit 15 で
- * INSTANCED_TYPES へ移す(登録表の型キー単位で経路を切り替えられる。
- * それまでマージ束なのは正常なスコープ分割)。
+ * 経路の切替は MERGE_HANDLERS / INSTANCED_TYPES の型キー単位の登録移動で
+ * 行う(PHASE 4b commit 15 で window / door / beam / chimney を
+ * INSTANCED_TYPES へ移行済み)。
  */
 const MERGE_HANDLERS: Record<
   string,
@@ -410,32 +475,38 @@ const MERGE_HANDLERS: Record<
     ),
   gable: (part, buf, base) => roofPart(part, buf, base, false),
   hip: (part, buf, base) => roofPart(part, buf, base, true),
-  // --- PHASE 4b commit 14: 開口・木組み・煙突・付属 ---
-  window: (part, buf, base) => openingPart(part, buf, base, "window"),
-  door: (part, buf, base) => openingPart(part, buf, base, "door"),
-  beam: (part, buf, base) => boxPart(part, buf, base, 1),
+  // --- PHASE 4b commit 14: 付属(ジェッティ・石垣・外階段・屋根小窓) ---
   jetty: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
-  chimney: (part, buf, base) => chimneyPart(part, buf, base),
   fence: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
   stair: (part, buf, base) => stairPart(part, buf, base),
   dormer: (part, buf, base) => dormerPart(part, buf, base),
 };
 
-/** インスタンス経路の型(4b 以降はここへ追加登録する) */
+/**
+ * インスタンス経路の型ハンドラ(部品を共有プールのピースへ分解する。
+ * 4b 以降はここへ追加登録する)。
+ */
 const INSTANCED_TYPES: Record<
   string,
-  { name: string; makeGeometry: () => THREE.BufferGeometry; castShadow: boolean }
+  (part: Part, base: THREE.Color, pools: InstancePools) => void
 > = {
-  pile: {
-    name: "building-piles",
-    makeGeometry: () => {
-      const g = new THREE.BoxGeometry(1, 1, 1);
-      g.translate(0, 0.5, 0); // 原点=底面中心(Part の変換規約と一致)
-      return g;
-    },
-    // 影のキャスターは統合ジオメトリに限定(implementation-spec 1.8節)
-    castShadow: false,
+  pile: (part, base, pools) => {
+    const [px, py, pz] = part.transform.position;
+    // 個体の明度ムラ(位置ハッシュ。乱数非消費。commit 13 と同係数)
+    const mottle = 1 + PILE_MOTTLE * (hash3(px, py, pz) - 0.5);
+    pools.piles.push({
+      position: [px, py, pz],
+      rotation: part.transform.rotation,
+      scale: [...part.transform.scale],
+      color: base.clone().multiplyScalar(mottle),
+    });
   },
+  // --- PHASE 4b commit 15: 開口・梁・煙突のインスタンス化 ---
+  window: (part, base, pools) => openingPieces(pools, part, base, "window"),
+  door: (part, base, pools) => openingPieces(pools, part, base, "door"),
+  beam: (part, base, pools) =>
+    boxPiece(pools, part, base, -0.5, 0.5, 0, 1, -0.5, 0.5),
+  chimney: (part, base, pools) => chimneyPieces(pools, part, base),
 };
 
 function buildGeoBuffer(buf: GeoBuffer): THREE.BufferGeometry {
@@ -463,15 +534,70 @@ function materialColor(id: string): THREE.Color {
   return new THREE.Color(hex ?? MATERIAL_COLORS.stone);
 }
 
+/** 原点=底面中心の単位箱(Part の変換規約と一致) */
+function unitBoxGeometry(): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(1, 1, 1);
+  g.translate(0, 0.5, 0);
+  return g;
+}
+
+/** 原点=下端中心・+z 向きの単位面(開口の暗色面・扉板) */
+function unitPlaneGeometry(): THREE.BufferGeometry {
+  const g = new THREE.PlaneGeometry(1, 1);
+  g.translate(0, 0.5, 0);
+  return g;
+}
+
+/** ピースのプールから InstancedMesh を組む(instanceColor = 基準色×個体ムラ) */
+function buildPoolMesh(
+  pieces: Piece[],
+  geometry: THREE.BufferGeometry,
+  name: string,
+  castShadow: boolean,
+  roughness: number,
+): THREE.InstancedMesh | null {
+  if (pieces.length === 0) {
+    geometry.dispose();
+    return null;
+  }
+  const mesh = new THREE.InstancedMesh(
+    geometry,
+    new THREE.MeshStandardMaterial({ roughness }),
+    pieces.length,
+  );
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i];
+    if (!piece) continue;
+    q.setFromAxisAngle(up, piece.rotation);
+    pos.set(piece.position[0], piece.position[1], piece.position[2]);
+    scl.set(piece.scale[0], piece.scale[1], piece.scale[2]);
+    m.compose(pos, q, scl);
+    mesh.setMatrixAt(i, m);
+    mesh.setColorAt(i, piece.color);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.name = name;
+  mesh.castShadow = castShadow;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
 /**
  * 建物一式のメッシュを構築する。
- * 戻り値: 躯体マージ 1 + 屋根マージ 1 + 型ごとの InstancedMesh(存在する
- * もののみ)。draw call は建物全体で 3 前後に収まる(1.8節の予算)。
+ * 戻り値: 躯体マージ 1 + 屋根マージ 1 + インスタンスプールの
+ * InstancedMesh(building-trim / building-openings / building-piles。
+ * 存在するもののみ)。draw call は建物全体で 5 前後に収まる(1.8節の予算)。
  */
 export function buildBuildings(model: WorldModel): THREE.Object3D[] {
   const solid: GeoBuffer = { positions: [], normals: [], colors: [], indices: [] };
   const roof: GeoBuffer = { positions: [], normals: [], colors: [], indices: [] };
-  const instanceParts = new Map<string, Part[]>();
+  const pools: InstancePools = { boxes: [], planes: [], piles: [] };
   let unknown = 0;
 
   for (const building of model.buildings as Building[]) {
@@ -482,13 +608,9 @@ export function buildBuildings(model: WorldModel): THREE.Object3D[] {
         handler(part, buf, materialColor(part.materialId));
         continue;
       }
-      if (INSTANCED_TYPES[part.type]) {
-        let list = instanceParts.get(part.type);
-        if (!list) {
-          list = [];
-          instanceParts.set(part.type, list);
-        }
-        list.push(part);
+      const instanced = INSTANCED_TYPES[part.type];
+      if (instanced) {
+        instanced(part, materialColor(part.materialId), pools);
         continue;
       }
       unknown++;
@@ -513,42 +635,31 @@ export function buildBuildings(model: WorldModel): THREE.Object3D[] {
   addMerged(solid, "buildings-solid", 1);
   addMerged(roof, "buildings-roof", 0.92);
 
-  // インスタンス経路(型ごとに 1 InstancedMesh)
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const up = new THREE.Vector3(0, 1, 0);
-  const color = new THREE.Color();
-  for (const [type, parts] of instanceParts) {
-    const def = INSTANCED_TYPES[type];
-    if (!def || parts.length === 0) continue;
-    const mesh = new THREE.InstancedMesh(
-      def.makeGeometry(),
-      new THREE.MeshStandardMaterial({ roughness: 0.95 }),
-      parts.length,
-    );
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      if (!part) continue;
-      const [px, py, pz] = part.transform.position;
-      const [sx, sy, sz] = part.transform.scale;
-      q.setFromAxisAngle(up, part.transform.rotation);
-      m.compose(
-        new THREE.Vector3(px, py, pz),
-        q,
-        new THREE.Vector3(sx, sy, sz),
-      );
-      mesh.setMatrixAt(i, m);
-      // 個体の明度ムラ(位置ハッシュ。乱数非消費)
-      const mottle = 1 + PILE_MOTTLE * (hash3(px, py, pz) - 0.5);
-      color.copy(materialColor(part.materialId)).multiplyScalar(mottle);
-      mesh.setColorAt(i, color);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.name = def.name;
-    mesh.castShadow = def.castShadow;
-    mesh.receiveShadow = true;
-    out.push(mesh);
-  }
+  // インスタンス経路(共有プールごとに 1 InstancedMesh)。
+  // 影は building-trim(主要 InstancedMesh)のみ落とす(1.8節)
+  const trim = buildPoolMesh(
+    pools.boxes,
+    unitBoxGeometry(),
+    "building-trim",
+    true,
+    1,
+  );
+  if (trim) out.push(trim);
+  const openings = buildPoolMesh(
+    pools.planes,
+    unitPlaneGeometry(),
+    "building-openings",
+    false,
+    1,
+  );
+  if (openings) out.push(openings);
+  const piles = buildPoolMesh(
+    pools.piles,
+    unitBoxGeometry(),
+    "building-piles",
+    false,
+    0.95,
+  );
+  if (piles) out.push(piles);
   return out;
 }

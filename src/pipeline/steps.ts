@@ -1,7 +1,7 @@
 /**
  * 生成パイプラインの段構成(contracts/pipeline.md の段契約)。
- * 現時点は段1「導出設定」〜段12「建物」まで。
- * 段13「植生」以降は担当PHASE・commitで追加していく。
+ * 現時点は段1「導出設定」〜段13「小道」まで。
+ * 段14「植生」以降は担当PHASE・commitで追加していく。
  * 表示名は Generating インジケーターにそのまま使う(art-direction 9.5節)。
  */
 import type { PipelineStep } from "./run";
@@ -17,6 +17,7 @@ import { runPlazas } from "./plazas";
 import { runPaving } from "./paving";
 import { runParcels } from "./parcels";
 import { runBuildings } from "./buildings";
+import { runLanes } from "./lanes";
 
 export function buildSteps(): PipelineStep[] {
   return [
@@ -32,5 +33,6 @@ export function buildSteps(): PipelineStep[] {
     { name: "道を踏み固めています…", run: runPaving },
     { name: "敷地を区切っています…", run: runParcels },
     { name: "家々を建てています…", run: runBuildings },
+    { name: "小道を通しています…", run: runLanes },
   ];
 }

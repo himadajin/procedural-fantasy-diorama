@@ -96,8 +96,9 @@ function cellRange(
 /**
  * 折れ線(半幅 halfWidth)の被覆をセルへスタンプする。
  * 被覆は max 合成なので、スプライン・セグメントの走査順に依存しない。
+ * 段13「小道」の lane 被覆の追記も共有する(contracts/worldmodel.md ZoneMask 節)。
  */
-function stampPath(
+export function stampPath(
   grid: CellGrid,
   coverage: Float64Array,
   points: Vec2[],

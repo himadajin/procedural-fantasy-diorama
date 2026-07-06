@@ -39,30 +39,30 @@ describe("hashWorldModel: 決定性(contracts/pipeline.md)", () => {
 describe("hashWorldModel: 代表 seed×params のスナップショット固定", () => {
   // 意図した生成変更でこの表が変わる場合は、スナップショット更新を同一commitに
   // 含め、意図を commit メッセージに記す(implementation-spec 1.10節)
-  // commit 14(PHASE 4b)で全組を更新済み。意図した変更:
-  // 段12「建物」への詳細部品の追加(窓・扉・梁・ジェッティ・煙突・
-  // 石垣・外階段・屋根小窓)により、全建物の parts が増える(全組に影響)。
-  // 骨格データ(footprint / facing / floors / roof / foundation)と
-  // materials は commit 13 と完全一致(機械照合済み)で、詳細の乱数は
-  // 派生サブストリーム "building/<id>/details" のみ消費する。
+  // commit 15(PHASE 4b)で全組を更新済み。意図した変更:
+  // 段13「小道」の追加により、network.nodes / edges への lane の追記、
+  // zoneMask の舗装チャネルの小道被覆の追記、summary.scale.roadLength の
+  // 加算が全組に入る(小道は全組で 1 本以上生成される)。
+  // 段1〜12 の出力(建物の部品リスト・bridges を含む)は commit 14 と
+  // 完全一致(段13 は追記のみ。test/lanes.test.ts で機械照合)。
   // 新旧対応:
-  //   everdusk-101 {}              7c989ebe → bbbf2f49
-  //   everdusk-101 {water:0}       0437a8b0 → a9b3eb16
-  //   everdusk-101 {water:95}      88f24ac2 → 005dc9ad
-  //   everdusk-101 {worldScale:0}  93c689e9 → 13481884
-  //   everdusk-101 {worldScale:100} f9f32fd5 → aa3e3971
-  //   seed-a {}                    5e6a8d20 → 08142bad
-  //   seed-b {}                    bb3d188f → 56e992f2
-  //   seed-b {water:70}            75614523 → abb2ac43
+  //   everdusk-101 {}              bbbf2f49 → 85234e3f
+  //   everdusk-101 {water:0}       a9b3eb16 → 90586daa
+  //   everdusk-101 {water:95}      005dc9ad → c6019296
+  //   everdusk-101 {worldScale:0}  13481884 → 43094937
+  //   everdusk-101 {worldScale:100} aa3e3971 → 18cd6e5f
+  //   seed-a {}                    08142bad → a00a17c8
+  //   seed-b {}                    56e992f2 → 1386be4e
+  //   seed-b {water:70}            abb2ac43 → 909cd4d0
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "bbbf2f49"],
-    ["everdusk-101", { water: 0 }, "a9b3eb16"],
-    ["everdusk-101", { water: 95 }, "005dc9ad"],
-    ["everdusk-101", { worldScale: 0 }, "13481884"],
-    ["everdusk-101", { worldScale: 100 }, "aa3e3971"],
-    ["seed-a", {}, "08142bad"],
-    ["seed-b", {}, "56e992f2"],
-    ["seed-b", { water: 70 }, "abb2ac43"],
+    ["everdusk-101", {}, "85234e3f"],
+    ["everdusk-101", { water: 0 }, "90586daa"],
+    ["everdusk-101", { water: 95 }, "c6019296"],
+    ["everdusk-101", { worldScale: 0 }, "43094937"],
+    ["everdusk-101", { worldScale: 100 }, "18cd6e5f"],
+    ["seed-a", {}, "a00a17c8"],
+    ["seed-b", {}, "1386be4e"],
+    ["seed-b", { water: 70 }, "909cd4d0"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

@@ -63,8 +63,9 @@ interface Rng {
 | 10 | 舗装 | pipeline/paving | 〜plazas(network / water.canals / plazas) | ground.zoneMask(舗装チャネル上書き) |
 | 11 | 区画 | pipeline/parcels | 〜舗装 | density.final、parcels |
 | 12 | 建物 | pipeline/buildings | 〜parcels | buildings(骨格+部品リスト) |
-| 13 | 植生 | pipeline/vegetation | 〜buildings | vegetation |
-| 14 | サマリー | pipeline/summary | 全部 | summary |
+| 13 | 小道 | pipeline/lanes | 〜buildings | network.nodes/edges(lane の追記のみ)、ground.zoneMask(小道の舗装追記)、summary.scale.roadLength(加算) |
+| 14 | 植生 | pipeline/vegetation | 〜lanes | vegetation |
+| 15 | サマリー | pipeline/summary | 全部 | summary |
 
 - 各段はパイプライン内アサーション(データ検証)を持ってよい。
   違反は throw せず件数を console に出し、生成は続行する
@@ -77,6 +78,16 @@ interface Rng {
   岸線に影響させない(同節の設計判断)。zoneMask への舗装上書きは
   段5/6/9 の各段では行わず、段10「舗装」へ集約する
   (worldmodel.md ZoneMask 節)。段10 は乱数サブストリームを消費しない。
+- 段13「小道」(PHASE 4b)は段12「建物」の後に走る専用段とし、
+  裏手の小道(区画の列の奥)と水路沿いの岸沿い道(towpathSide 側)を
+  lane class の edge として network へ**追記のみ**で加える
+  (既存 node / edge の id・内容は不変。worldmodel.md Network 節
+  「小道の性質」)。小道は水域を渡らず(bridges は段8 の出力のまま)、
+  結界環も横切らない(gates は段8 確定のまま)。小道の舗装被覆は
+  段10 と同じ流儀で zoneMask へ追記する(乱数非消費)。乱数は要素ごとの
+  独立サブストリーム `"lanes/back/<roadEdgeId>/<L|R>"` /
+  `"lanes/towpath/<canalId>"` のみを消費する。
+  表示名は段13「小道を通しています…」。
 - リトライを含む処理(水路の交差超過の再サンプル、結界環の縮小リトライ)は
   RNG API 節の規約どおり、リトライ回数も同一サブストリームから消費する。
 - 段11「区画」と段12「建物」は 2 段に分ける(設計判断: 区画は敷地の

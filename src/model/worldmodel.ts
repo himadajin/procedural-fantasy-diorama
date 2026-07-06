@@ -216,7 +216,8 @@ export interface Meta {
 export interface Canal extends Spline {
   /** "canal/<i>"。生成インデックス由来で安定 */
   id: string;
-  /** 岸沿い道フック(小道は PHASE 4b)。進行方向に対して +1=左岸 / -1=右岸 */
+  /** 岸沿い道フック(段13「小道」がこの側に岸沿い道を通す)。
+   *  進行方向に対して +1=左岸 / -1=右岸 */
   towpathSide: 1 | -1;
 }
 
