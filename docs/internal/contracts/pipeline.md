@@ -1,0 +1,105 @@
+# パイプライン・RNG インターフェース契約
+
+モジュール間(rng / pipeline / model / mesh / viewer / ui)のインターフェースの正。
+変更はコードより先に本書を更新する。
+生成手順の設計意図と検証条件は `../specs/implementation-spec.md` を参照。
+
+## モジュール境界規則
+
+- `rng/`・`model/`・`pipeline/` は Three.js 非依存の純関数群とする。
+  `three` の import を禁止し、ESLint の import 制約で機械化する。
+- `mesh/` は WorldModel のみを入力とし、パイプラインの内部状態に依存しない。
+- `viewer/` は時間演出(浮遊の上下動、発光の明滅、カメラ慣性)を担当する。
+  時間・表示状態を WorldModel に書き戻さない。
+- `ui/` は params と seed の編集、Generate の発火、サマリー表示のみを行う。
+  生成内容には関与しない。
+
+## RNG API(`src/rng/`)
+
+```ts
+hashString(s: string): number          // 文字列→32bit整数ハッシュ(FNV-1a)
+makeRng(seed: string, label: string): Rng
+                                       // seedとラベルのハッシュから独立ストリームを派生
+
+interface Rng {
+  next(): number                       // [0, 1)。基礎PRNGは splitmix32
+  range(min: number, max: number): number
+  int(min: number, max: number): number      // 両端含む整数
+  normal(mean: number, stddev: number): number  // 正規分布近似
+  pick<T>(items: T[]): T
+  weighted<T>(items: T[], weights: number[]): T
+  shuffle<T>(items: T[]): T[]          // 非破壊。Fisher-Yates
+  chance(p: number): boolean
+}
+```
+
+規約(implementation-spec 1.4節):
+
+- `Math.random()` の使用を全面禁止する。
+- サブストリームのラベル体系: 段の名前(`"water"`、`"network"` 等)、
+  要素ごとの乱数は安定IDから派生(`"building/" + buildingId`、
+  `"parcel/" + parcelId` 等)。生成順序の変更が無関係な箇所の乱数消費に
+  波及しないようにする。
+- 環境依存になりうる順序(`Object.keys` 等)に乱数消費を依存させない。
+- リトライを含む処理(結界環の再生成、水路の再サンプル)は、
+  リトライ回数も同一ストリームから消費して決定性を保つ。
+
+## パイプライン段契約
+
+各段は `(model: WorldModel, rng基盤) => void`(担当フィールドを埋める)の純関数。
+後段は前段の結果のみに依存する。段の順序と担当フィールド:
+
+| # | 段(ステップ名) | モジュール | 読む | 書く |
+|---|---|---|---|---|
+| 1 | 導出設定 | pipeline/derive | seed, params | meta.derived |
+| 2 | 地面 | pipeline/ground | meta | ground(zoneMask下地) |
+| 3 | 水系 | pipeline/water | meta, ground | water.rivers/lakes/shoreline、zoneMask(湿地・砂洲) |
+| 4 | 立地評価 | pipeline/siting | meta, ground, water | centerPlan.position/footprint/axes、network.entryPoints |
+| 5 | 道路網 | pipeline/network | 〜centerPlan | network.nodes/edges、water.bridges |
+| 6 | 水路 | pipeline/canals | 〜network | water.canals、water.bridges(追加) |
+| 7 | 一次密度場 | pipeline/density | 〜canals | density.primary |
+| 8 | 結界計画 | pipeline/wards | 〜density.primary | wards 一式、water.bridges(再抽出) |
+| 9 | 広場 | pipeline/plazas | 〜wards | plazas、centerPlan.facing/heightHint |
+| 10 | 区画 | pipeline/parcels | 〜plazas | density.final、parcels |
+| 11 | 建物 | pipeline/buildings | 〜parcels | buildings(部品リスト含む) |
+| 12 | 植生 | pipeline/vegetation | 〜buildings | vegetation |
+| 13 | サマリー | pipeline/summary | 全部 | summary |
+
+- 各段はパイプライン内アサーション(データ検証)を持ってよい。
+  違反は throw せず件数を console に出し、生成は続行する
+  (詳細は implementation-spec 1.10節)。
+- 各段の表示名(「水系を計画中…」等)は Generating インジケーターに
+  そのまま使う(art-direction 9.5節)。
+
+## チャンク実行フレームワーク
+
+```ts
+interface PipelineStep {
+  name: string;                        // インジケーター表示名(日本語)
+  run(model: WorldModel): void;
+}
+runPipeline(seed: string, params: Params, opts: {
+  onProgress(stepName: string, index: number, total: number): void;
+}): Promise<WorldModel>
+```
+
+- ステップ間で requestAnimationFrame に制御を返し、生成中もカメラ操作と
+  UIを生かす(フリーズ不可)。
+- 完了時、呼び出し側(main)が旧シーンサブツリーを dispose 付きで差し替える。
+- 生成中の再入(Generate 連打)は、実行中の生成を破棄して最後の要求だけを
+  実行する(結果は最後の seed+params のみに依存し、決定性を壊さない)。
+
+## WorldModel 正規化ハッシュ
+
+決定性検証(implementation-spec 1.10節)の正式定義:
+
+1. WorldModel を深さ優先で走査する。オブジェクトのキーは辞書順にソートする。
+2. 数値は 1e-6 で丸めた固定精度(小数6桁)で文字列化する。
+   文字列・真偽値はそのまま文字列化する。
+3. 走査順にキーと値を連結した文字列を FNV-1a(32bit)でハッシュし、
+   16進8桁の文字列とする。
+
+- `summary.hash` 自身はハッシュ計算から除外する。
+- Vitest では「同一入力で2回生成してハッシュ一致」と
+  「代表 seed×params 組のハッシュのスナップショット固定」の両方を行う。
+- 画面のデバッグ表示にも同じ値を出す(実機確認用)。

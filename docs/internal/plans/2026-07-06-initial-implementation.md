@@ -12,9 +12,9 @@ implementation-spec.md の PHASE 1〜7(4a/4b、5a/5b含む)を、
 
 ## 1. 前提と方針決定
 
-元ドキュメント(~/works/ideas/procedural-fantasy-diorama)は
-「Claude artifact として単一HTMLを差分更新で育てる」前提で書かれていた。
-リポジトリ開発への移行にあたり、以下を決定済み(2026-07-06 ユーザー確認)。
+specs の3文書は、当初「Claude artifact として単一HTMLを差分更新で育てる」
+前提で書かれていた。リポジトリ開発への移行にあたり、
+以下を決定済み(2026-07-06 ユーザー確認)。
 
 | 論点 | 決定 |
 |---|---|
@@ -67,8 +67,9 @@ Node上のVitestでそのままテストする。
 
 **commit 1 — docs: 仕様書の取り込みとリポジトリ開発向け修正**
 - 3文書を docs/internal/specs/ へ取り込み、上表の決定を反映して修正
-  (1.1節の成果物、1.2節のセクション規約→モジュール構成、1.10節の検証読み替え→Vitest、
-  r128固定の撤廃、artifact運用記述の置き換え)。
+  (1.1節の成果物、1.2節のセクション規約→モジュール構成、1.10節の検証方法→Vitest、
+  r128固定の撤廃、artifact運用記述の置き換え)。取り込み後は docs/ 以下を正とし、
+  取り込み元への参照を残さない。
 - docs/internal/contracts/ に worldmodel.md(WorldModelスキーマ)と
   pipeline.md(パイプライン各段の入出力・RNG APIの契約)を切り出す。
 - 本計画書を docs/internal/plans/ に置く。docs/user/ は空で作成(commit 23で執筆)。
