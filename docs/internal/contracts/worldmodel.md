@@ -17,7 +17,9 @@ WorldModel は生成パイプラインの出力であり、メッシュビルダ
   環境依存の順序(`Object.keys` 等)に由来する順序を露出させない。
 - 各要素の `id` は生成内容から安定に導出し(座標や親IDのハッシュ等)、
   乱数サブストリームのラベル(`pipeline.md`)として使えるようにする。
-- 座標系: y-up。地面は y=0 の平面。水面は y=-0.6(implementation-spec 1.8節)。
+- 座標系: y-up。地面は y=0 の平面。水面は y=-0.6、岸スカート下端は
+  水面より 1.0 低い y=-1.6(implementation-spec 1.8節。実装定数は
+  `src/model/worldmodel.ts` の `WATER_SURFACE_Y` / `SHORE_SKIRT_BOTTOM_Y`)。
   平面計画の座標は xz 平面上の `{x, z}` で表す。
 - 未確定と記した詳細は担当PHASEの実装時に確定し、本書を先に更新する。
 
@@ -133,7 +135,8 @@ interface Derived {
 interface Ground {
   size: number;                  // ワールド一辺の実寸(= derived.worldSize)
   boundary: Polygon;             // 有機的な外縁形状
-  edgeStyle: "fog" | "water";    // 外周の閉じ方(水系段が確定。Water 0付近は "fog" 固定)
+  edgeStyle: "fog" | "water";    // 外周の閉じ方(水系段が確定。選択確率は Water Presence
+                                 // 連動で、params.water < 15 は "fog" 固定)
   zoneMask: ZoneMask;            // 材質ゾーン(草地/土/砂洲/湿地)のグリッド
 }
 ```
@@ -187,6 +190,49 @@ interface BridgeSite {
   roadClass: RoadClass;          // 石造/木橋の選択に使う(PHASE 5b)
 }
 ```
+
+水系の性質(水系段が保証し、後段・メッシュビルダーが前提としてよい):
+
+- `rivers` は 0〜2本。各スプラインの点列は境界の外側の一点から境界を横断して
+  外側の別点へ抜ける(両端点は `ground.boundary` の外)。湖がある場合は
+  経路が湖を貫通する。隣接点間隔は川幅の 1.5 倍以下(川は途切れない)。
+  `width` は `derived.riverWidth` を面積クリップで縮小した最終値
+- `lakes` は 0〜1個の閉多角形(基本型 `Polygon` の規約に従い時計回り・
+  自己交差なし)。川がある場合、湖は主河川の経路上に置かれ、
+  川のスプラインが湖ポリゴンを貫通することで流入・流出接続を持つ
+- 水域の合計面積(境界内。`src/model/waterfield.ts` の `estimateWaterArea`
+  で測る)は ground 面積 × `derived.waterAreaCap` 以下。超過する入力では
+  水系段が湖面積・川幅を縮小してクリップ済みであり、後段はこの上限を
+  前提としてよい
+- 水が完全に消える入力(riverCount=0 かつ湖なし)では `rivers` / `lakes` /
+  `shoreline.loops` は空で、`ground.edgeStyle` は `"fog"`。
+  乾いた土地として後段が成立すること
+- `canals`・`bridges` は PHASE 3 の担当(PHASE 2 では空配列)
+
+`Shoreline` は岸線(境界内の陸地と水域の境界)の実体表現:
+
+```ts
+interface Shoreline {
+  cellSize: number;        // 岸線抽出グリッドのセル寸(≒ ground.size×1.1 / セル数)
+  loops: ShoreLoop[];      // 岸線の点列。水域が無ければ空
+}
+interface ShoreLoop {
+  id: string;              // "shore/<n>"。抽出順で安定
+  closed: boolean;         // true=閉環(湖岸・中州)。false=外縁で切れる開いた岸線(川岸)
+  points: Vec2[];          // 岸線の点列(水際 y=0 のライン。隣接間隔はセル寸程度)
+  normals: Vec2[];         // points と同数。水域から陸側を向く単位法線
+}
+```
+
+- 岸線は「boundary 内の陸地」と水域の境界の等値線であり、地面メッシュの
+  水際エッジ・岸スカート・水面メッシュの外周と同一のグリッド等値線から
+  導出する。水域判定・岸距離(shoreDist)・陸地クリップのサンプリングの正は
+  `src/model/waterfield.ts`(`createWaterField` / `marchPositiveRegion`)。
+  pipeline(岸線データ)と mesh(三角形分割)が同じ純関数を共有することで、
+  絵とデータの岸線を一致させる
+- 水面メッシュの岸距離属性は waterfield の shoreDist(= −landSdf)を正とする
+- 後PHASE の水辺判定(水辺建築・岸沿い道・杭基礎)は `loops` への近接、
+  または waterfield の `waterSdf` で行ってよい
 
 ### Density(PHASE 3 で primary、PHASE 4a で final)
 
@@ -318,3 +364,7 @@ interface Summary {
   hash: string;                            // 正規化ハッシュ(pipeline.md)
 }
 ```
+
+`hash` は `pipeline.md` の正規化ハッシュ。`runPipeline` が全段完了後に格納する
+(PHASE 2 で導入し、以降の全PHASEで常時有効)。`hash` 自身はハッシュ計算から
+除外するため、格納後もハッシュ値は変わらない。

@@ -4,9 +4,14 @@ import { createViewer } from "./viewer/viewer";
 import { OrbitController } from "./viewer/orbit";
 import { createPanel } from "./ui/panel";
 import { createIndicator } from "./ui/indicator";
+import { createDebugOverlay } from "./ui/debug";
 import { runPipeline } from "./pipeline/run";
-import { buildWorld, disposeWorld } from "./mesh/build";
-import type { Params, WorldModel } from "./model/worldmodel";
+import { buildWorld, disposeWorld, type WaterTimeUniform } from "./mesh/build";
+import {
+  WATER_SURFACE_Y,
+  type Params,
+  type WorldModel,
+} from "./model/worldmodel";
 
 /** 見栄えの良い既定 seed は PHASE 7 の目視検証で選定し直す */
 const DEFAULT_SEED = "everdusk-101";
@@ -36,7 +41,7 @@ if (!viewer) {
     viewer.camera,
     viewer.renderer.domElement,
   );
-  controls.configure(400);
+  controls.configure(400, WATER_SURFACE_Y);
   controls.resetCamera(true);
   viewer.onFrame((dt) => controls.update(dt));
 
@@ -55,10 +60,31 @@ if (!viewer) {
     void generate(seed, params);
   });
 
+  // 開発用デバッグ表示: ハッシュと renderer.info(implementation-spec 1.10節)
+  const debug = createDebugOverlay(app);
+  let debugTimer = 0;
+  viewer.onFrame((dt) => {
+    debugTimer += dt;
+    if (debugTimer < 0.5) return;
+    debugTimer = 0;
+    const info = viewer.renderer.info.render;
+    debug.setRenderInfo(info.calls, info.triangles);
+  });
+
   let currentWorld: THREE.Group | null = null;
   let currentAbort: AbortController | null = null;
   let stopFade: (() => void) | null = null;
   let firstGeneration = true;
+
+  // 水面の揺らぎはビューワー側の時間 uniform で行う(WorldModel に時間を
+  // 持ち込まない。contracts/pipeline.md)。reduced-motion では静止させる
+  viewer.onFrame((_dt, elapsed) => {
+    if (reducedMotion) return;
+    const uniform = currentWorld?.userData.waterTime as
+      | WaterTimeUniform
+      | undefined;
+    if (uniform) uniform.value = elapsed;
+  });
 
   async function generate(seed: string, params: Params): Promise<void> {
     // 再入: 実行中の生成を破棄して最後の要求だけを実行(contracts/pipeline.md)
@@ -91,8 +117,10 @@ if (!viewer) {
     viewer.worldGroup.add(group);
     currentWorld = group;
 
+    debug.setHash(model.summary.hash);
     viewer.setWorldSize(model.ground.size);
-    controls.configure(model.ground.size);
+    // パン範囲をワールド境界に、極角制限の基準を水面高さに接続する
+    controls.configure(model.ground.size, WATER_SURFACE_Y);
     controls.resetCamera(firstGeneration);
     if (!reducedMotion) fadeIn(group);
     firstGeneration = false;

@@ -9,6 +9,11 @@ import { createZoneMask, type ZoneMask } from "./zonemask";
 
 export { ZONE_KINDS, type ZoneKind, type ZoneMask } from "./zonemask";
 
+/** 水面の高さ(地面 y=0 より 0.6 低い。implementation-spec 1.8節) */
+export const WATER_SURFACE_Y = -0.6;
+/** 岸スカート下端(水面より 1.0 低い。implementation-spec 1.8節) */
+export const SHORE_SKIRT_BOTTOM_Y = WATER_SURFACE_Y - 1.0;
+
 /** xz平面上の点(y-up。地面は y=0) */
 export interface Vec2 {
   x: number;
@@ -203,8 +208,29 @@ export interface Meta {
 
 /** 密度場グリッド。表現は PHASE 3 で確定 */
 export type FieldGrid = null;
-/** 岸線データ。表現は水系段(PHASE 2 後半)で確定 */
-export type Shoreline = null;
+
+/**
+ * 岸線ループ(contracts/worldmodel.md Water 節)。
+ * 境界内の陸地と水域の境界の等値線。抽出の正は model/waterfield.ts。
+ */
+export interface ShoreLoop {
+  /** "shore/<n>"。抽出順で安定 */
+  id: string;
+  /** true=閉環(湖岸・中州)。false=外縁で切れる開いた岸線(川岸) */
+  closed: boolean;
+  /** 岸線の点列(水際 y=0 のライン。隣接間隔はセル寸程度) */
+  points: Vec2[];
+  /** points と同数。水域から陸側を向く単位法線 */
+  normals: Vec2[];
+}
+
+/** 岸線データ(岸スカート・水面の岸距離・後PHASEの水辺判定の元) */
+export interface Shoreline {
+  /** 岸線抽出グリッドのセル寸(≒ ground.size×1.1 / セル数) */
+  cellSize: number;
+  /** 岸線の点列。水域が無ければ空 */
+  loops: ShoreLoop[];
+}
 
 export interface Ground {
   /** ワールド一辺の実寸(= derived.worldSize) */
@@ -388,7 +414,13 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
       edgeStyle: "fog",
       zoneMask: createZoneMask(0, 0),
     },
-    water: { rivers: [], lakes: [], canals: [], bridges: [], shoreline: null },
+    water: {
+      rivers: [],
+      lakes: [],
+      canals: [],
+      bridges: [],
+      shoreline: { cellSize: 0, loops: [] },
+    },
     density: { primary: null, final: null },
     network: { nodes: [], edges: [], entryPoints: [] },
     plazas: [],

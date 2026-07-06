@@ -9,6 +9,7 @@ import {
   type Params,
   type WorldModel,
 } from "../model/worldmodel";
+import { hashWorldModel } from "../model/hash";
 import { buildSteps } from "./steps";
 
 export interface PipelineStep {
@@ -58,11 +59,15 @@ export async function executeSteps(
 }
 
 /** seed + params から WorldModel を生成する(決定論的) */
-export function runPipeline(
+export async function runPipeline(
   seed: string,
   params: Params,
   opts: RunPipelineOptions = {},
 ): Promise<WorldModel> {
   const model = createEmptyWorldModel(seed, params);
-  return executeSteps(model, buildSteps(), opts);
+  await executeSteps(model, buildSteps(), opts);
+  // 生成完了時に正規化ハッシュを格納する(contracts/pipeline.md。
+  // summary.hash 自身は計算から除外されるため、格納後もハッシュは不変)
+  model.summary.hash = hashWorldModel(model);
+  return model;
 }

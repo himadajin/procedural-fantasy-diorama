@@ -12,8 +12,9 @@ import { CAMERA_INITIAL_AZIMUTH, CAMERA_INITIAL_PITCH } from "./constants";
 
 const ROTATE_SPEED = 2.2; // 画面高さぶんのドラッグ ≒ ROTATE_SPEED*π ラジアン
 const DAMPING = 6; // 慣性の減衰率 [1/s]
-const MIN_PITCH = 0.08; // 水面(地面より低い)に潜らない極角下限
+const MIN_PITCH_ABS = 0.03; // 極角の絶対下限(真横より僅かに上)
 const MAX_PITCH = 1.45;
+const PITCH_CLEARANCE = 1.2; // 床(水面)からのカメラ高さの余裕
 const RESET_DURATION = 0.45; // [s]
 
 interface Pose {
@@ -39,6 +40,8 @@ export class OrbitController {
   private minDistance = 20;
   private maxDistance = 700;
   private panBound = 220;
+  /** カメラが潜らない床の高さ。水系導入後は水面 y=-0.6(worldmodel) */
+  private floorY = 0;
 
   private velAzimuth = 0;
   private velPitch = 0;
@@ -74,12 +77,15 @@ export class OrbitController {
 
   /**
    * ワールド実寸に応じて距離・パンの制限と初期構図(home)を設定する。
+   * パン範囲はワールド境界(ground.size)に、極角制限の基準は
+   * 水面高さ(floorY。地面より低い)に接続する(implementation-spec PHASE 2)。
    * 視点は動かさない。構図へ戻すには resetCamera を呼ぶ。
    */
-  configure(worldSize: number): void {
+  configure(worldSize: number, floorY = 0): void {
     this.minDistance = worldSize * 0.06;
     this.maxDistance = worldSize * 1.5;
     this.panBound = worldSize * 0.55;
+    this.floorY = floorY;
     this.home = {
       azimuth: CAMERA_INITIAL_AZIMUTH,
       pitch: CAMERA_INITIAL_PITCH,
@@ -150,11 +156,26 @@ export class OrbitController {
     return { ...p, target: p.target.clone() };
   }
 
+  /**
+   * 極角の下限。カメラが床(水面高さ。floorY)より下に潜らない範囲で
+   * なるべく低い視点を許す。カメラ高さ = target.y + sin(pitch)×distance。
+   */
+  private minPitch(): number {
+    const s =
+      (this.floorY + PITCH_CLEARANCE - this.pose.target.y) /
+      Math.max(this.pose.distance, 1e-3);
+    return THREE.MathUtils.clamp(
+      Math.asin(THREE.MathUtils.clamp(s, -1, 1)),
+      MIN_PITCH_ABS,
+      MAX_PITCH,
+    );
+  }
+
   private rotateBy(dAz: number, dPitch: number): void {
     this.pose.azimuth += dAz;
     this.pose.pitch = THREE.MathUtils.clamp(
       this.pose.pitch + dPitch,
-      MIN_PITCH,
+      this.minPitch(),
       MAX_PITCH,
     );
   }
@@ -164,6 +185,12 @@ export class OrbitController {
       this.pose.distance * factor,
       this.minDistance,
       this.maxDistance,
+    );
+    // ズームで距離が縮むと床までの余裕が変わるため極角を再クランプする
+    this.pose.pitch = THREE.MathUtils.clamp(
+      this.pose.pitch,
+      this.minPitch(),
+      MAX_PITCH,
     );
   }
 

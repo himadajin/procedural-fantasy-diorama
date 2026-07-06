@@ -19,8 +19,12 @@ export const HEMI_INTENSITY = 0.5;
 
 /** 霧 */
 export const FOG_COLOR = "#a9b6c6";
-/** FogExp2 密度 = FOG_DENSITY_FACTOR / ワールド一辺 */
-export const FOG_DENSITY_FACTOR = 2.2;
+/**
+ * FogExp2 密度 = FOG_DENSITY_FACTOR / ワールド一辺。
+ * 基準 0.9(旧 2.2 は初期構図で箱庭中心まで霧に沈むため 2026-07-06 改定。
+ * art-direction 3節)
+ */
+export const FOG_DENSITY_FACTOR = 0.9;
 
 /** トーンマッピング露出(ACESFilmic) */
 export const EXPOSURE = 1.05;

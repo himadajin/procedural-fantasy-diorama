@@ -334,6 +334,30 @@ button {
   color: var(--accent-press);
 }
 
+/* ============ 開発用デバッグ表示(ハッシュ・renderer.info) ============ */
+
+.pfd-debug {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(16, 20, 26, 0.55);
+  border: 1px solid var(--hairline);
+  color: var(--text-lo);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+}
+
+.pfd-debug:empty {
+  display: none;
+}
+
 /* ============ 大画面: 浮く右サイドパネル ============ */
 
 @media (min-width: 768px) {

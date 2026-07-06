@@ -53,7 +53,7 @@ interface Rng {
 |---|---|---|---|---|
 | 1 | 導出設定 | pipeline/derive | seed, params | meta.derived |
 | 2 | 地面 | pipeline/ground | meta | ground(zoneMask下地) |
-| 3 | 水系 | pipeline/water | meta, ground | water.rivers/lakes/shoreline、zoneMask(湿地・砂洲) |
+| 3 | 水系 | pipeline/water | meta, ground | water.rivers/lakes/shoreline、ground.edgeStyle、zoneMask(湿地・砂洲) |
 | 4 | 立地評価 | pipeline/siting | meta, ground, water | centerPlan.position/footprint/axes、network.entryPoints |
 | 5 | 道路網 | pipeline/network | 〜centerPlan | network.nodes/edges、water.bridges |
 | 6 | 水路 | pipeline/canals | 〜network | water.canals、water.bridges(追加) |
@@ -87,6 +87,8 @@ runPipeline(seed: string, params: Params, opts?: {
 - ステップ間で requestAnimationFrame に制御を返し、生成中もカメラ操作と
   UIを生かす(フリーズ不可)。rAF が無い環境(テスト)では setTimeout に
   フォールバックする。
+- `runPipeline` は全段完了後に正規化ハッシュ(下記)を `summary.hash` へ
+  格納してから resolve する。
 - 完了時、呼び出し側(main)が旧シーンサブツリーを dispose 付きで差し替える。
 - 生成中の再入(Generate 連打)は、呼び出し側が実行中の生成を `signal` で
   中断して最後の要求だけを実行する(結果は最後の seed+params のみに依存し、
@@ -103,6 +105,8 @@ runPipeline(seed: string, params: Params, opts?: {
    16進8桁の文字列とする。
 
 - `summary.hash` 自身はハッシュ計算から除外する。
+- 実装は `src/model/hash.ts` の `hashWorldModel`(three 非依存の純関数)。
 - Vitest では「同一入力で2回生成してハッシュ一致」と
   「代表 seed×params 組のハッシュのスナップショット固定」の両方を行う。
-- 画面のデバッグ表示にも同じ値を出す(実機確認用)。
+- 画面のデバッグ表示にも同じ値を出す(実機確認用。renderer.info の
+  draw call・triangle 数と併記し、PHASE 7 でサマリーへ統合する)。
