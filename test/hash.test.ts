@@ -39,16 +39,21 @@ describe("hashWorldModel: 決定性(contracts/pipeline.md)", () => {
 describe("hashWorldModel: 代表 seed×params のスナップショット固定", () => {
   // 意図した生成変更でこの表が変わる場合は、スナップショット更新を同一commitに
   // 含め、意図を commit メッセージに記す(implementation-spec 1.10節)
-  // commit 10(段6「水路」〜段9「広場」の追加)で全組を更新済み
+  // commit 11 で全組を更新済み。意図した変更は次の2点:
+  // (1) 段10「舗装」の追加: zoneMask へ舗装チャネル("paved")が加わり
+  //     weights の長さと値が変わる(water:0 を含む全組に影響)
+  // (2) 水路経路の陸上化(contracts/worldmodel.md Water 節 2026-07-07 追記):
+  //     川筋の中に沈んでいた水路が岸へ押し出され、canals・bridges・
+  //     wards(overwater 判定)・plazas(水域回避)が連鎖して変わる
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "f7c80053"],
-    ["everdusk-101", { water: 0 }, "f0328bb2"],
-    ["everdusk-101", { water: 95 }, "96569744"],
-    ["everdusk-101", { worldScale: 0 }, "60a97ca1"],
-    ["everdusk-101", { worldScale: 100 }, "e3100681"],
-    ["seed-a", {}, "e68574b7"],
-    ["seed-b", {}, "23dec96d"],
-    ["seed-b", { water: 70 }, "64dd9111"],
+    ["everdusk-101", {}, "a109c58b"],
+    ["everdusk-101", { water: 0 }, "78ff489c"],
+    ["everdusk-101", { water: 95 }, "5927c4ad"],
+    ["everdusk-101", { worldScale: 0 }, "f4a22478"],
+    ["everdusk-101", { worldScale: 100 }, "285fb032"],
+    ["seed-a", {}, "985fd8dd"],
+    ["seed-b", {}, "62e76f63"],
+    ["seed-b", { water: 70 }, "4ce5cde1"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

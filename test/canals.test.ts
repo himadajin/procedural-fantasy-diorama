@@ -6,7 +6,7 @@ import {
   type WorldModel,
 } from "../src/model/worldmodel";
 import { createWaterField, distToPolyline } from "../src/model/waterfield";
-import { waterCrossings } from "../src/pipeline/geometry";
+import { pathLength, pointAlong, waterCrossings } from "../src/model/geometry";
 import { runDerive } from "../src/pipeline/derive";
 import { runGround } from "../src/pipeline/ground";
 import { runWater } from "../src/pipeline/water";
@@ -70,6 +70,31 @@ describe("canals: 発火条件と接続(contracts/worldmodel.md Water 節)", () 
       const high = build(seed, { water: 95, settlement: 95 }).water.canals.length;
       expect(high).toBeGreaterThanOrEqual(low);
       expect(high).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("既定パラメータでは中間部が陸上を通る(街の水路として現れる。2026-07-07 追記の性質)", () => {
+    // 中間部 = 始端・終端の接続窓(弧長 幅×2+4)を除く区間。陸上率 ≥ 0.7
+    for (const seed of SEEDS) {
+      const model = build(seed);
+      const field = createWaterField(
+        model.ground.boundary,
+        model.water.rivers,
+        model.water.lakes,
+      );
+      for (const canal of model.water.canals) {
+        const endWindow = canal.width * 2 + 4;
+        const total = pathLength(canal.points);
+        expect(total).toBeGreaterThan(endWindow * 2);
+        let land = 0;
+        let count = 0;
+        for (let s = endWindow; s <= total - endWindow; s += 2) {
+          const { p } = pointAlong(canal.points, s);
+          if (field.waterSdf(p.x, p.z) >= 0) land++;
+          count++;
+        }
+        expect(land / Math.max(1, count)).toBeGreaterThanOrEqual(0.7);
+      }
     }
   });
 

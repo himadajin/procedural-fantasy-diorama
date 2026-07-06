@@ -131,7 +131,7 @@ if (!viewer) {
     if (!viewer) return;
     const materials: THREE.Material[] = [];
     group.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
         const mats = Array.isArray(obj.material)
           ? obj.material
           : [obj.material];

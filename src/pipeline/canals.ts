@@ -13,6 +13,9 @@
  * - 全水路が棄却された場合のフォールバック: 中心へ最も近い水域から伸びる
  *   短い堀留(始端のみ接続)を、交差が 3 以下になる長さへ切り詰めて 1 本置く
  * - 経由点は主道どうしの角度間隙へ向け、道路交差の発生を構造的に抑える
+ * - 始端・終端の接続部を除き、中間点は既存水域(川・湖)の外へ押し出す
+ *   (川筋の中を走る水路は「街の水路」として現れないため。
+ *   contracts/worldmodel.md Water 節)
  */
 import { makeRng } from "../rng";
 import type { Canal, Vec2, WorldModel } from "../model/worldmodel";
@@ -20,6 +23,7 @@ import {
   createBoundaryRadius,
   createWaterField,
   distToPolyline,
+  fieldGradient,
   polygonSignedDistance,
   type WaterField,
 } from "../model/waterfield";
@@ -32,7 +36,7 @@ import {
   pointAlong,
   resamplePath,
   waterCrossings,
-} from "./geometry";
+} from "../model/geometry";
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
@@ -179,6 +183,79 @@ function enforceCorridor(
   }
 }
 
+/**
+ * 経路の中間点を既存水域(川・湖)の外へ押し出す
+ * (contracts/worldmodel.md Water 節。目安は「中心線の waterSdf ≥ 幅/2 + 1」)。
+ *
+ * - 始端・終端の接続窓(弧長 width×2+4)は水域接続のため押し出さない
+ * - 深い点(waterSdf < −(幅/2+6))は水域横断・湖内の接続部とみなし保持する
+ * - 水中の連続区間ごとに平均勾配で「どちらの岸へ出すか」を1回だけ決め、
+ *   区間内の全点を同じ側へ押す(点ごとの最近岸に任せると川筋を挟んで
+ *   互い違いの岸へ跳ねてジグザグになるため)。決定論的で乱数を消費しない
+ */
+function enforceLand(points: Vec2[], field: WaterField, width: number): void {
+  const clear = width / 2 + 1;
+  const escapeDepth = -(width / 2 + 6);
+  const endWindow = width * 2 + 4;
+  const total = pathLength(points);
+  if (total <= endWindow * 2) return;
+
+  // 各点の弧長位置
+  const arc: number[] = [0];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    arc.push(
+      (arc[i - 1] ?? 0) + (a && b ? Math.hypot(b.x - a.x, b.z - a.z) : 0),
+    );
+  }
+
+  const movable = (i: number): boolean => {
+    if (i <= 0 || i + 1 >= points.length) return false;
+    const s = arc[i] ?? 0;
+    if (s < endWindow || s > total - endWindow) return false;
+    const p = points[i];
+    if (!p) return false;
+    const d = field.waterSdf(p.x, p.z);
+    return d < clear && d > escapeDepth;
+  };
+
+  let i = 0;
+  while (i < points.length) {
+    if (!movable(i)) {
+      i++;
+      continue;
+    }
+    // 水中の連続区間 [i, j)
+    let j = i;
+    while (j < points.length && movable(j)) j++;
+    // 区間の平均勾配から押し出す側を1回だけ決める
+    let gx = 0;
+    let gz = 0;
+    for (let k = i; k < j; k++) {
+      const p = points[k];
+      if (!p) continue;
+      const g = fieldGradient(field.waterSdf, p.x, p.z);
+      gx += g.x;
+      gz += g.z;
+    }
+    const glen = Math.hypot(gx, gz);
+    const dir = glen > 1e-6 ? { x: gx / glen, z: gz / glen } : { x: 1, z: 0 };
+    for (let k = i; k < j; k++) {
+      const p = points[k];
+      if (!p) continue;
+      for (let it = 0; it < 20; it++) {
+        const d = field.waterSdf(p.x, p.z);
+        if (d >= clear) break;
+        const step = Math.min(2.5, clear - d + 0.3);
+        p.x += dir.x * step;
+        p.z += dir.z * step;
+      }
+    }
+    i = j;
+  }
+}
+
 /** 間隔が maxSpacing を超える辺に中点を挿入して契約の連続性を満たす */
 function subdivideToSpacing(points: Vec2[], maxSpacing: number): Vec2[] {
   let pts = points;
@@ -213,6 +290,7 @@ function buildCanalPath(
   width: number,
   meander: number,
   model: WorldModel,
+  field: WaterField,
   radius: (theta: number) => number,
 ): Vec2[] {
   const m1 = { x: (a.x + via.x) / 2, z: (a.z + via.z) / 2 };
@@ -245,11 +323,46 @@ function buildCanalPath(
     }
   }
 
+  // 中間点を水域外へ → 境界・footprint 回避 → リサンプル後にもう一巡
+  // (押し出しどうしの相互作用を弧長の均しごと収束させる)。
+  // 最後の Chaikin は押し出しの継ぎ目に残る折れを均す
+  enforceLand(pts, field, width);
   enforceCorridor(pts, model, radius, FOOTPRINT_CLEARANCE);
   pts = resamplePath(pts, width * CANAL_SPACING_RATIO);
+  enforceLand(pts, field, width);
   enforceCorridor(pts, model, radius, FOOTPRINT_CLEARANCE * 0.5);
+  pts = chaikin(pts);
   return subdivideToSpacing(pts, width * 1.45);
 }
+
+/**
+ * 経路の中間部(接続窓を除く)の陸上率。押し出し後もこの値が低い経路は
+ * 水中に沈んだままで「街の水路」として現れない(contracts/worldmodel.md)
+ */
+function midLandFraction(
+  points: Vec2[],
+  field: WaterField,
+  width: number,
+): number {
+  const endWindow = width * 2 + 4;
+  const total = pathLength(points);
+  if (total <= endWindow * 2) return 0;
+  let land = 0;
+  let count = 0;
+  for (let s = endWindow; s <= total - endWindow; s += 2) {
+    const { p } = pointAlong(points, s);
+    if (field.waterSdf(p.x, p.z) >= 0) land++;
+    count++;
+  }
+  return count > 0 ? land / count : 0;
+}
+
+/**
+ * 中間部の陸上率の下限(これ未満はリトライ)。全試行が満たさない場合は
+ * 交差上限を満たす試行のうち陸上率最大のものを受理する(水域が広い設定で
+ * 良路の全滅により本数の単調性を壊さないため。contracts/worldmodel.md)
+ */
+const CANAL_MIN_LAND_FRACTION = 0.7;
 
 /** 水路コリドーの符号付き距離(負=水路内) */
 function canalSdf(points: Vec2[], width: number) {
@@ -290,6 +403,8 @@ function planCanal(
   const center = model.centerPlan.position;
   const footHalf = derived.centerFootprint / 2;
   const rng = makeRng(seed, `canals/canal/${canalIndex}`);
+  // 陸上率の下限を満たさないが交差上限は満たす試行のうちの最良(縮退受理用)
+  let bestFallback: { canal: Canal; landFraction: number } | null = null;
 
   for (let attempt = 0; attempt <= CANAL_RETRIES; attempt++) {
     // 消費数は試行ごとに固定(6値)
@@ -328,6 +443,19 @@ function planCanal(
       x: center.x + Math.cos(viaAngle) * viaDist,
       z: center.z + Math.sin(viaAngle) * viaDist,
     };
+    // 経由点が水中なら陸側へ押し出す(contracts/worldmodel.md Water 節)
+    for (let k = 0; k < 20; k++) {
+      const d = field.waterSdf(via.x, via.z);
+      if (d >= width / 2 + 1) break;
+      const g = fieldGradient(field.waterSdf, via.x, via.z);
+      const len = Math.hypot(g.x, g.z);
+      const step = Math.min(2.5, width / 2 + 1 - d + 0.3);
+      if (len < 1e-6) via.x += step;
+      else {
+        via.x += (g.x / len) * step;
+        via.z += (g.z / len) * step;
+      }
+    }
 
     const points = buildCanalPath(
       seed,
@@ -339,27 +467,38 @@ function planCanal(
       width,
       meanderPick * Math.max(0.15, shrink),
       model,
+      field,
       radius,
     );
     if (points.length < 2) continue;
-    if (countRoadCrossings(model, points, width) <= CANAL_MAX_BRIDGES) {
-      return {
-        points,
-        width,
-        id: `canal/${canalIndex}`,
-        towpathSide: sidePick < 0.5 ? 1 : -1,
-      };
+    // 受理条件: 交差上限と、中間部が陸上に出ていること(沈んだ水路は
+    // 「街の水路」として現れないため棄却してリトライ。contracts)
+    if (countRoadCrossings(model, points, width) > CANAL_MAX_BRIDGES) continue;
+    const canal: Canal = {
+      points,
+      width,
+      id: `canal/${canalIndex}`,
+      towpathSide: sidePick < 0.5 ? 1 : -1,
+    };
+    const landFraction = midLandFraction(points, field, width);
+    if (landFraction >= CANAL_MIN_LAND_FRACTION) return canal;
+    if (!bestFallback || landFraction > bestFallback.landFraction) {
+      bestFallback = { canal, landFraction };
     }
   }
-  return null;
+  // 全試行が陸上率を満たさない場合の縮退受理(本数の単調性を優先)
+  return bestFallback ? bestFallback.canal : null;
 }
 
 /**
- * フォールバックの堀留: 中心へ最も近いアンカーから中心域へ向かう短い水路。
- * 交差が上限以下になる弧長へ決定論的に切り詰める(始端のみ水域接続)。
+ * フォールバックの堀留: 水域のアンカーから中心域へ向かう短い水路。
+ * 終端は陸上へ押し出して「街区内で止まる」を保証し(見えない水中の堀留を
+ * 作らない。contracts/worldmodel.md)、終端が中心へ最も近くなるアンカーを
+ * 決定論的に選ぶ。交差が上限以下になる弧長へ切り詰める(始端のみ水域接続)。
  */
 function planFallbackCanal(
   model: WorldModel,
+  field: WaterField,
   anchors: Vec2[],
   width: number,
   radius: (theta: number) => number,
@@ -367,25 +506,40 @@ function planFallbackCanal(
   const { derived } = model.meta;
   const center = model.centerPlan.position;
   const footHalf = derived.centerFootprint / 2;
-  let best: Vec2 | null = null;
-  let bestD = Infinity;
+  const clear = width / 2 + 1;
+  const minLen = Math.max(width * 3, 26);
+
+  let best: { start: Vec2; end: Vec2; score: number } | null = null;
   for (const p of anchors) {
-    const d = Math.hypot(p.x - center.x, p.z - center.z);
-    if (d < bestD) {
-      bestD = d;
-      best = p;
+    const dx = center.x - p.x;
+    const dz = center.z - p.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-6) continue;
+    const stop = len - (footHalf * 1.4 + FOOTPRINT_CLEARANCE);
+    if (stop < minLen) continue;
+    const end = { x: p.x + (dx / len) * stop, z: p.z + (dz / len) * stop };
+    // 終端が水中なら陸側へ押し出す
+    for (let k = 0; k < 20; k++) {
+      const d = field.waterSdf(end.x, end.z);
+      if (d >= clear) break;
+      const g = fieldGradient(field.waterSdf, end.x, end.z);
+      const glen = Math.hypot(g.x, g.z);
+      const step = Math.min(2.5, clear - d + 0.3);
+      if (glen < 1e-6) end.x += step;
+      else {
+        end.x += (g.x / glen) * step;
+        end.z += (g.z / glen) * step;
+      }
     }
+    if (field.waterSdf(end.x, end.z) < clear) continue;
+    if (field.boundarySdf(end.x, end.z) < BOUNDARY_CLEARANCE) continue;
+    const score = Math.hypot(end.x - center.x, end.z - center.z);
+    if (!best || score < best.score) best = { start: p, end, score };
   }
   if (!best) return null;
 
-  const dx = center.x - best.x;
-  const dz = center.z - best.z;
-  const len = Math.hypot(dx, dz);
-  if (len < 1e-6) return null;
-  const stop = Math.max(0, len - (footHalf * 1.4 + FOOTPRINT_CLEARANCE));
-  if (stop < width * 3) return null;
-  const end = { x: best.x + (dx / len) * stop, z: best.z + (dz / len) * stop };
-  let pts = resamplePath([best, end], width * CANAL_SPACING_RATIO);
+  let pts = resamplePath([best.start, best.end], width * CANAL_SPACING_RATIO);
+  enforceLand(pts, field, width);
   enforceCorridor(pts, model, radius, FOOTPRINT_CLEARANCE);
   pts = subdivideToSpacing(pts, width * 1.45);
 
@@ -488,7 +642,7 @@ export function runCanals(model: WorldModel): void {
   }
   // 全滅時のフォールバック(堀留)。デフォルト全50の「必ず1本以上」を守る
   if (canals.length === 0) {
-    const fallback = planFallbackCanal(model, anchors, width, radius);
+    const fallback = planFallbackCanal(model, field, anchors, width, radius);
     if (fallback) canals.push(fallback);
   }
   model.water.canals = canals;

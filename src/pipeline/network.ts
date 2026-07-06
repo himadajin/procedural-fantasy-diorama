@@ -35,7 +35,7 @@ import {
   pathLength,
   simplifyPath,
   waterCrossings,
-} from "./geometry";
+} from "../model/geometry";
 
 /** 経路探索グリッドの一辺セル数の下限・上限(spec 9節: 解像度の上限クリップ) */
 const GRID_MIN = 56;

@@ -20,18 +20,31 @@ import {
   marchPositiveRegion,
   type WaterField,
 } from "../model/waterfield";
+import { buildCanalSurfaces, buildPaving, gradeColor } from "./paving";
+import { buildPlanMarks } from "./planmarks";
 
 /**
  * 材質ゾーンの基準色(art-direction 5.2節)。
  * 明度ムラは zoneMask.brightness(±8%)を乗じる。明度の一様スケールは
  * HSV 彩度を変えないため、大面積の彩度上限(同 2.1節)は基準色の規律のまま保たれる。
+ * 舗装("paved")チャネルの色は固定値ではなく derived.roadGrade による
+ * 土→砂利→石畳の補間(contracts/worldmodel.md ZoneMask 節)。
  */
-const ZONE_COLORS: Record<ZoneKind, string> = {
+const ZONE_COLORS: Record<Exclude<ZoneKind, "paved">, string> = {
   grass: "#7a8a55",
   dirt: "#8a7458",
   sandbar: "#a89570",
   marsh: "#6b7452",
 };
+
+/** モデルの roadGrade を反映した材質ゾーンの頂点カラー表を作る */
+function zoneColorTable(model: WorldModel): THREE.Color[] {
+  return ZONE_KINDS.map((kind) =>
+    kind === "paved"
+      ? gradeColor(model.meta.derived.roadGrade)
+      : new THREE.Color(ZONE_COLORS[kind]),
+  );
+}
 
 /** 水面の基準色(art-direction 5.3節)。青緑の純色は置かず灰を混ぜた青灰 */
 const WATER_DEEP = "#2e4a5c";
@@ -75,7 +88,7 @@ function zoneColorAt(
   let g = 0;
   let b = 0;
   for (let k = 0; k < zoneColors.length; k++) {
-    const w = sample.weights[k as 0 | 1 | 2 | 3];
+    const w = sample.weights[k] ?? 0;
     const c = zoneColors[k];
     if (!c) continue;
     r += w * c.r;
@@ -95,7 +108,7 @@ function zoneColorAt(
  */
 function buildGround(model: WorldModel, field: WaterField): THREE.Mesh {
   const size = model.ground.size;
-  const zoneColors = ZONE_KINDS.map((kind) => new THREE.Color(ZONE_COLORS[kind]));
+  const zoneColors = zoneColorTable(model);
   const march = marchPositiveRegion(field.landSdf, size, gridCellCount(size));
 
   const landVertexCount = march.positions.length / 2;
@@ -245,7 +258,10 @@ function buildWater(
     size,
     gridCellCount(size),
   );
-  if (march.triangles.length === 0 && !seaEdge) return null;
+  const canalSurfaces = buildCanalSurfaces(model, field);
+  if (march.triangles.length === 0 && !seaEdge && canalSurfaces.length === 0) {
+    return null;
+  }
 
   const deep = new THREE.Color(WATER_DEEP);
   const shallow = new THREE.Color(WATER_SHALLOW);
@@ -294,6 +310,31 @@ function buildWater(
     for (const [a, b, c, d] of quads) {
       indices.push(base + a, base + d, base + c, base + a, base + c, base + b);
     }
+  }
+
+  // 水路の水面: 川と同じマテリアル・同じ頂点カラー規範のまま同一メッシュへ
+  // 統合する(art-direction 5.3節「水路の水色は川と共通」。draw call も増えない)。
+  // 高さは地面よりわずかに上の掘り込みチャネル(contracts/worldmodel.md Water 節)
+  for (const surf of canalSurfaces) {
+    const base = positions.length / 3;
+    const band = Math.min(SHALLOW_BAND, surf.width * 0.45);
+    const count = surf.positions.length / 3;
+    for (let i = 0; i < count; i++) {
+      positions.push(
+        surf.positions[i * 3] ?? 0,
+        surf.positions[i * 3 + 1] ?? 0,
+        surf.positions[i * 3 + 2] ?? 0,
+      );
+      normals.push(0, 1, 0);
+      // 縁→中央を岸距離とみなし、川と同じ浅瀬→深みの写像で色を決める
+      const t = smoothstep01(((surf.edgeT[i] ?? 0) * surf.width) / 2 / band);
+      colors.push(
+        shallow.r + (deep.r - shallow.r) * t,
+        shallow.g + (deep.g - shallow.g) * t,
+        shallow.b + (deep.b - shallow.b) * t,
+      );
+    }
+    for (const idx of surf.indices) indices.push(base + idx);
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -383,17 +424,28 @@ export function buildWorld(model: WorldModel): THREE.Group {
     // ビューワー側の時間 uniform(表示演出。WorldModel には影響しない)
     group.userData.waterTime = timeUniform;
   }
+
+  // 道路・広場・水路の護岸(マージ 1 メッシュ)+杭(InstancedMesh 1)
+  const { paving, piles } = buildPaving(model, field);
+  if (paving) group.add(paving);
+  if (piles) group.add(piles);
+
+  // 計画デバッグ描画(結界環ライン+マーカー。PHASE 5b で立体に置換)
+  const planMarks = buildPlanMarks(model);
+  if (planMarks) group.add(planMarks);
+
   return group;
 }
 
 /** サブツリーの geometry / material を dispose して破棄する */
 export function disposeWorld(group: THREE.Object3D): void {
   group.traverse((obj) => {
-    if (obj instanceof THREE.Mesh) {
+    if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
       obj.geometry.dispose();
       const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const m of mats) m.dispose();
     }
+    if (obj instanceof THREE.InstancedMesh) obj.dispose();
   });
   group.removeFromParent();
 }

@@ -121,7 +121,7 @@ describe("ground: 境界ポリゴン", () => {
 });
 
 describe("ground: zoneMask 下地", () => {
-  it("各セルの重みは非負・合計1で、砂洲・湿地はこの段では 0(水系段の担当)", () => {
+  it("各セルの重みは非負・合計1で、砂洲・湿地・舗装はこの段では 0(後段の担当)", () => {
     for (const seed of SEEDS) {
       const mask = build(seed).ground.zoneMask;
       const cells = mask.resolution * mask.resolution;
@@ -137,6 +137,7 @@ describe("ground: zoneMask 下地", () => {
         expect(sum).toBeCloseTo(1, 6);
         expect(mask.weights[c * ZONE_KINDS.length + 2]).toBe(0); // sandbar
         expect(mask.weights[c * ZONE_KINDS.length + 3]).toBe(0); // marsh
+        expect(mask.weights[c * ZONE_KINDS.length + 4]).toBe(0); // paved(段10の担当)
       }
     }
   });
@@ -182,7 +183,8 @@ describe("ground: zoneMask 下地", () => {
       [size / 4, -size],
     ] as const) {
       const s = sampleZoneMask(model.ground.zoneMask, x, z);
-      const sum = s.weights[0] + s.weights[1] + s.weights[2] + s.weights[3];
+      const sum = s.weights.reduce((acc, w) => acc + w, 0);
+      expect(s.weights.length).toBe(ZONE_KINDS.length);
       expect(sum).toBeCloseTo(1, 6);
       expect(Number.isFinite(s.brightness)).toBe(true);
     }

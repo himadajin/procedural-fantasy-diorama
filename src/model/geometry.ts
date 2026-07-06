@@ -1,9 +1,11 @@
 /**
- * 折れ線・交差の幾何ユーティリティ(pipeline 内共有)。
- * 段5「道路網」・段6「水路」・段8「結界計画」・段9「広場」が共有する。
+ * 折れ線・交差の幾何ユーティリティ。
+ * pipeline の各段(段5「道路網」・段6「水路」・段8「結界計画」・段9「広場」・
+ * 段10「舗装」)とメッシュビルダー(道路リボンの水域クリップ)が共有する
+ * (waterfield.ts と同じく、絵とデータを同じ純関数から導くための共有実装)。
  * three 非依存・乱数ストリーム非消費の純関数のみ(順序非依存規約)。
  */
-import type { Vec2 } from "../model/worldmodel";
+import type { Vec2 } from "./worldmodel";
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));

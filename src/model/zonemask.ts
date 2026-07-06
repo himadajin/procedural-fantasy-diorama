@@ -4,8 +4,12 @@
  * プレーンな JSON シリアライズ可能データと純関数のみで構成する(three 非依存)。
  */
 
-/** 材質ゾーンの種類。この並びが weights のチャネル順の正 */
-export const ZONE_KINDS = ["grass", "dirt", "sandbar", "marsh"] as const;
+/**
+ * 材質ゾーンの種類。この並びが weights のチャネル順の正。
+ * grass/dirt は地面段、sandbar/marsh は水系段、paved は段10「舗装」が書く
+ * (contracts/worldmodel.md ZoneMask 節)。
+ */
+export const ZONE_KINDS = ["grass", "dirt", "sandbar", "marsh", "paved"] as const;
 export type ZoneKind = (typeof ZONE_KINDS)[number];
 export const ZONE_COUNT = ZONE_KINDS.length;
 
@@ -43,9 +47,9 @@ export function zoneCellIndex(mask: ZoneMask, ix: number, iz: number): number {
   return (iz * mask.resolution + ix) * ZONE_COUNT;
 }
 
-/** サンプリング結果。weights は ZONE_KINDS 順 */
+/** サンプリング結果。weights は ZONE_KINDS 順(長さ ZONE_COUNT) */
 export interface ZoneSample {
-  weights: [number, number, number, number];
+  weights: number[];
   brightness: number;
 }
 
@@ -81,9 +85,9 @@ export function sampleZoneMask(mask: ZoneMask, x: number, z: number): ZoneSample
   const w01 = (1 - fx) * fz;
   const w11 = fx * fz;
 
-  const out: [number, number, number, number] = [0, 0, 0, 0];
+  const out = new Array<number>(ZONE_COUNT).fill(0);
   for (let k = 0; k < ZONE_COUNT; k++) {
-    out[k as 0 | 1 | 2 | 3] =
+    out[k] =
       (weights[c00 * ZONE_COUNT + k] ?? 0) * w00 +
       (weights[c10 * ZONE_COUNT + k] ?? 0) * w10 +
       (weights[c01 * ZONE_COUNT + k] ?? 0) * w01 +

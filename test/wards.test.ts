@@ -5,7 +5,7 @@ import {
   distToPolyline,
   pointInPolygon,
 } from "../src/model/waterfield";
-import { segmentIntersection, waterCrossings } from "../src/pipeline/geometry";
+import { segmentIntersection, waterCrossings } from "../src/model/geometry";
 import { runPipeline } from "../src/pipeline/run";
 
 const SEEDS = ["everdusk-101", "seed-a"];

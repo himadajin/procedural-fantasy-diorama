@@ -60,10 +60,11 @@ interface Rng {
 | 7 | 一次密度場 | pipeline/density | 〜canals | density.primary |
 | 8 | 結界計画 | pipeline/wards | 〜density.primary | wards 一式、water.bridges(再抽出) |
 | 9 | 広場 | pipeline/plazas | 〜wards | plazas、centerPlan.facing/heightHint |
-| 10 | 区画 | pipeline/parcels | 〜plazas | density.final、parcels |
-| 11 | 建物 | pipeline/buildings | 〜parcels | buildings(部品リスト含む) |
-| 12 | 植生 | pipeline/vegetation | 〜buildings | vegetation |
-| 13 | サマリー | pipeline/summary | 全部 | summary |
+| 10 | 舗装 | pipeline/paving | 〜plazas(network / water.canals / plazas) | ground.zoneMask(舗装チャネル上書き) |
+| 11 | 区画 | pipeline/parcels | 〜舗装 | density.final、parcels |
+| 12 | 建物 | pipeline/buildings | 〜parcels | buildings(部品リスト含む) |
+| 13 | 植生 | pipeline/vegetation | 〜buildings | vegetation |
+| 14 | サマリー | pipeline/summary | 全部 | summary |
 
 - 各段はパイプライン内アサーション(データ検証)を持ってよい。
   違反は throw せず件数を console に出し、生成は続行する
@@ -73,7 +74,9 @@ interface Rng {
 - 段6「水路」の BridgeSite 追加は仮のもので、段8「結界計画」が結界門
   スナップ後に全道路 edge を河川・湖・水路の合成水域で標本化し直して
   bridges 全体を置き換える(worldmodel.md Water 節)。水路は waterfield・
-  岸線・zoneMask に影響させない(同節の設計判断)。
+  岸線に影響させない(同節の設計判断)。zoneMask への舗装上書きは
+  段5/6/9 の各段では行わず、段10「舗装」へ集約する
+  (worldmodel.md ZoneMask 節)。段10 は乱数サブストリームを消費しない。
 - リトライを含む処理(水路の交差超過の再サンプル、結界環の縮小リトライ)は
   RNG API 節の規約どおり、リトライ回数も同一サブストリームから消費する。
 
