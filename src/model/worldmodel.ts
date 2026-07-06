@@ -5,6 +5,10 @@
  * 時間・表示状態を持ち込まない。
  */
 
+import { createZoneMask, type ZoneMask } from "./zonemask";
+
+export { ZONE_KINDS, type ZoneKind, type ZoneMask } from "./zonemask";
+
 /** xz平面上の点(y-up。地面は y=0) */
 export interface Vec2 {
   x: number;
@@ -41,11 +45,154 @@ export const DEFAULT_PARAMS: Params = {
 
 /**
  * パラメータ→内部変数(implementation-spec 1.6節)。
- * PHASE 2 以降、各PHASEの導入時にフィールドを確定し contracts を先に更新する。
+ * フィールドの正は contracts/worldmodel.md(Meta 節)。
+ * 各フィールドは駆動パラメータに対して単調な写像とし、seed 揺らぎは
+ * entryPointCount・riverCount の丸め閾値にのみ使う(pipeline/derive.ts)。
  */
 export interface Derived {
-  /** ワールド一辺の実寸(240〜560)。World Scale 駆動 */
+  // --- World Scale 駆動 ---
+  /** ワールド一辺の実寸。240〜560 */
   worldSize: number;
+  /** 外縁の進入点の数。2〜4(整数。閾値に seed 揺らぎ) */
+  entryPointCount: number;
+  /** 道路網の総延長予算(実寸)。worldSize × 2.2〜4.0 */
+  roadBudget: number;
+  /** 外縁余白(森・草地帯)の厚み。18〜48 */
+  marginWidth: number;
+  /** 区画数の上限。60〜260(整数) */
+  parcelCountMax: number;
+
+  // --- Settlement Pressure 駆動 ---
+  /** 密度場の中心ピーク値。0.55〜1.0 */
+  densityPeak: number;
+  /** 密度の半減距離(worldSize 比)。0.20〜0.45 */
+  densityFalloff: number;
+  /** 区画の採択確率。0.35〜0.9 */
+  parcelRate: number;
+  /** 平均敷地間口。16〜7(高いほど狭小・高密) */
+  parcelSize: number;
+  /** 小道(建物間の細い道)の生成量。0〜1 */
+  laneAmount: number;
+  /** 建物の平均階数への弱い正の寄与。0〜0.6 */
+  floorsBias: number;
+
+  // --- Prosperity 駆動 ---
+  /** 壁材の階層(掘立→木組み漆喰→石造→切石)。0〜3 連続 */
+  wallTier: number;
+  /** 屋根パレットの階層(茅→木羽→瓦→スレート)。0〜3 連続 */
+  roofTier: number;
+  /** 道の等級(土→砂利→石畳)。0〜2 連続。広場舗装・護岸の整いも共有 */
+  roadGrade: number;
+  /** 窓・扉・梁のディテール量と整列度。0〜1 */
+  detailAmount: number;
+  /** 整い(建物の傾き・沈み込みノイズの逆数)。0〜1 */
+  tidiness: number;
+
+  // --- Water Presence 駆動 ---
+  /** 主河川の本数。0〜2(整数。閾値に seed 揺らぎ。Water 0 で必ず 0) */
+  riverCount: number;
+  /** 川幅。5〜16(本数 0 でも連続値として保持し、閾値付近の連続変化に使う) */
+  riverWidth: number;
+  /** 湖の生成確率。0〜1(Water 0 で 0) */
+  lakeChance: number;
+  /** 湖の目標面積(箱庭面積比)。0.04〜0.18 */
+  lakeArea: number;
+  /** 水域合計面積の上限(箱庭面積比)。0.35 固定 */
+  waterAreaCap: number;
+  /** 水路発火スコア = Water×(0.5+0.5×Settlement)。0.35 以上で発火 */
+  canalScore: number;
+  /** 湿地マスクの広さ。0〜1 */
+  marshAmount: number;
+  /** 砂洲の広さ。0〜1 */
+  sandbarAmount: number;
+  /** 水辺建築・橋詰め建築・杭基礎の採択確率。0〜1 */
+  watersideRate: number;
+  /** 岸辺植生の密度。0〜1 */
+  shoreVegetation: number;
+
+  // --- Arcana 駆動 ---
+  /** 結界段階。閾値 15/45/75(seed 揺らぎなし) */
+  wardLevel: 0 | 1 | 2 | 3;
+  /** 結界壁の閉じ率。0〜1 連続(段階を跨いで連続に閉じていく) */
+  wallClosure: number;
+  /** 魔導塔の数・高さのスケール。0〜1 */
+  towerScale: number;
+  /** 結界門の数・規模のスケール。0〜1 */
+  gateScale: number;
+  /** 魔法灯・発光紋様の密度。0〜1 */
+  lampDensity: number;
+  /** 浮遊要素の量。0〜1(Arcana 30 以下では 0) */
+  floaterAmount: number;
+  /** 聖域・祠の出現率。0〜0.8 */
+  shrineRate: number;
+  /** 発光強度のスケール。0〜1(基準値は art-direction 5.4節) */
+  glowIntensity: number;
+  /** 発光合計投影面積の上限(箱庭平面比)。0.005 固定(art-direction 5.4節) */
+  glowAreaCap: number;
+  /** 中心建築が魔導型に寄るバイアス。0〜1 */
+  centerArcaneBias: number;
+
+  // --- Monumentality 駆動 ---
+  /** 中心建築 footprint 一辺の目安。14〜44 */
+  centerFootprint: number;
+  /** 中心建築の高さ目安。12〜56 */
+  centerHeight: number;
+  /** 中心前広場の半径。10〜32 */
+  centerPlazaRadius: number;
+  /** 中心周辺の建物格上げ半径。20〜100 */
+  upgradeRadius: number;
+  /** 中心周辺の区画予約半径(centerFootprint 比)。1.2〜2.4 */
+  parcelReserve: number;
+  /** スカイライン倍率。1.8〜3.5(PHASE 5a のアサーション基準) */
+  skylineRatio: number;
+}
+
+/** 導出設定の初期値(段1「導出設定」実行前のプレースホルダー) */
+export function createEmptyDerived(): Derived {
+  return {
+    worldSize: 0,
+    entryPointCount: 0,
+    roadBudget: 0,
+    marginWidth: 0,
+    parcelCountMax: 0,
+    densityPeak: 0,
+    densityFalloff: 0,
+    parcelRate: 0,
+    parcelSize: 0,
+    laneAmount: 0,
+    floorsBias: 0,
+    wallTier: 0,
+    roofTier: 0,
+    roadGrade: 0,
+    detailAmount: 0,
+    tidiness: 0,
+    riverCount: 0,
+    riverWidth: 0,
+    lakeChance: 0,
+    lakeArea: 0,
+    waterAreaCap: 0,
+    canalScore: 0,
+    marshAmount: 0,
+    sandbarAmount: 0,
+    watersideRate: 0,
+    shoreVegetation: 0,
+    wardLevel: 0,
+    wallClosure: 0,
+    towerScale: 0,
+    gateScale: 0,
+    lampDensity: 0,
+    floaterAmount: 0,
+    shrineRate: 0,
+    glowIntensity: 0,
+    glowAreaCap: 0,
+    centerArcaneBias: 0,
+    centerFootprint: 0,
+    centerHeight: 0,
+    centerPlazaRadius: 0,
+    upgradeRadius: 0,
+    parcelReserve: 0,
+    skylineRatio: 0,
+  };
 }
 
 export interface Meta {
@@ -54,20 +201,22 @@ export interface Meta {
   derived: Derived;
 }
 
-/** 材質ゾーングリッド。表現は PHASE 2 で確定(contracts/worldmodel.md) */
-export type ZoneMask = null;
 /** 密度場グリッド。表現は PHASE 3 で確定 */
 export type FieldGrid = null;
-/** 岸線データ。表現は PHASE 2 で確定 */
+/** 岸線データ。表現は水系段(PHASE 2 後半)で確定 */
 export type Shoreline = null;
 
 export interface Ground {
-  /** ワールド一辺の実寸 */
+  /** ワールド一辺の実寸(= derived.worldSize) */
   size: number;
-  /** 有機的な外縁形状(PHASE 2) */
+  /**
+   * 有機的な外縁形状。閉多角形・自己交差なし・時計回り
+   * (shoelace 符号負)・原点まわりの星形(contracts/worldmodel.md)
+   */
   boundary: Polygon;
-  /** 外周の閉じ方(Water 0付近は "fog" 固定) */
+  /** 外周の閉じ方(水系段が確定。Water 0付近は "fog" 固定) */
   edgeStyle: "fog" | "water";
+  /** 材質ゾーン(草地/土/砂洲/湿地)のグリッド(model/zonemask.ts) */
   zoneMask: ZoneMask;
 }
 
@@ -232,8 +381,13 @@ export interface WorldModel {
 /** パイプライン開始時の空モデル */
 export function createEmptyWorldModel(seed: string, params: Params): WorldModel {
   return {
-    meta: { seed, params: { ...params }, derived: { worldSize: 0 } },
-    ground: { size: 0, boundary: [], edgeStyle: "fog", zoneMask: null },
+    meta: { seed, params: { ...params }, derived: createEmptyDerived() },
+    ground: {
+      size: 0,
+      boundary: [],
+      edgeStyle: "fog",
+      zoneMask: createZoneMask(0, 0),
+    },
     water: { rivers: [], lakes: [], canals: [], bridges: [], shoreline: null },
     density: { primary: null, final: null },
     network: { nodes: [], edges: [], entryPoints: [] },
