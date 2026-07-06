@@ -72,7 +72,10 @@ export class OrbitController {
     this.applyToCamera();
   }
 
-  /** ワールド実寸に応じて距離・パンの制限と初期構図を設定する */
+  /**
+   * ワールド実寸に応じて距離・パンの制限と初期構図(home)を設定する。
+   * 視点は動かさない。構図へ戻すには resetCamera を呼ぶ。
+   */
   configure(worldSize: number): void {
     this.minDistance = worldSize * 0.06;
     this.maxDistance = worldSize * 1.5;
@@ -83,7 +86,6 @@ export class OrbitController {
       distance: worldSize * 0.75,
       target: new THREE.Vector3(0, 0, 0),
     };
-    this.resetCamera(true);
   }
 
   /** 初期構図(art-direction 8節)へ戻る */

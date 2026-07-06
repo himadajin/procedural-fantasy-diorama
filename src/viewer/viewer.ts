@@ -22,8 +22,8 @@ export interface Viewer {
   /** ワールド実寸の変更に追従(霧密度、影カメラ、空の半径) */
   setWorldSize(size: number): void;
   worldSize(): number;
-  /** 毎フレーム呼ばれるコールバックを登録(dt: 秒, elapsed: 秒) */
-  onFrame(cb: (dt: number, elapsed: number) => void): void;
+  /** 毎フレーム呼ばれるコールバックを登録し、解除関数を返す(dt: 秒, elapsed: 秒) */
+  onFrame(cb: (dt: number, elapsed: number) => void): () => void;
   dispose(): void;
 }
 
@@ -139,7 +139,13 @@ export function createViewer(container: HTMLElement): Viewer | null {
     worldGroup,
     setWorldSize,
     worldSize: () => size,
-    onFrame: (cb) => frameCallbacks.push(cb),
+    onFrame: (cb) => {
+      frameCallbacks.push(cb);
+      return () => {
+        const i = frameCallbacks.indexOf(cb);
+        if (i >= 0) frameCallbacks.splice(i, 1);
+      };
+    },
     dispose: () => {
       window.removeEventListener("resize", onResize);
       renderer.setAnimationLoop(null);

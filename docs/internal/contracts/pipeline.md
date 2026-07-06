@@ -78,16 +78,19 @@ interface PipelineStep {
   name: string;                        // インジケーター表示名(日本語)
   run(model: WorldModel): void;
 }
-runPipeline(seed: string, params: Params, opts: {
-  onProgress(stepName: string, index: number, total: number): void;
+runPipeline(seed: string, params: Params, opts?: {
+  onProgress?(stepName: string, index: number, total: number): void;
+  signal?: AbortSignal;                // 中断。中断時は AbortError で reject する
 }): Promise<WorldModel>
 ```
 
 - ステップ間で requestAnimationFrame に制御を返し、生成中もカメラ操作と
-  UIを生かす(フリーズ不可)。
+  UIを生かす(フリーズ不可)。rAF が無い環境(テスト)では setTimeout に
+  フォールバックする。
 - 完了時、呼び出し側(main)が旧シーンサブツリーを dispose 付きで差し替える。
-- 生成中の再入(Generate 連打)は、実行中の生成を破棄して最後の要求だけを
-  実行する(結果は最後の seed+params のみに依存し、決定性を壊さない)。
+- 生成中の再入(Generate 連打)は、呼び出し側が実行中の生成を `signal` で
+  中断して最後の要求だけを実行する(結果は最後の seed+params のみに依存し、
+  決定性を壊さない)。
 
 ## WorldModel 正規化ハッシュ
 
