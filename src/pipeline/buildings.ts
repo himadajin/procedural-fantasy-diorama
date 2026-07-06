@@ -16,7 +16,7 @@
  * - 水辺建築は背面の水面(河川・湖)へ張り出し、杭または石基礎で
  *   水面下 y=-1.6(岸スカート下端)まで到達する(機械判定可能な契約)
  *
- * PHASE 4a commit 13(本実装)の追加分:
+ * PHASE 4a commit 13 の追加分:
  * - materials(wall/roof/trim)を役割+wallTier/roofTier+seed で決定
  *   (基準色の語彙は contracts/worldmodel.md「materialId の語彙」=
  *   art-direction 5.1節)
@@ -26,6 +26,21 @@
  * - 建物 footprint による zoneMask の土/舗装上書き(段10 と同じ流儀)
  * - 部品の乱数は派生サブストリーム "building/<id>/parts" のみ消費
  *   (commit 12 の骨格データの乱数消費を変えない)
+ *
+ * PHASE 4b commit 14(本実装)の追加分(contracts/worldmodel.md
+ * 「PHASE 4b commit 14 の詳細部品の性質」):
+ * - 開口: 窓(少なく大きく、整列度と数は detailAmount/役割)・
+ *   扉(正面 frontEdge 側に必ず 1 つ。役割で寸法差)
+ * - 木組み梁(wall="plaster" の中 Prosperity 帯で顕著)と
+ *   ジェッティ(上階張り出し。確率的)
+ * - 煙突(Prosperity 駆動。胴幅は実寸比 15% 過大。art-direction 6節)
+ * - 付属: 低い石垣・外階段・屋根の小窓(役割・Prosperity で確率的)
+ * - 素材階層の移行規約の確定(離散選択+役割補正+±0.6 揺らぎの丸め。
+ *   木組み梁は plaster 帯に連動)
+ * - 詳細の乱数は派生サブストリーム "building/<id>/details" のみ消費
+ *   (骨格・materials の乱数消費は commit 13 から不変)
+ * - 小道(lane)の追加と窓・扉・梁・煙突の InstancedMesh 化は
+ *   commit 15 の担当(本段のスコープ外であり仮実装ではない)
  */
 import { makeRng, type Rng } from "../rng";
 import {
@@ -33,6 +48,7 @@ import {
   ZONE_KINDS,
   type Building,
   type BuildingRole,
+  type Derived,
   type Foundation,
   type Parcel,
   type Part,
@@ -114,6 +130,89 @@ const WING_JOIN_OVERLAP = 0.06;
 const PILE_SPACING = 2.4;
 const PILE_WIDTH = 0.3;
 const PILE_EDGE_INSET = 0.25;
+
+// --- PHASE 4b commit 14: 開口・木組み・煙突・付属の定数
+//     (contracts/worldmodel.md「PHASE 4b commit 14 の詳細部品の性質」) ---
+/** 窓枠の壁面からの突出(セットバックの読み。art-direction 6節) */
+const WINDOW_DEPTH = 0.16;
+/** 窓下端の階床からの高さ */
+const WINDOW_SILL = 0.85;
+/** 窓の壁面端からの余白 */
+const WINDOW_MARGIN = 0.75;
+/** 窓どうしの最小あき(収容数の分母 = 窓幅 + これ) */
+const WINDOW_GAP = 1.8;
+/** 扉枠の突出 */
+const DOOR_DEPTH = 0.18;
+/** ジェッティ(上階張り出し)の張り出し量と床帯の高さ */
+const JETTY_DEPTH = 0.32;
+const JETTY_BAND_HEIGHT = 0.24;
+/** 木組み梁の太さ(見付け)と壁面からの厚み */
+const BEAM_THICKNESS = 0.16;
+const BEAM_DEPTH = 0.1;
+/** 煙突: 実寸相当の胴幅 × 15% 過大(art-direction 6節の様式言語) */
+export const CHIMNEY_BASE_WIDTH = 0.72;
+export const CHIMNEY_OVERSIZE = 1.15;
+/** 煙突頂部の棟からの突出 */
+const CHIMNEY_TOP_MIN = 0.7;
+const CHIMNEY_TOP_MAX = 1.2;
+/** 低い石垣の寸法と、建物正面から敷地前面帯への引き出し */
+const FENCE_THICKNESS = 0.28;
+const FENCE_FRONT_OFFSET = 0.4;
+/** 外階段: 蹴上げの目安と 1 段の奥行き */
+const STAIR_STEP_RISE = 0.26;
+const STAIR_STEP_DEPTH = 0.3;
+/** 屋根の小窓の寸法(幅×全高×奥行き)と、置ける屋根の最小スパン */
+const DORMER_SIZE: [number, number, number] = [1.2, 1.0, 1.1];
+const DORMER_MIN_SPAN = 4.6;
+
+/** 窓の量の役割係数(倉庫は寡黙に、集会所は開く) */
+const WINDOW_ROLE_COUNT: Record<BuildingRole, number> = {
+  house: 1,
+  waterside: 1,
+  bridgehead: 1,
+  hall: 1.15,
+  warehouse: 0.35,
+  outskirt: 0.55,
+  center: 1,
+};
+/** 窓高の役割係数(hall は縦長、warehouse は低い明かり取り) */
+const WINDOW_ROLE_HEIGHT: Record<BuildingRole, number> = {
+  house: 1,
+  waterside: 1,
+  bridgehead: 1,
+  hall: 1.3,
+  warehouse: 0.8,
+  outskirt: 0.85,
+  center: 1,
+};
+/** 扉幅の役割帯 [min, max](warehouse は荷入れ口) */
+const DOOR_ROLE_WIDTH: Record<BuildingRole, [number, number]> = {
+  house: [1.05, 1.25],
+  waterside: [1.05, 1.25],
+  bridgehead: [1.1, 1.3],
+  hall: [1.35, 1.55],
+  warehouse: [1.8, 2.1],
+  outskirt: [0.95, 1.1],
+  center: [1.35, 1.55],
+};
+/** 煙突採択率の役割基礎(+0.55 × detailAmount) */
+const CHIMNEY_ROLE_P: Record<BuildingRole, number> = {
+  house: 0.18,
+  waterside: 0.18,
+  bridgehead: 0.2,
+  hall: 0.38,
+  warehouse: 0.06,
+  outskirt: 0.05,
+  center: 0.3,
+};
+/** 低い石垣・屋根小窓が付きうる役割 */
+const FENCE_ROLES = new Set<BuildingRole>(["house", "hall"]);
+const DORMER_ROLES = new Set<BuildingRole>([
+  "house",
+  "hall",
+  "waterside",
+  "bridgehead",
+]);
 
 // --- 素材(contracts/worldmodel.md「materialId の語彙」= art-direction 5.1節) ---
 const WALL_MATERIALS = ["rough-wood", "plaster", "stone", "ashlar"] as const;
@@ -405,12 +504,37 @@ interface WingFrame {
   v: Vec2;
 }
 
+/** 壁面(開口・梁の取り付き先)。t は面中心からの接線方向距離 */
+interface WallFace {
+  key: "front" | "back" | "left" | "right";
+  /** 面の長さ(壁面の水平幅) */
+  length: number;
+  /** 面上の点(t: 面中心からの接線方向距離)のワールド xz */
+  point(t: number): Vec2;
+  /** 外向き法線(ワールド) */
+  normal: Vec2;
+}
+
+/** 階ごとの壁体矩形(翼ローカル)。ジェッティは正面翼の上階を正面へ張り出す */
+function wallRect(
+  w: Wing,
+  wingIndex: number,
+  floor: number,
+  hasJetty: boolean,
+): Wing {
+  if (hasJetty && wingIndex === 0 && floor >= 1) {
+    return { u0: w.u0, u1: w.u1, v0: w.v0 - JETTY_DEPTH, v1: w.v1 };
+  }
+  return w;
+}
+
 /**
- * 骨格文法: 翼ごとに 基壇(plinth。kind "piles" では杭列)→ 壁体(階数ぶん)→
- * 屋根(gable / hip)の順で部品を展開する(contracts/worldmodel.md
- * 「Part の型語彙」「建物部品の性質」)。乱数は消費しない(骨格データと
- * materials から決定的)。
- * 窓・扉・梁・煙突が無いのは PHASE 4b のスコープ外であり正常。
+ * 建築文法: 翼ごとに 基壇(plinth。kind "piles" では杭列)→ 壁体(階数ぶん)→
+ * 屋根(gable / hip)の骨格を展開し(commit 13)、続けて
+ * 扉 → 窓 → 梁 → ジェッティ床帯 → 煙突 → 屋根小窓 → 石垣 → 外階段 の
+ * 詳細部品を展開する(PHASE 4b commit 14。contracts/worldmodel.md
+ * 「建物部品の性質」)。乱数は詳細部品の rng("building/<id>/details")のみ
+ * 消費する(骨格は骨格データと materials から決定的)。
  */
 function expandParts(
   wings: Wing[],
@@ -419,6 +543,10 @@ function expandParts(
   floors: number,
   roof: Building["roof"],
   materials: Building["materials"],
+  role: BuildingRole,
+  derived: Derived,
+  rng: Rng,
+  frontSpan: { u0: number; u1: number },
 ): Part[] {
   const parts: Part[] = [];
   // rotation は Y 軸まわり(ローカル +x → ワールド (cosθ, 0, −sinθ)。契約)
@@ -428,10 +556,48 @@ function expandParts(
     x: frame.origin.x + frame.u.x * u + frame.v.x * v,
     z: frame.origin.z + frame.u.z * u + frame.v.z * v,
   });
+  /** 翼ローカル方向 (du, dv) → ワールド方向 */
+  const dirWorld = (du: number, dv: number): Vec2 => ({
+    x: frame.u.x * du + frame.v.x * dv,
+    z: frame.u.z * du + frame.v.z * dv,
+  });
+  /** 梁など「+x=接線」の部品の rotation */
+  const tangentRot = (d: Vec2): number => -Math.atan2(d.z, d.x);
+  /** 開口など「+z=外向き法線」の部品の rotation(契約の開口変換規約) */
+  const normalRot = (n: Vec2): number => Math.atan2(n.x, n.z);
   const plinthTop = foundation.plinthHeight;
   const plinthMaterial = materials.wall === "ashlar" ? "ashlar" : "stone";
+  const detail = derived.detailAmount;
 
-  for (const w of wings) {
+  // --- 詳細の建物ごと決定(消費順は契約に記載) ---
+  // 木組み梁は wall="plaster"(tier 1 = 中 Prosperity 帯)に連動して顕著
+  const hasBeams = materials.wall === "plaster" && rng.chance(0.88);
+  const hasJetty =
+    hasBeams && floors >= 2 && role !== "warehouse" && rng.chance(0.55);
+  const windowW = 0.95 + 0.35 * rng.next();
+  const windowH = clamp(
+    (1.2 + 0.35 * detail) * WINDOW_ROLE_HEIGHT[role],
+    0.9,
+    1.85,
+  );
+  const [dw0, dw1] = DOOR_ROLE_WIDTH[role];
+  const doorWRaw = dw0 + (dw1 - dw0) * rng.next();
+  const doorOffT = rng.range(-1, 1);
+
+  /** 正面翼の屋根の幾何(煙突・屋根小窓の取り付き先) */
+  let roofInfo: {
+    cu: number;
+    cv: number;
+    ridgeAlongU: boolean;
+    ridgeWallLen: number;
+    span: number;
+    baseY: number;
+    height: number;
+  } | null = null;
+
+  for (let wi = 0; wi < wings.length; wi++) {
+    const w = wings[wi];
+    if (!w) continue;
     const du = w.u1 - w.u0;
     const dv = w.v1 - w.v0;
     const c = toWorld((w.u0 + w.u1) / 2, (w.v0 + w.v1) / 2);
@@ -487,14 +653,16 @@ function expandParts(
       });
     }
 
-    // --- 壁体(1 階ぶん × 階数。params.floor は 4b の開口・ジェッティのフック)
+    // --- 壁体(1 階ぶん × 階数。ジェッティは上階を正面へ張り出す)
     for (let i = 0; i < floors; i++) {
+      const r = wallRect(w, wi, i, hasJetty);
+      const rc = toWorld((r.u0 + r.u1) / 2, (r.v0 + r.v1) / 2);
       parts.push({
         type: "wall",
         transform: {
-          position: [c.x, plinthTop + i * FLOOR_HEIGHT, c.z],
+          position: [rc.x, plinthTop + i * FLOOR_HEIGHT, rc.z],
           rotation: rotU,
-          scale: [du, FLOOR_HEIGHT, dv],
+          scale: [r.u1 - r.u0, FLOOR_HEIGHT, r.v1 - r.v0],
         },
         materialId: materials.wall,
         params: { floor: i },
@@ -502,27 +670,441 @@ function expandParts(
     }
 
     // --- 屋根: 棟は翼の長手方向。切妻基本、hip は矩形のみ、
-    //     複合(L/T)は翼ごとの gable の組(契約)
-    const ridgeAlongU = du >= dv;
-    const length = (ridgeAlongU ? du : dv) + 2 * GABLE_END_OVERHANG;
-    const span = (ridgeAlongU ? dv : du) + 2 * EAVE_OVERHANG;
+    //     複合(L/T)は翼ごとの gable の組(契約)。
+    //     ジェッティのある翼は張り出し後の最上階寸法に架ける
+    const top = wallRect(w, wi, floors - 1, hasJetty);
+    const duT = top.u1 - top.u0;
+    const dvT = top.v1 - top.v0;
+    const cT = toWorld((top.u0 + top.u1) / 2, (top.v0 + top.v1) / 2);
+    const ridgeAlongU = duT >= dvT;
+    const length = (ridgeAlongU ? duT : dvT) + 2 * GABLE_END_OVERHANG;
+    const span = (ridgeAlongU ? dvT : duT) + 2 * EAVE_OVERHANG;
     const height = Math.tan((roof.pitch * Math.PI) / 180) * (span / 2);
+    const roofBaseY = plinthTop + floors * FLOOR_HEIGHT - ROOF_BASE_SINK;
     parts.push({
       type: roof.type === "hip" ? "hip" : "gable",
       transform: {
-        position: [
-          c.x,
-          plinthTop + floors * FLOOR_HEIGHT - ROOF_BASE_SINK,
-          c.z,
-        ],
+        position: [cT.x, roofBaseY, cT.z],
         rotation: ridgeAlongU ? rotU : rotV,
         scale: [length, height, span],
       },
       materialId: materials.roof,
       params: { pitch: roof.pitch },
     });
+    if (wi === 0) {
+      roofInfo = {
+        cu: (top.u0 + top.u1) / 2,
+        cv: (top.v0 + top.v1) / 2,
+        ridgeAlongU,
+        ridgeWallLen: ridgeAlongU ? duT : dvT,
+        span,
+        baseY: roofBaseY,
+        height,
+      };
+    }
   }
+
+  // --- 詳細部品(PHASE 4b commit 14) ---
+  const w0 = wings[0];
+  if (!w0) return parts;
+  expandDetailParts(parts, {
+    wings,
+    w0,
+    frontSpan,
+    toWorld,
+    dirWorld,
+    tangentRot,
+    normalRot,
+    rotU,
+    plinthTop,
+    plinthMaterial,
+    floors,
+    materials,
+    role,
+    detail,
+    hasBeams,
+    hasJetty,
+    windowW,
+    windowH,
+    doorWRaw,
+    doorOffT,
+    roofInfo,
+    rng,
+  });
   return parts;
+}
+
+/** expandDetailParts へ渡す文脈(骨格展開で確定済みの幾何と決定値) */
+interface DetailContext {
+  wings: Wing[];
+  w0: Wing;
+  /** 水上張り出しで延長される前の正面スパン(扉・石垣・外階段のアンカー。
+   *  張り出し延長部の中心へ扉が寄らないようにする) */
+  frontSpan: { u0: number; u1: number };
+  toWorld(u: number, v: number): Vec2;
+  dirWorld(du: number, dv: number): Vec2;
+  tangentRot(d: Vec2): number;
+  normalRot(n: Vec2): number;
+  rotU: number;
+  plinthTop: number;
+  plinthMaterial: string;
+  floors: number;
+  materials: Building["materials"];
+  role: BuildingRole;
+  detail: number;
+  hasBeams: boolean;
+  hasJetty: boolean;
+  windowW: number;
+  windowH: number;
+  doorWRaw: number;
+  doorOffT: number;
+  roofInfo: {
+    cu: number;
+    cv: number;
+    ridgeAlongU: boolean;
+    ridgeWallLen: number;
+    span: number;
+    baseY: number;
+    height: number;
+  } | null;
+  rng: Rng;
+}
+
+/** 翼の外壁面(開口・梁を置く面)。翼どうしの接合面は除く(契約) */
+function exteriorFaces(
+  ctx: DetailContext,
+  wingIndex: number,
+  floor: number,
+): WallFace[] {
+  const w = ctx.wings[wingIndex];
+  if (!w) return [];
+  const r = wallRect(w, wingIndex, floor, ctx.hasJetty);
+  const cu = (r.u0 + r.u1) / 2;
+  const cv = (r.v0 + r.v1) / 2;
+  const du = r.u1 - r.u0;
+  const dv = r.v1 - r.v0;
+  const single = ctx.wings.length === 1;
+  const keys: WallFace["key"][] =
+    wingIndex === 0
+      ? single
+        ? ["front", "right", "back", "left"]
+        : ["front", "right", "left"]
+      : ["back", "right", "left"];
+  return keys.map((key) => {
+    switch (key) {
+      case "front":
+        return {
+          key,
+          length: du,
+          point: (t: number) => ctx.toWorld(cu + t, r.v0),
+          normal: ctx.dirWorld(0, -1),
+        };
+      case "back":
+        return {
+          key,
+          length: du,
+          point: (t: number) => ctx.toWorld(cu + t, r.v1),
+          normal: ctx.dirWorld(0, 1),
+        };
+      case "left":
+        return {
+          key,
+          length: dv,
+          point: (t: number) => ctx.toWorld(r.u0, cv + t),
+          normal: ctx.dirWorld(-1, 0),
+        };
+      default:
+        return {
+          key,
+          length: dv,
+          point: (t: number) => ctx.toWorld(r.u1, cv + t),
+          normal: ctx.dirWorld(1, 0),
+        };
+    }
+  });
+}
+
+/**
+ * 詳細部品の展開(PHASE 4b commit 14): 扉 → 窓 → 梁 → ジェッティ床帯 →
+ * 煙突 → 屋根小窓 → 石垣 → 外階段 の順(契約の部品配列順)。
+ * 乱数は "building/<id>/details" ストリーム(ctx.rng)のみ消費する。
+ */
+function expandDetailParts(parts: Part[], ctx: DetailContext): void {
+  const {
+    w0,
+    toWorld,
+    dirWorld,
+    tangentRot,
+    normalRot,
+    rotU,
+    plinthTop,
+    plinthMaterial,
+    floors,
+    materials,
+    role,
+    detail,
+    rng,
+  } = ctx;
+
+  // --- 扉(正面 frontEdge 側に必ず 1 つ。契約) ---
+  // アンカーは張り出し前の正面スパン(接道正面の中央帯に置く)
+  const du0 = ctx.frontSpan.u1 - ctx.frontSpan.u0;
+  const cu0 = (ctx.frontSpan.u0 + ctx.frontSpan.u1) / 2;
+  const frontN = dirWorld(0, -1);
+  const frontRot = normalRot(frontN);
+  const doorW = clamp(ctx.doorWRaw, 0.85, Math.max(0.85, du0 - 1.0));
+  const doorH = Math.min(
+    role === "warehouse" ? 2.5 : 2.15,
+    FLOOR_HEIGHT - 0.5,
+  );
+  const doorMax = Math.max(0, du0 / 2 - doorW / 2 - 0.45);
+  const doorOff = clamp(ctx.doorOffT * 0.2 * du0, -doorMax, doorMax);
+  const doorPos = toWorld(cu0 + doorOff, w0.v0);
+  parts.push({
+    type: "door",
+    transform: {
+      position: [doorPos.x, plinthTop, doorPos.z],
+      rotation: frontRot,
+      scale: [doorW, doorH, DOOR_DEPTH],
+    },
+    materialId: "wood",
+  });
+
+  // --- 窓(少なく大きく。数と整列度は detailAmount / 役割。契約) ---
+  // 列の本数は面ごとに 1 回だけ決め、全階で同じ列に整列させる
+  const densityF =
+    clamp(0.35 + 0.6 * detail, 0, 1) * WINDOW_ROLE_COUNT[role];
+  for (let wi = 0; wi < ctx.wings.length; wi++) {
+    const baseFaces = exteriorFaces(ctx, wi, 0);
+    for (let fi = 0; fi < baseFaces.length; fi++) {
+      const base = baseFaces[fi];
+      if (!base) continue;
+      const countRoll = rng.next();
+      const usable = base.length - 2 * WINDOW_MARGIN;
+      const slots = Math.floor(usable / (ctx.windowW + WINDOW_GAP));
+      if (slots <= 0) continue;
+      const n = Math.min(
+        slots,
+        Math.max(0, Math.round(slots * densityF + (countRoll - 0.5) * 0.8)),
+      );
+      if (n <= 0) continue;
+      for (let floor = 0; floor < floors; floor++) {
+        const face = exteriorFaces(ctx, wi, floor)[fi];
+        if (!face) continue;
+        const y = plinthTop + floor * FLOOR_HEIGHT + WINDOW_SILL;
+        for (let i = 0; i < n; i++) {
+          const t0 = -usable / 2 + (i + 0.5) * (usable / n);
+          // 整列度 = detailAmount(高いほど等間隔に揃う)
+          const jit = rng.range(-1, 1) * (1 - detail) * 0.5;
+          const t = clamp(
+            t0 + jit,
+            -usable / 2 + ctx.windowW / 2,
+            usable / 2 - ctx.windowW / 2,
+          );
+          // 1階正面の扉近傍は空ける(乱数は消費済み)
+          if (
+            wi === 0 &&
+            face.key === "front" &&
+            floor === 0 &&
+            Math.abs(t - doorOff) < (doorW + ctx.windowW) / 2 + 0.25
+          ) {
+            continue;
+          }
+          const p = face.point(t);
+          parts.push({
+            type: "window",
+            transform: {
+              position: [p.x, y, p.z],
+              rotation: normalRot(face.normal),
+              scale: [ctx.windowW, ctx.windowH, WINDOW_DEPTH],
+            },
+            materialId: materials.trim,
+          });
+        }
+      }
+    }
+  }
+
+  // --- 木組み梁(plaster 帯。外壁面ごと・階ごとに横架材 2 + 隅柱 2) ---
+  if (ctx.hasBeams) {
+    for (let wi = 0; wi < ctx.wings.length; wi++) {
+      for (let floor = 0; floor < floors; floor++) {
+        for (const face of exteriorFaces(ctx, wi, floor)) {
+          const y = plinthTop + floor * FLOOR_HEIGHT;
+          const off = BEAM_DEPTH / 2 + 0.01;
+          const c = face.point(0);
+          const px = c.x + face.normal.x * off;
+          const pz = c.z + face.normal.z * off;
+          const tan = dirWorld(
+            face.key === "front" || face.key === "back" ? 1 : 0,
+            face.key === "front" || face.key === "back" ? 0 : 1,
+          );
+          const rot = tangentRot(tan);
+          const railScale: [number, number, number] = [
+            Math.max(0.4, face.length - 0.08),
+            BEAM_THICKNESS,
+            BEAM_DEPTH,
+          ];
+          parts.push({
+            type: "beam",
+            transform: {
+              position: [px, y + 0.02, pz],
+              rotation: rot,
+              scale: railScale,
+            },
+            materialId: "wood",
+          });
+          parts.push({
+            type: "beam",
+            transform: {
+              position: [px, y + FLOOR_HEIGHT - BEAM_THICKNESS - 0.02, pz],
+              rotation: rot,
+              scale: railScale,
+            },
+            materialId: "wood",
+          });
+          for (const s of [-1, 1]) {
+            const q = face.point(s * (face.length / 2 - 0.18));
+            parts.push({
+              type: "beam",
+              transform: {
+                position: [
+                  q.x + face.normal.x * off,
+                  y + 0.02,
+                  q.z + face.normal.z * off,
+                ],
+                rotation: rot,
+                scale: [BEAM_THICKNESS, FLOOR_HEIGHT - 0.04, BEAM_DEPTH],
+              },
+              materialId: "wood",
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // --- ジェッティ床帯(張り出した上階の下端を受ける横木) ---
+  if (ctx.hasJetty) {
+    // 帯は実際の(張り出し込みの)正面壁の幅に合わせる
+    const band = toWorld((w0.u0 + w0.u1) / 2, w0.v0 - JETTY_DEPTH / 2);
+    parts.push({
+      type: "jetty",
+      transform: {
+        position: [band.x, plinthTop + FLOOR_HEIGHT - JETTY_BAND_HEIGHT, band.z],
+        rotation: rotU,
+        scale: [w0.u1 - w0.u0 + 0.12, JETTY_BAND_HEIGHT, JETTY_DEPTH + 0.1],
+      },
+      materialId: "wood",
+    });
+  }
+
+  // --- 煙突(Prosperity 駆動。胴幅 = 0.72 × 1.15 の 15% 過大で固定) ---
+  const roofInfo = ctx.roofInfo;
+  if (
+    roofInfo &&
+    rng.chance(clamp(CHIMNEY_ROLE_P[role] + 0.55 * detail, 0, 0.95))
+  ) {
+    const chimneyW = CHIMNEY_BASE_WIDTH * CHIMNEY_OVERSIZE;
+    const margin = Math.max(
+      chimneyW / 2 + 0.2,
+      rng.range(0.15, 0.4) * roofInfo.ridgeWallLen,
+    );
+    const side = rng.chance(0.5) ? 1 : -1;
+    const topExtra = rng.range(CHIMNEY_TOP_MIN, CHIMNEY_TOP_MAX);
+    const along = side * Math.max(0, roofInfo.ridgeWallLen / 2 - margin);
+    const pos = roofInfo.ridgeAlongU
+      ? toWorld(roofInfo.cu + along, roofInfo.cv)
+      : toWorld(roofInfo.cu, roofInfo.cv + along);
+    const baseY = plinthTop + floors * FLOOR_HEIGHT - 0.3;
+    const topY = roofInfo.baseY + roofInfo.height + topExtra;
+    parts.push({
+      type: "chimney",
+      transform: {
+        position: [pos.x, baseY, pos.z],
+        rotation: rotU,
+        scale: [chimneyW, topY - baseY, chimneyW],
+      },
+      materialId: plinthMaterial,
+    });
+  }
+
+  // --- 屋根の小窓(スパンの広い屋根の正面側勾配面に 1 つ) ---
+  if (
+    roofInfo &&
+    DORMER_ROLES.has(role) &&
+    roofInfo.span >= DORMER_MIN_SPAN &&
+    rng.chance(0.1 + 0.35 * detail)
+  ) {
+    const tFrac = rng.range(-0.28, 0.28);
+    const sideRoll = rng.chance(0.5);
+    const along = tFrac * Math.max(0, roofInfo.ridgeWallLen - 1.6);
+    const d = 0.68 * (roofInfo.span / 2);
+    // 棟が正面と平行なら正面側(−v)の勾配面へ。直交なら左右いずれか
+    const cross = roofInfo.ridgeAlongU
+      ? { u: 0, v: -1 }
+      : { u: sideRoll ? 1 : -1, v: 0 };
+    const pos = roofInfo.ridgeAlongU
+      ? toWorld(roofInfo.cu + along, roofInfo.cv + cross.v * d)
+      : toWorld(roofInfo.cu + cross.u * d, roofInfo.cv + along);
+    const nrm = dirWorld(cross.u, cross.v);
+    parts.push({
+      type: "dormer",
+      transform: {
+        position: [pos.x, roofInfo.baseY + roofInfo.height * 0.32, pos.z],
+        rotation: normalRot(nrm),
+        scale: [...DORMER_SIZE],
+      },
+      materialId: materials.roof,
+    });
+  }
+
+  // --- 低い石垣(敷地前面帯。扉前を開けた 2 セグメント) ---
+  if (
+    FENCE_ROLES.has(role) &&
+    du0 >= 3.4 &&
+    rng.chance(0.18 + 0.4 * detail)
+  ) {
+    const fenceH = 0.42 + 0.25 * rng.next();
+    const gapHalf = doorW / 2 + 0.7;
+    const segs: [number, number][] = [
+      [ctx.frontSpan.u0 + 0.15, cu0 + doorOff - gapHalf],
+      [cu0 + doorOff + gapHalf, ctx.frontSpan.u1 - 0.15],
+    ];
+    for (const [a, b] of segs) {
+      if (b - a < 1.0) continue;
+      const mid = toWorld((a + b) / 2, -FENCE_FRONT_OFFSET);
+      parts.push({
+        type: "fence",
+        transform: {
+          position: [mid.x, 0, mid.z],
+          rotation: rotU,
+          scale: [b - a, fenceH, FENCE_THICKNESS],
+        },
+        materialId: "stone",
+      });
+    }
+  }
+
+  // --- 外階段(高い基壇の建物の扉前。地面 → 基壇天端) ---
+  if (plinthTop >= 0.32 && rng.chance(0.85)) {
+    const steps = clamp(Math.ceil(plinthTop / STAIR_STEP_RISE), 2, 4);
+    const depth = steps * STAIR_STEP_DEPTH;
+    parts.push({
+      type: "stair",
+      transform: {
+        position: [
+          doorPos.x + frontN.x * (depth / 2),
+          0,
+          doorPos.z + frontN.z * (depth / 2),
+        ],
+        rotation: frontRot,
+        scale: [doorW + 0.5, plinthTop, depth],
+      },
+      materialId: plinthMaterial,
+      params: { steps },
+    });
+  }
 }
 
 const DIRT_CHANNEL = ZONE_KINDS.indexOf("dirt");
@@ -604,6 +1186,9 @@ export function runBuildings(model: WorldModel): void {
     bd = clamp(bd, 2.2, usableD);
     // waterside は shapeVertices が矩形を返す(張り出しの合成を単純に保つ。契約)
     const { verts: localVerts, compound, wings } = shapeVertices(rng, role, bw, bd);
+    // 張り出し前の正面スパン(扉・石垣・外階段のアンカー。4b)
+    const fw = wings[0];
+    const frontSpan = fw ? { u0: fw.u0, u1: fw.u1 } : { u0: 0, u1: 0 };
 
     // ローカル → ワールド
     let verts: Vec2[] = localVerts.map((lp) => ({
@@ -776,6 +1361,9 @@ export function runBuildings(model: WorldModel): void {
       derived.wallTier,
       derived.roofTier,
     );
+    // 詳細部品(PHASE 4b commit 14)は派生サブストリーム
+    // "building/<id>/details" のみ消費する(骨格・materials の消費は不変)
+    const detailsRng = makeRng(seed, `${id}/details`);
     const parts = expandParts(
       wings,
       { origin: originRot, u: uDir, v: { x: backX, z: backZ } },
@@ -783,6 +1371,10 @@ export function runBuildings(model: WorldModel): void {
       floors,
       { type: roofType, pitch },
       materials,
+      role,
+      derived,
+      detailsRng,
+      frontSpan,
     );
 
     buildings.push({

@@ -35,8 +35,24 @@ const WALL_IDS = ["rough-wood", "plaster", "stone", "ashlar"];
 const ROOF_IDS = ["thatch", "shingle", "tile", "slate"];
 const TRIM_IDS = ["wood", "stone"];
 const ALL_MATERIAL_IDS = new Set([...WALL_IDS, ...ROOF_IDS, ...TRIM_IDS]);
-/** commit 13 の部品型語彙 */
-const PART_TYPES = new Set(["plinth", "pile", "wall", "gable", "hip"]);
+/** commit 13 の骨格語彙 + PHASE 4b commit 14 の詳細語彙 */
+const PART_TYPES = new Set([
+  "plinth",
+  "pile",
+  "wall",
+  "gable",
+  "hip",
+  "window",
+  "door",
+  "beam",
+  "jetty",
+  "chimney",
+  "fence",
+  "stair",
+  "dormer",
+]);
+/** 建物本体に付かない部品(敷地前面帯に置かれる。footprint 検査から除く) */
+const SITE_PART_TYPES = new Set(["fence", "stair"]);
 
 function buildUntilParcels(seed: string, over: Partial<Params> = {}): WorldModel {
   const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
@@ -224,15 +240,29 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
     expect(pileBuildings).toBeGreaterThan(0);
   });
 
-  it("部品が footprint から大きくはみ出さない(軒の張り出し 0.75 以内)", () => {
+  it("部品が footprint から大きくはみ出さない(軒 0.9 / ジェッティ時 1.2。契約)", () => {
     for (const [seed, over] of COMBOS) {
-      for (const b of cached(seed, over).buildings) {
+      const model = cached(seed, over);
+      const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+      for (const b of model.buildings) {
+        // ジェッティのある建物は上階壁・屋根・開口が張り出しぶんさらに出る
+        const limit = b.parts.some((p) => p.type === "jetty") ? 1.2 : 0.9;
+        const parcel = b.parcelId ? parcelById.get(b.parcelId) : undefined;
         for (const p of b.parts) {
           for (const c of partCorners(p)) {
-            // 正=外側。軒(0.65)+妻(0.4)の張り出しと数値誤差のみ許す
+            if (SITE_PART_TYPES.has(p.type)) {
+              // 石垣・外階段は footprint の外・敷地前面帯に収まる(契約)
+              expect(parcel).toBeDefined();
+              if (parcel) {
+                expect(
+                  polygonSignedDistance(c.x, c.z, parcel.polygon),
+                ).toBeLessThanOrEqual(1.2);
+              }
+              continue;
+            }
             expect(
               polygonSignedDistance(c.x, c.z, b.footprint),
-            ).toBeLessThanOrEqual(0.9);
+            ).toBeLessThanOrEqual(limit);
           }
         }
       }

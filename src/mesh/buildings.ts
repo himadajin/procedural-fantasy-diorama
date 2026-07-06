@@ -50,6 +50,26 @@ const ROOF_SOFFIT_SHADE = 0.7;
 /** 杭の個体ムラ幅 */
 const PILE_MOTTLE = 0.16;
 
+// --- 開口(窓・扉・屋根小窓)の造形(PHASE 4b commit 14) ---
+/**
+ * 開口の奥面の暗色(art-direction 5.1節 `#352c22`)。壁に穴は開けず、
+ * 枠より奥まった暗色面でセットバックを読ませる(同 6節)。
+ * 発光させない(窓明かりの emissive は使わない。発光は魔法専用)。
+ */
+const OPENING_COLOR = new THREE.Color("#352c22");
+/** 扉板の沈み(木部 × 0.55。art-direction 5.1節) */
+const DOOR_LEAF_SHADE = 0.55;
+/** 枠の見付け(実寸) */
+const FRAME_T = 0.13;
+/** 窓の奥面のローカル z(枠前面 +0.5 より奥 = セットバックの読み) */
+const OPENING_INSET_Z = 0.1;
+/** 扉板のローカル z */
+const DOOR_LEAF_Z = 0.16;
+/** 石垣・ジェッティ帯の足元の焼き込み */
+const FENCE_FOOT_AO = 0.85;
+/** 屋根小窓の躯体(頬・前面)の沈み(勾配面より一段暗く) */
+const DORMER_BODY_SHADE = 0.88;
+
 /** 位置ハッシュ(0〜1)。乱数ストリームを消費しない決定論的なムラの元 */
 function hash3(x: number, y: number, z: number): number {
   let h =
@@ -218,6 +238,130 @@ function boxPart(
 }
 
 /**
+ * 軸平行の小直方体(枠・段・笠などの部分形状)をローカル座標で押し込む。
+ * shade は全頂点一律の明度係数。
+ */
+function subBox(
+  buf: GeoBuffer,
+  xf: (p: L) => W,
+  base: THREE.Color,
+  x0: number,
+  x1: number,
+  y0: number,
+  y1: number,
+  z0: number,
+  z1: number,
+  shade = 1,
+): void {
+  const inside = xf([(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2]);
+  const s4 = [shade, shade, shade, shade];
+  face(buf, xf, [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]], s4, inside, base);
+  face(buf, xf, [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], s4, inside, base);
+  face(buf, xf, [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], s4, inside, base);
+  face(buf, xf, [[x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0]], s4, inside, base);
+  face(buf, xf, [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], s4, inside, base);
+  face(buf, xf, [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]], s4, inside, base);
+}
+
+/**
+ * 開口(窓・扉): 壁面上の枠+枠より奥まった暗色面(壁に穴は開けない。
+ * art-direction 6節のセットバック表現)。position は壁面上の開口下端中心、
+ * ローカル +z が外向き法線(contracts/worldmodel.md 開口部品の変換規約)。
+ * 枠は z −0.2〜+0.5 で壁へ半ば埋まり、奥面は枠より低い +z に置く。
+ */
+function openingPart(
+  part: Part,
+  buf: GeoBuffer,
+  base: THREE.Color,
+  kind: "window" | "door",
+): void {
+  const xf = makeXform(part);
+  const [sx, sy] = part.transform.scale;
+  const tx = Math.min(0.3, FRAME_T / Math.max(sx, 1e-6));
+  const ty = Math.min(0.3, FRAME_T / Math.max(sy, 1e-6));
+  // 枠: 左右+上(窓は下枠=窓台も)
+  subBox(buf, xf, base, -0.5, -0.5 + tx, 0, 1, -0.2, 0.5);
+  subBox(buf, xf, base, 0.5 - tx, 0.5, 0, 1, -0.2, 0.5);
+  subBox(buf, xf, base, -0.5 + tx, 0.5 - tx, 1 - ty, 1, -0.2, 0.5);
+  if (kind === "window") {
+    subBox(buf, xf, base, -0.5 + tx, 0.5 - tx, 0, ty, -0.2, 0.5);
+  }
+  // 奥面(窓は開口の暗色固定、扉は木部を沈めた扉板。発光させない)
+  const y0 = kind === "window" ? ty : 0;
+  const z = kind === "window" ? OPENING_INSET_Z : DOOR_LEAF_Z;
+  const inner =
+    kind === "window" ? OPENING_COLOR : base.clone().multiplyScalar(DOOR_LEAF_SHADE);
+  const inside = xf([0, 0.5, -0.5]);
+  face(
+    buf,
+    xf,
+    [[-0.5 + tx, y0, z], [0.5 - tx, y0, z], [0.5 - tx, 1 - ty, z], [-0.5 + tx, 1 - ty, z]],
+    [1, 1, 1, 1],
+    inside,
+    inner,
+  );
+}
+
+/** 煙突: 胴+笠(過大な冠)。頂面の焚き口は開口の暗色 */
+function chimneyPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  subBox(buf, xf, base, -0.5, 0.5, 0, 0.88, -0.5, 0.5);
+  subBox(buf, xf, base, -0.66, 0.66, 0.86, 1, -0.66, 0.66);
+  face(
+    buf,
+    xf,
+    [[-0.34, 1.002, -0.34], [0.34, 1.002, -0.34], [0.34, 1.002, 0.34], [-0.34, 1.002, 0.34]],
+    [1, 1, 1, 1],
+    xf([0, 0.5, 0]),
+    OPENING_COLOR,
+  );
+}
+
+/** 外階段: 踏面の直方体の段列(−z が壁側、+z へ降りる) */
+function stairPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  const n = Math.max(1, Math.round(part.params?.steps ?? 3));
+  for (let i = 0; i < n; i++) {
+    subBox(buf, xf, base, -0.5, 0.5, 0, (n - i) / n, -0.5 + i / n, -0.5 + (i + 1) / n);
+  }
+}
+
+/**
+ * 屋根の小窓(dormer): 小さな切妻箱+前面の暗色開口。屋根勾配面に
+ * 背面を埋めて置く(交差部は貫通で処理。複合屋根と同じ流儀)。
+ */
+function dormerPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  const inside = xf([0, 0.4, 0]);
+  const bt = 0.58; // 躯体天端(この上に小屋根)
+  subBox(buf, xf, base, -0.5, 0.5, 0, bt, -0.5, 0.5, DORMER_BODY_SHADE);
+  // 小屋根(棟はローカル z 方向 = 開口の外向き)
+  const A: L = [-0.5, bt, -0.5];
+  const B: L = [0.5, bt, -0.5];
+  const C: L = [0.5, bt, 0.5];
+  const D: L = [-0.5, bt, 0.5];
+  const E: L = [0, 1, -0.5];
+  const F: L = [0, 1, 0.5];
+  face(buf, xf, [A, D, F, E], [1, 1, 1, 1], inside, base);
+  face(buf, xf, [B, C, F, E], [1, 1, 1, 1], inside, base);
+  face(buf, xf, [D, C, F], [1, 1, 1], inside, base);
+  face(buf, xf, [A, B, E], [1, 1, 1], inside, base);
+  // 前面の開口(枠+暗色の奥面)
+  subBox(buf, xf, base, -0.38, -0.26, 0.06, 0.52, 0.5, 0.56);
+  subBox(buf, xf, base, 0.26, 0.38, 0.06, 0.52, 0.5, 0.56);
+  subBox(buf, xf, base, -0.26, 0.26, 0.42, 0.52, 0.5, 0.56);
+  subBox(buf, xf, base, -0.26, 0.26, 0.06, 0.16, 0.5, 0.56);
+  face(
+    buf,
+    xf,
+    [[-0.26, 0.16, 0.515], [0.26, 0.16, 0.515], [0.26, 0.42, 0.515], [-0.26, 0.42, 0.515]],
+    [1, 1, 1, 1],
+    inside,
+    OPENING_COLOR,
+  );
+}
+
+/**
  * 切妻(gable)/ 寄棟(hip)の閉じた屋根ソリッド。
  * 棟はローカル +x 軸・y=1。hip は棟が両端からスパン/2 ずつ縮み、
  * 妻側も同じ勾配で流れる(contracts/worldmodel.md「Part の型語彙」)。
@@ -246,7 +390,12 @@ function roofPart(part: Part, buf: GeoBuffer, base: THREE.Color, hip: boolean): 
   face(buf, xf, [A, B, C, D], soff, inside, base);
 }
 
-/** マージ経路の型ハンドラ(4b 以降はここへ追加登録する) */
+/**
+ * マージ経路の型ハンドラ(PHASE 5 以降もここへ追加登録する)。
+ * PHASE 4b commit 14 の window / door / beam / chimney は commit 15 で
+ * INSTANCED_TYPES へ移す(登録表の型キー単位で経路を切り替えられる。
+ * それまでマージ束なのは正常なスコープ分割)。
+ */
 const MERGE_HANDLERS: Record<
   string,
   (part: Part, buf: GeoBuffer, base: THREE.Color) => void
@@ -261,6 +410,15 @@ const MERGE_HANDLERS: Record<
     ),
   gable: (part, buf, base) => roofPart(part, buf, base, false),
   hip: (part, buf, base) => roofPart(part, buf, base, true),
+  // --- PHASE 4b commit 14: 開口・木組み・煙突・付属 ---
+  window: (part, buf, base) => openingPart(part, buf, base, "window"),
+  door: (part, buf, base) => openingPart(part, buf, base, "door"),
+  beam: (part, buf, base) => boxPart(part, buf, base, 1),
+  jetty: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
+  chimney: (part, buf, base) => chimneyPart(part, buf, base),
+  fence: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
+  stair: (part, buf, base) => stairPart(part, buf, base),
+  dormer: (part, buf, base) => dormerPart(part, buf, base),
 };
 
 /** インスタンス経路の型(4b 以降はここへ追加登録する) */
