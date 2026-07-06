@@ -46,7 +46,8 @@ export function createViewer(container: HTMLElement): Viewer | null {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = EXPOSURE;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // PCFSoftShadowMap は three r185 で非推奨(art-direction 3節)
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
@@ -115,10 +116,12 @@ export function createViewer(container: HTMLElement): Viewer | null {
   };
 
   const frameCallbacks: ((dt: number, elapsed: number) => void)[] = [];
-  const clock = new THREE.Clock();
-  renderer.setAnimationLoop(() => {
-    const dt = clock.getDelta();
-    const elapsed = clock.getElapsedTime();
+  // Clock は three r185 で非推奨のため Timer を使用(dt/elapsed とも秒単位)
+  const timer = new THREE.Timer();
+  renderer.setAnimationLoop((time: number) => {
+    timer.update(time);
+    const dt = timer.getDelta();
+    const elapsed = timer.getElapsed();
     for (const cb of frameCallbacks) cb(dt, elapsed);
     renderer.render(scene, camera);
   });
