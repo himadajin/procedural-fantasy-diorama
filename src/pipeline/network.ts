@@ -28,6 +28,14 @@ import {
   type WaterField,
 } from "../model/waterfield";
 import { fbm2D, noiseSeed } from "./noise";
+import {
+  bridgeBaseId,
+  chaikin,
+  claimId,
+  pathLength,
+  simplifyPath,
+  waterCrossings,
+} from "./geometry";
 
 /** 経路探索グリッドの一辺セル数の下限・上限(spec 9節: 解像度の上限クリップ) */
 const GRID_MIN = 56;
@@ -374,97 +382,6 @@ function astar(
   return null;
 }
 
-/** Douglas–Peucker による折れ線の間引き(端点は保持) */
-function simplifyPath(points: Vec2[], eps: number): Vec2[] {
-  if (points.length <= 2) return points.slice();
-  const keep = new Array<boolean>(points.length).fill(false);
-  keep[0] = true;
-  keep[points.length - 1] = true;
-  const stack: [number, number][] = [[0, points.length - 1]];
-  while (stack.length > 0) {
-    const top = stack.pop();
-    if (!top) break;
-    const [lo, hi] = top;
-    const a = points[lo];
-    const b = points[hi];
-    if (!a || !b || hi - lo < 2) continue;
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const len = Math.hypot(dx, dz);
-    let worst = -1;
-    let worstDist = eps;
-    for (let i = lo + 1; i < hi; i++) {
-      const p = points[i];
-      if (!p) continue;
-      const dist =
-        len > 1e-9
-          ? Math.abs(dx * (p.z - a.z) - dz * (p.x - a.x)) / len
-          : Math.hypot(p.x - a.x, p.z - a.z);
-      if (dist > worstDist) {
-        worstDist = dist;
-        worst = i;
-      }
-    }
-    if (worst >= 0) {
-      keep[worst] = true;
-      stack.push([lo, worst], [worst, hi]);
-    }
-  }
-  return points.filter((_, i) => keep[i]);
-}
-
-/** Chaikin 平滑化 1回(端点は保持) */
-function chaikin(points: Vec2[]): Vec2[] {
-  if (points.length <= 2) return points.slice();
-  const first = points[0];
-  const last = points[points.length - 1];
-  if (!first || !last) return points.slice();
-  const out: Vec2[] = [first];
-  for (let i = 0; i + 1 < points.length; i++) {
-    const a = points[i];
-    const b = points[i + 1];
-    if (!a || !b) continue;
-    out.push(
-      { x: a.x * 0.75 + b.x * 0.25, z: a.z * 0.75 + b.z * 0.25 },
-      { x: a.x * 0.25 + b.x * 0.75, z: a.z * 0.25 + b.z * 0.75 },
-    );
-  }
-  out.push(last);
-  return out;
-}
-
-function pathLength(points: Vec2[]): number {
-  let len = 0;
-  for (let i = 0; i + 1 < points.length; i++) {
-    const a = points[i];
-    const b = points[i + 1];
-    if (!a || !b) continue;
-    len += Math.hypot(b.x - a.x, b.z - a.z);
-  }
-  return len;
-}
-
-/** 折れ線上の弧長 s の位置と方向を返す */
-function pointAlong(points: Vec2[], s: number): { p: Vec2; angle: number } {
-  let acc = 0;
-  for (let i = 0; i + 1 < points.length; i++) {
-    const a = points[i];
-    const b = points[i + 1];
-    if (!a || !b) continue;
-    const seg = Math.hypot(b.x - a.x, b.z - a.z);
-    if (acc + seg >= s || i + 2 === points.length) {
-      const t = seg > 1e-9 ? clamp((s - acc) / seg, 0, 1) : 0;
-      return {
-        p: { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t },
-        angle: Math.atan2(b.z - a.z, b.x - a.x),
-      };
-    }
-    acc += seg;
-  }
-  const lastPoint = points[points.length - 1] ?? { x: 0, z: 0 };
-  return { p: lastPoint, angle: 0 };
-}
-
 /** 抽出済み道路グラフの edge(WorldModel と同形) */
 interface RoadEdge {
   id: string;
@@ -478,7 +395,7 @@ interface RoadEdge {
 
 /**
  * edge の path 沿いに waterSdf を標本化し、水域を渡る区間ごとに
- * BridgeSite を抽出する(水際は隣接標本間の線形補間で確定)。
+ * BridgeSite を抽出する(標本化・水際補間は geometry.ts の waterCrossings)。
  */
 function extractBridges(
   edge: RoadEdge,
@@ -486,41 +403,13 @@ function extractBridges(
   field: WaterField,
   idCounts: Map<string, number>,
 ): BridgeSite[] {
-  const total = pathLength(edge.path);
-  if (total <= 0) return [];
-  const count = Math.max(2, Math.ceil(total / BRIDGE_SAMPLE_STEP));
-  const stepS = total / count;
-  const samples: { s: number; sdf: number }[] = [];
-  for (let i = 0; i <= count; i++) {
-    const s = i * stepS;
-    const { p } = pointAlong(edge.path, s);
-    samples.push({ s, sdf: field.waterSdf(p.x, p.z) });
-  }
-
-  const crossAt = (i: number): number => {
-    // samples[i] と samples[i+1] の間の水際(線形補間)
-    const a = samples[i];
-    const b = samples[i + 1];
-    if (!a || !b) return a?.s ?? 0;
-    const d = a.sdf - b.sdf;
-    const t = Math.abs(d) > 1e-9 ? a.sdf / d : 0.5;
-    return a.s + (b.s - a.s) * clamp(t, 0, 1);
-  };
-
   const bridges: BridgeSite[] = [];
-  let i = 0;
-  while (i <= count) {
-    if ((samples[i]?.sdf ?? 1) >= 0) {
-      i++;
-      continue;
-    }
-    // 渡り区間の開始(直前の標本との間の水際。経路端で始まる場合は 0)
-    const sStart = i > 0 ? crossAt(i - 1) : 0;
-    while (i <= count && (samples[i]?.sdf ?? 1) < 0) i++;
-    const sEnd = i <= count ? crossAt(i - 1) : total;
-    const sMid = (sStart + sEnd) / 2;
-    const { p, angle } = pointAlong(edge.path, sMid);
-
+  for (const crossing of waterCrossings(
+    edge.path,
+    field.waterSdf,
+    BRIDGE_SAMPLE_STEP,
+  )) {
+    const p = crossing.position;
     // over: 中点に最も近い水域要素で判定(canal は段6以降)
     let riverDist = Infinity;
     for (const river of model.water.rivers) {
@@ -535,16 +424,12 @@ function extractBridges(
     }
     const over: BridgeSite["over"] = lakeDist < riverDist ? "lake" : "river";
 
-    const fmt = (v: number): string => (Math.abs(v) < 0.05 ? 0 : v).toFixed(1);
-    const baseId = `bridge/${fmt(p.x)}_${fmt(p.z)}`;
-    const occurrence = idCounts.get(baseId) ?? 0;
-    idCounts.set(baseId, occurrence + 1);
     bridges.push({
-      id: occurrence === 0 ? baseId : `${baseId}/${occurrence + 1}`,
+      id: claimId(idCounts, bridgeBaseId(p)),
       position: p,
-      angle,
+      angle: crossing.angle,
       width: edge.width,
-      length: sEnd - sStart,
+      length: crossing.length,
       over,
       roadClass: edge.class,
     });

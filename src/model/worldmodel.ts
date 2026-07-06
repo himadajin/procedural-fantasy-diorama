@@ -6,8 +6,10 @@
  */
 
 import { createZoneMask, type ZoneMask } from "./zonemask";
+import type { FieldGrid } from "./fieldgrid";
 
 export { ZONE_KINDS, type ZoneKind, type ZoneMask } from "./zonemask";
+export type { FieldGrid } from "./fieldgrid";
 
 /** 水面の高さ(地面 y=0 より 0.6 低い。implementation-spec 1.8節) */
 export const WATER_SURFACE_Y = -0.6;
@@ -206,8 +208,17 @@ export interface Meta {
   derived: Derived;
 }
 
-/** 密度場グリッド。表現は PHASE 3 で確定 */
-export type FieldGrid = null;
+/**
+ * 街中の水路(contracts/worldmodel.md Water 節)。
+ * waterfield・岸線・zoneMask には影響させない(護岸で縁取られた
+ * 掘り込みチャネル。立体化は PHASE 3 commit 11)。
+ */
+export interface Canal extends Spline {
+  /** "canal/<i>"。生成インデックス由来で安定 */
+  id: string;
+  /** 岸沿い道フック(小道は PHASE 4b)。進行方向に対して +1=左岸 / -1=右岸 */
+  towpathSide: 1 | -1;
+}
 
 /**
  * 岸線ループ(contracts/worldmodel.md Water 節)。
@@ -261,14 +272,16 @@ export interface BridgeSite {
 export interface Water {
   rivers: Spline[];
   lakes: Polygon[];
-  canals: Spline[];
+  canals: Canal[];
   bridges: BridgeSite[];
   shoreline: Shoreline;
 }
 
 export interface Density {
-  primary: FieldGrid;
-  final: FieldGrid;
+  /** 一次密度場(中心距離+道路近接+Settlement)。段7が埋める(それまで null) */
+  primary: FieldGrid | null;
+  /** 最終密度場(一次+結界内ブースト)。PHASE 4a の担当(それまで null) */
+  final: FieldGrid | null;
 }
 
 export interface Network {

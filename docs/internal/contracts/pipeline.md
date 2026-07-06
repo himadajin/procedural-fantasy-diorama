@@ -70,6 +70,12 @@ interface Rng {
   (詳細は implementation-spec 1.10節)。
 - 各段の表示名(「水系を計画中…」等)は Generating インジケーターに
   そのまま使う(art-direction 9.5節)。
+- 段6「水路」の BridgeSite 追加は仮のもので、段8「結界計画」が結界門
+  スナップ後に全道路 edge を河川・湖・水路の合成水域で標本化し直して
+  bridges 全体を置き換える(worldmodel.md Water 節)。水路は waterfield・
+  岸線・zoneMask に影響させない(同節の設計判断)。
+- リトライを含む処理(水路の交差超過の再サンプル、結界環の縮小リトライ)は
+  RNG API 節の規約どおり、リトライ回数も同一サブストリームから消費する。
 
 ## チャンク実行フレームワーク
 

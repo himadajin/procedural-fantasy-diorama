@@ -178,9 +178,15 @@ interface ZoneMask {
 interface Water {
   rivers: Spline[];              // 主河川(0〜2本)。外縁から外縁(または湖)へ
   lakes: Polygon[];              // 湖。川との流入・流出接続を持つ
-  canals: Spline[];              // 街中の水路。PHASE 3 で計画(PHASE 2 では空)
+  canals: Canal[];               // 街中の水路。段6「水路」が計画(それまでは空)
   bridges: BridgeSite[];         // 道路×水域の交差区間。PHASE 3 で抽出
   shoreline: Shoreline;          // 岸線(岸スカート・湿地/砂洲マスクの元)
+}
+interface Canal extends Spline {
+  id: string;                    // "canal/<i>"。生成インデックス由来で安定
+                                 // (フォールバックの堀留のみ "canal/fallback")
+  towpathSide: 1 | -1;           // 岸沿い道フック(小道は PHASE 4b)。
+                                 // 進行方向に対して +1=左岸 / -1=右岸
 }
 interface BridgeSite {
   id: string;
@@ -207,8 +213,40 @@ interface BridgeSite {
 - 水が完全に消える入力(riverCount=0 かつ湖なし)では `rivers` / `lakes` /
   `shoreline.loops` は空で、`ground.edgeStyle` は `"fog"`。
   乾いた土地として後段が成立すること
-- `canals` は段6「水路」の担当(それまでは空配列)。`bridges` は
+- `canals` は段6「水路」の担当(それまでは空配列。性質は下記)。`bridges` は
   段5「道路網」が抽出する(性質は下記)
+
+水路の性質(段6「水路」が保証し、後段・メッシュビルダーが前提としてよい):
+
+- 発火条件: `derived.canalScore ≥ 0.35` かつ既存水域(rivers / lakes)が
+  存在すること。本数は canalScore に単調(1〜3本)。
+  デフォルト(全パラメータ 50)では canalScore = 0.375 で発火し、
+  必ず 1 本以上を計画する(下記フォールバック込み)
+- 各水路は既存水系と接続する: 始端は必ず既存水域(rivers / lakes の
+  waterSdf < 0 の点)にあり、終端も原則として既存水域へ戻る。
+  例外はフォールバックの堀留(全水路が交差上限で棄却された場合にのみ
+  計画する短い水路。始端のみ接続し、終端は街区内で止まる)
+- `width` は川より細い(既存河川の最終幅 × 0.35 を基準に 2.2〜5 へ
+  クランプし、さらに最小河川幅の 0.8 倍を上限とする)。隣接点間隔は
+  幅の 1.5 倍以下(川と同じ連続性)。点列は `ground.boundary` の内側に
+  収まり、`centerPlan.footprint`(+マージン)を通らない
+- 中心域・密集予定域を通る: 経由点を中心から footprint 半径〜中心前広場
+  半径程度の距離に置き、主道どうしの角度間隙へ向ける(道路交差=
+  BridgeSite の増加を抑える)
+- 水路 1 本が生む BridgeSite は最大 3。超える場合は経路と蛇行を縮めて
+  交差が減る方向へ再サンプルし、3 回のリトライで収まらなければその水路を
+  棄却する(リトライ回数も乱数ストリーム `"canals/canal/<i>"` から消費して
+  決定性を保つ。implementation-spec 9節)。棄却があっても他の水路の
+  id(生成インデックス由来)は変わらない
+- **水路は waterfield・岸線・zoneMask に影響させない(設計判断)**:
+  `model/waterfield.ts` の水域場は rivers / lakes のみから作り、
+  `shoreline` の再抽出も行わない。水路は護岸(縁石・石積み)で縁取られた
+  「掘り込みチャネル」であり、自然の岸辺(砂洲・湿地・岸スカート)を
+  持たないため。地面メッシュも水路でクリップせず、描画(PHASE 3
+  commit 11)は地面の上に彫り込む水路メッシュ(水面+護岸)を重ねて
+  水際の段差を護岸で見せる(クリップとの整合問題を持たない)。
+  後段の水辺判定(`Parcel.canalside` 等)・結界の水域回避・広場の水域衝突は
+  canal スプラインへの距離(中心線距離 − 幅/2)を水域として併用する
 
 `bridges` の性質(段5「道路網」が抽出し、段6「水路」が追加、
 段8「結界計画」が再抽出する):
@@ -224,6 +262,12 @@ interface BridgeSite {
   渡る edge の種別(石造/木橋の選択に使う。PHASE 5b)
 - `id` は中点座標由来 `"bridge/<x>_<z>"`(座標は小数1桁へ丸め)で安定。
   同一キーの衝突時は抽出順の連番を後置する
+- 段6「水路」は各水路×全道路 edge の交差区間を BridgeSite
+  (over: "canal")として同じ id 体系で仮追加する。段8「結界計画」は
+  結界門スナップによる道路修正の後、結界の有無に依らず全道路 edge を
+  「河川・湖・水路を合成した水域」で標本化し直して bridges 全体を
+  置き換える(over は中点で最も深い水域要素、id は再抽出の中点から
+  導出し直す)。bridges の最終状態は段8の出力を正とする
 
 `Shoreline` は岸線(境界内の陸地と水域の境界)の実体表現:
 
@@ -254,11 +298,31 @@ interface ShoreLoop {
 
 ```ts
 interface Density {
-  primary: FieldGrid;            // 中心距離+道路近接+Settlement。結界に依存しない
-  final: FieldGrid;              // primary+結界内ブースト。区画選別に使う
+  primary: FieldGrid | null;     // 中心距離+道路近接+Settlement。結界に依存しない
+  final: FieldGrid | null;       // primary+結界内ブースト。区画選別に使う(PHASE 4a)
 }
-// FieldGrid はグリッド解像度+float値。表現は PHASE 3 で確定
+interface FieldGrid {
+  resolution: number;   // 一辺セル数
+  cellSize: number;     // セル一辺の実寸。グリッド全体は原点中心の正方
+                        // [-resolution×cellSize/2, +resolution×cellSize/2]²
+  values: number[];     // 長さ resolution²。セルは行優先(z 外側 → x 内側)。0〜1
+}
 ```
+
+- `FieldGrid` は zoneMask と同様のフラットなグリッド(プレーンで JSON
+  シリアライズ可能)。サンプリングの正は `src/model/fieldgrid.ts` の
+  `sampleFieldGrid`(セル中心基準のバイリニア補間。範囲外は端のセルへ
+  クランプ)。結界計画の等値線抽出(`marchPositiveRegion` へサンプラーを
+  渡す)と後段の区画選別が同じサンプラーを使う
+- `primary` は段7「一次密度場」が埋める(それまでは null)。構成は
+  中心からの距離の指数減衰(`densityPeak` を最大値、`densityFalloff ×
+  worldSize` を半減距離とする)+道路近接ブースト(main > connector)
+  +外縁フェード(境界外は 0)。結界には依存しない。水域では 0 に
+  **しない**(等値線が水域で歪まないようにする。水域回避は結界計画・
+  区画の担当)
+- `primary` の解像度は 64 固定、`cellSize = ground.size × 1.1 / 64`
+  (waterfield と同じ張り)
+- `final` は PHASE 4a(段10)の担当(それまでは null)
 
 ### Network(PHASE 3、小道の追加は PHASE 4b)
 
@@ -308,6 +372,24 @@ interface Plaza {
 }
 ```
 
+広場の性質(段9「広場」が保証し、後段・メッシュビルダーが前提としてよい):
+
+- `"center"` は中心前に最大 1 個(半径 = `derived.centerPlazaRadius`)。
+  位置は centerPlan.footprint の縁から主道の収束方向へ置き、水域・
+  footprint と衝突する場合は方位回転と半径縮小の決定論的な候補探索で
+  回避する。`"gate"` は各結界門の内側(中心側)、`"bridgehead"` は橋の袂
+  (中心に近い側を優先。採択は watersideRate 駆動の確率)、`"crossing"` は
+  主道どうしの交差ノード(確率的)。`"courtyard"` は PHASE 5a の担当
+  (本PHASEでは生成しない)
+- `polygon` は `position` 中心の不整形 n 角形(時計回り。radius 基準で
+  0.88〜1.0 倍の揺らぎ。頂点は radius の円内)
+- 衝突回避: 採択順(center → gate → bridgehead → crossing)で、既採択
+  広場との円距離(半径和+マージン)、水域(水路を含む)、
+  `centerPlan.footprint`、`ground.boundary` との衝突を検査し、回避
+  できない候補は縮小し、それでも収まらなければ棄却する
+- `id` は由来から安定(`"plaza/center"`、`"plaza/gate/<gateId>"`、
+  `"plaza/bridgehead/<bridgeId>"`、`"plaza/crossing/<nodeId>"`)
+
 ### CenterPlan(PHASE 3 で2段階確定、立体化は PHASE 5a)
 
 ```ts
@@ -324,6 +406,15 @@ interface CenterPlan {
 CenterPlan は2段階で埋まる。段4「立地評価」が `position` / `footprint` /
 `axes` を確定し、`facing` / `heightHint` は段9「広場」(PHASE 3 commit 10)が
 中心前広場・主道の収束方向の確定後に埋める。それまでは両者とも 0 のままとする。
+
+段9が保証する性質:
+
+- `facing` は xz 平面の偏角(ラジアン)。中心ノードへ到来する道路の方向の
+  重み付き平均(main 1.0 / connector 0.5)を初期値とし、中心前広場が
+  水域・footprint 回避で回転した場合は採択した広場の方位(中心→広場中心)
+  へ一致させる。道路が中心に接続しない縮退時は最寄りの進入点方向
+- `heightHint` は `derived.centerHeight × 支配軸係数`(axes の最大軸。
+  arcane 1.15 / authority 1.0 / waterside 0.85 / rustic 0.7)。必ず正
 
 段4が保証する性質:
 
@@ -363,6 +454,56 @@ interface Wards {
               size: number }[];                 // 基準位置のみ。上下動はビューワー側
 }
 ```
+
+結界計画の性質(段8「結界計画」が保証し、後段・メッシュビルダーが
+前提としてよい):
+
+- `wardLevel` は `derived.wardLevel` と一致する。0 のとき ringPath と
+  各配列はすべて空
+- `ringPath` は wardLevel ≥ 1 で非空の閉ループ(先頭点を末尾に重複させ
+  ない)。自己交差なし・中心(`centerPlan.position`)を囲む星形(中心
+  まわりの偏角に対して半径が一意)。生成手順: 一次密度場の等値線を初期
+  形状とし、中心まわりの偏角リサンプル+循環平滑化で平滑にし、星形化に
+  より自己交差を除去する。半径は「footprint 対角半径+マージン」以上、
+  「境界−外縁マージン」以下にクランプする。水域(河川・湖・水路)は
+  半径の径方向調整で回避し、回避できない区間は ringSegments の
+  kind "overwater"(水上結界)として分離する(壁の接地検証から除外)。
+  失敗時は等値線レベルを引き上げ(=囲い半径を縮小して)リトライする
+  (リトライ回数も乱数ストリーム `"wards/ring"` から消費)。全リトライ
+  失敗時は境界と footprint に収まる円環へフォールバックする
+- `ringSegments` は `[start, end)`(ringPath のインデックス区間。
+  end ≤ 点数。区間 k は点 k〜k+1 の辺を指す)の互いに素な区間で全周を
+  被覆し、start 昇順。環の継ぎ目(インデックス 0)では同種でも分割され
+  うる。kind の決め方: 水中(waterSdf < 0。水路を含む)にかかる辺は
+  "overwater"、結界門の開口と閉じ率ぶんの開口は "gap"、残りが "wall"。
+  wall の弧長は「全周 − overwater − 門開口」の約 `derived.wallClosure` 倍
+  (立体化では level 1 の wall は境界標の点列に縮退、2 は部分壁、
+  3 は門開口以外がほぼ wall の完全環。PHASE 5b)
+- `gates` は wardLevel ≥ 2 のとき、結界環と道路 edge の全交点に生成する
+  (`roadEdgeId` は交差 edge の id、`angle` は交点での道路方向)。
+  道路側の補正は門位置の点を edge.path へ挿入する局所スナップのみで、
+  道路の大規模な引き直しはしない。よって「結界環を横切る道路は必ず
+  門位置を通る」(門位置と edge.path の距離は 0)。wardLevel 1 では
+  gates は空(壁が無く、境界標の列は道を遮らない)。gate の直近の
+  ringSegments は門開口の "gap" になる
+- `towers` は wardLevel ≥ 2。結界環上の屈曲点を優先し、間隔規則
+  (towerScale 駆動の目標本数と最小弧間隔)と水辺・門・橋詰めへの近接で
+  採点して選ぶ(広場は段9確定のため、「広場近傍」の選好は広場が置かれる
+  位置=門前・橋詰めへの近接で代替する)。towerScale が高いとき
+  (wardLevel 3)は結界環外の水辺に独立塔(onRing: false)を 0〜2 基置く
+- `shrines` は wardLevel ≥ 1 で 1〜2 箇所(shrineRate 駆動)。道路・
+  水域から離れた静かな場所へ決定論的な局所探索で置く。kind の重みは
+  Arcana 連動(高いほど crystals 寄り)
+- `lamps` は主道沿いの等間隔候補・橋詰め・結界門前・中心 footprint 前
+  (=中心前広場の位置)の候補から `lampDensity` で採択する(候補ごとの
+  独立サブストリームにより lampDensity に対して単調)。位置は陸上
+  (水路を含む水域の外)
+- `floaters` は towers / gates / shrines を anchor とする近傍クラスタ
+  (floaterAmount 駆動。Arcana 30 以下では 0)。basePosition は anchor
+  近傍の空中の基準位置(y > 0)で、上下動はビューワー側の時間関数
+- 段8は結界門スナップ後に bridges を全道路について再抽出し(Water 節)、
+  summary.wardOverview(level / ringLength / towers / gates / shrines /
+  floaters)を部分的に埋める
 
 ### Parcel / Building(PHASE 4a、部品の拡張は PHASE 4b・5a)
 
