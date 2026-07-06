@@ -1,11 +1,13 @@
 /**
  * 折れ線・交差の幾何ユーティリティ。
  * pipeline の各段(段5「道路網」・段6「水路」・段8「結界計画」・段9「広場」・
- * 段10「舗装」)とメッシュビルダー(道路リボンの水域クリップ)が共有する
+ * 段10「舗装」・段11「区画」・段12「建物」)とメッシュビルダー
+ * (道路リボンの水域クリップ)が共有する
  * (waterfield.ts と同じく、絵とデータを同じ純関数から導くための共有実装)。
  * three 非依存・乱数ストリーム非消費の純関数のみ(順序非依存規約)。
  */
-import type { Vec2 } from "./worldmodel";
+import type { Polygon, Vec2 } from "./worldmodel";
+import { pointInPolygon, polygonSignedDistance } from "./waterfield";
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
@@ -199,6 +201,100 @@ export function segmentIntersection(
   const u = (qpx * rz - qpz * rx) / denom;
   if (t < 0 || t > 1 || u < 0 || u > 1) return null;
   return { point: { x: a.x + rx * t, z: a.z + rz * t }, t, u };
+}
+
+/** 点 (px, pz) と線分 ab の距離 */
+function distPointToSegment(px: number, pz: number, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lenSq = dx * dx + dz * dz;
+  const t =
+    lenSq > 0
+      ? clamp(((px - a.x) * dx + (pz - a.z) * dz) / lenSq, 0, 1)
+      : 0;
+  return Math.hypot(px - (a.x + dx * t), pz - (a.z + dz * t));
+}
+
+/**
+ * 閉多角形どうしの重なり判定(辺交差+相互の頂点包含)。
+ * 凸・凹どちらでも使える。接触(距離 0 ちょうど)は数値誤差の範囲で不定。
+ * 段11「区画」の既存区画棄却と段12「建物」の重なりアサーションが共有する。
+ */
+export function polygonsOverlap(a: Polygon, b: Polygon): boolean {
+  if (a.length < 3 || b.length < 3) return false;
+  for (let i = 0; i < a.length; i++) {
+    const p = a[i];
+    const q = a[(i + 1) % a.length];
+    if (!p || !q) continue;
+    for (let j = 0; j < b.length; j++) {
+      const r = b[j];
+      const s = b[(j + 1) % b.length];
+      if (!r || !s) continue;
+      if (segmentIntersection(p, q, r, s)) return true;
+    }
+  }
+  const a0 = a[0];
+  const b0 = b[0];
+  if (a0 && pointInPolygon(a0.x, a0.z, b)) return true;
+  if (b0 && pointInPolygon(b0.x, b0.z, a)) return true;
+  return false;
+}
+
+/**
+ * 線分 ab が閉多角形の clearance 以内にあるか(交差・包含・近接)。
+ * 段11「区画」の道路棄却と段12「建物」の道路重なりアサーションが共有する。
+ * 2線分間の最短距離はどちらかの端点で達するため、
+ * 「辺交差 + 端点↔相手の距離」で網羅できる。
+ */
+export function segmentNearPolygon(
+  a: Vec2,
+  b: Vec2,
+  polygon: Polygon,
+  clearance: number,
+): boolean {
+  if (polygon.length < 3) return false;
+  for (let i = 0; i < polygon.length; i++) {
+    const p = polygon[i];
+    const q = polygon[(i + 1) % polygon.length];
+    if (!p || !q) continue;
+    if (segmentIntersection(a, b, p, q)) return true;
+    if (distPointToSegment(p.x, p.z, a, b) < clearance) return true;
+  }
+  if (polygonSignedDistance(a.x, a.z, polygon) < clearance) return true;
+  if (polygonSignedDistance(b.x, b.z, polygon) < clearance) return true;
+  return false;
+}
+
+/** 閉多角形のバウンディングボックス */
+export function polygonBounds(polygon: Polygon): {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+} {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const p of polygon) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.z < minZ) minZ = p.z;
+    if (p.z > maxZ) maxZ = p.z;
+  }
+  return { minX, maxX, minZ, maxZ };
+}
+
+/** 頂点列の shoelace 符号を検査し、時計回り(符号負。Polygon 規約)に揃える */
+export function ensureClockwise(polygon: Polygon): Polygon {
+  let sum = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    const p = polygon[i];
+    const q = polygon[(i + 1) % polygon.length];
+    if (!p || !q) continue;
+    sum += p.x * q.z - q.x * p.z;
+  }
+  return sum < 0 ? polygon : polygon.slice().reverse();
 }
 
 /**

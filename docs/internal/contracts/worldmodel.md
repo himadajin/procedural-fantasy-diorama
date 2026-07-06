@@ -180,8 +180,9 @@ interface ZoneMask {
 - 舗装チャネルの色はメッシュビルダーが決める: `derived.roadGrade` による
   土 → 砂利 → 石畳(art-direction 5.2節)の補間色を paved の基準色とし、
   道路リボン自身の頂点カラー(edge.grade による同じ補間)と写像を共有する。
-- 建物 footprint による上書きは PHASE 4a の担当(担当段は同PHASEで確定し、
-  コードより先に本書へ追記する)。
+- 建物 footprint による上書きは段12「建物」の担当とし、部品リスト展開と
+  同時に行う(PHASE 4a commit 13)。骨格データのみの段階(commit 12)では
+  建物は zoneMask に触れない(地面の絵を変えない)。
 - サンプリングの正は `src/model/zonemask.ts` の `sampleZoneMask`
   (セル中心基準のバイリニア補間。範囲外は端のセルへクランプ)。
   メッシュビルダーはこれで頂点カラーへ変換する
@@ -359,7 +360,14 @@ interface FieldGrid {
   区画の担当)
 - `primary` の解像度は 64 固定、`cellSize = ground.size × 1.1 / 64`
   (waterfield と同じ張り)
-- `final` は PHASE 4a(段10)の担当(それまでは null)
+- `final` は段11「区画」が埋める(それまでは null)。解像度・セル寸・張りは
+  `primary` と同一。値は `final = clamp(primary + 結界内ブースト, 0, 1)`。
+  結界内ブーストは `wards.ringPath` が非空のとき、ringPath の閉多角形の
+  内側で最大 +0.15 とし、環の縁は幅 8(実寸)の smoothstep で 0 へ滑らかに
+  減衰させる(環の外は一次と同値。外縁への減衰は primary の外縁フェードを
+  そのまま引き継ぐ)。ringPath が空(wardLevel 0)のとき final は primary と
+  同値のコピー(別インスタンス)。乱数サブストリームは消費しない
+  (モデル状態からの決定論的な場)。区画・建物の選別は final を使う
 
 ### Network(PHASE 3、小道の追加は PHASE 4b)
 
@@ -546,22 +554,34 @@ interface Wards {
 
 ```ts
 interface Parcel {
-  id: string;
-  polygon: Polygon;
-  frontEdge: [Vec2, Vec2];       // 接道辺
-  facing: number;                // 正面方向
-  waterside: boolean; canalside: boolean;
+  id: string;                    // "parcel/<roadEdgeId>/<L|R>/<slot>"。位置・edge 由来で安定
+  roadEdgeId: string;            // 接道する道路 edge の id
+  polygon: Polygon;              // 敷地(間口×奥行きの矩形)。時計回り・自己交差なし
+  frontEdge: [Vec2, Vec2];       // 接道辺(接道 edge 側の2頂点。接線方向昇順)
+  facing: number;                // 正面方位(xz 偏角。敷地から接道 edge の中心線へ向かう方向)
+  waterside: boolean;            // 河川・湖の岸沿い(下記の判定基準)
+  canalside: boolean;            // 水路沿い(同)
 }
 interface Building {
-  id: string;
-  parcelId: string | null;       // 中心建築は null(centerPlan に立地)
+  id: string;                    // "building/<parcelId の parcel/ 以降>"。区画由来で安定
+  parcelId: string | null;       // 中心建築は null(centerPlan に立地。PHASE 5a)
   role: "house" | "waterside" | "bridgehead" | "hall"
       | "warehouse" | "outskirt" | "center";
-  footprint: Polygon;
-  floors: number;
+  footprint: Polygon;            // 矩形/L字/T字。セットバック込み。時計回り・自己交差なし
+  facing: number;                // 正面方位(xz 偏角。広場 > 道路 > 水面の優先+揺らぎ込み)
+  floors: number;                // 階数。1〜3 の整数
   roof: { type: "gable" | "hip" | "compound"; pitch: number };
+                                 // pitch は度数(50〜58。art-direction 6節)
+  foundation: Foundation;        // 接地(基壇・杭・石基礎)。段12の骨格データ(commit 12)
   materials: { wall: string; roof: string; trim: string }; // 素材ID(パレットはart-direction 5節)
   parts: Part[];                 // 建築部品の展開結果
+}
+interface Foundation {
+  kind: "plinth" | "piles" | "stonebase"; // 基壇 / 杭 / 石基礎
+  plinthHeight: number;          // 基壇の立ち上がり高(y=0 から。Prosperity・役割駆動)
+  overWater: boolean;            // footprint が水面(河川・湖)上に張り出すか
+  bottomY: number;               // 基礎下端の y。陸上は 0、水上張り出しは
+                                 // SHORE_SKIRT_BOTTOM_Y(-1.6。岸スカート下端)
 }
 interface Part {
   type: string;                  // 部品型(plinth/wall/roof/window/door/beam/chimney/
@@ -575,6 +595,96 @@ interface Part {
 
 部品は必ず「型+パラメータ」で表現し、メッシュビルダーが型ごとに
 一括マージ/インスタンス化する(implementation-spec 1.8節・9節)。
+
+PHASE 4a 内の分担(commit 12 = 計画データ、commit 13 = 骨格文法とメッシュ):
+
+- 段11「区画」(commit 12)が `density.final` と `parcels` を埋める
+- 段12「建物」のうち、`id` / `parcelId` / `role` / `footprint` / `facing` /
+  `floors` / `roof` / `foundation` は commit 12 が埋める。
+  `materials` / `parts` の展開と zoneMask の建物 footprint 上書きは
+  commit 13 の担当で、それまで materials は空文字列、parts は空配列とする
+  (仮実装ではなくスコープ分割。implementation-spec 1.9節)
+
+区画の性質(段11「区画」が保証し、後段・メッシュビルダーが前提としてよい):
+
+- 道路 edge(main / connector)の両側に、中心線から
+  `edge.width/2 + 1.0`(前面帯)だけオフセットした帯を取り、道路に沿って
+  間口×奥行きの矩形敷地へ分割する。間口は `derived.parcelSize` を基準に
+  最終密度場 `density.final` で変調する(高密度ほど狭小)。奥行きは間口比
+  約 1.25(敷地ごとの ±10% 揺らぎ込み)。衝突する候補は奥行きを
+  決定論的に縮小して再試行する(×0.72 → ×0.5、下限 4.5。岸沿いなど
+  狭い帯にも敷地を通す。縮小は乱数を消費しない)
+- 採択確率は `derived.parcelRate` × 密度係数(final に単調)。
+  岸沿い(waterside)・水路沿い(canalside)の候補は
+  `derived.watersideRate` で採択率を押し上げる。総数は
+  `derived.parcelCountMax` を上限とし、超過後の候補は棄却する
+- 衝突棄却の対象(いずれかに当たる候補は棄却): (1) 広場ポリゴン、
+  (2) 水面 = 河川・湖(waterfield の waterSdf)+水路(中心線距離 − 幅/2)、
+  (3) 道路 = 全 edge の path(クリアランス edge.width/2 + 0.3)、
+  (4) 結界環バッファ(ringPath への近接・交差。wardLevel ≥ 1)、
+  (5) centerPlan の予約 = 中心からの半径
+  `derived.parcelReserve × derived.centerFootprint / 2` の円と
+  `centerPlan.footprint` ポリゴン、(6) 既採択の区画、
+  (7) `ground.boundary` の外(マージン 2)
+- 岸線の建築占有率の上限(40%): 占有率 =「`shoreline.loops` の全点のうち、
+  採択済み waterside 区画のポリゴンから 6(実寸)以内にある点」の割合。
+  採択のたびに更新し、上限 0.40 を超える waterside 候補は棄却する
+  (水辺を建物で埋め尽くさない。PHASE 6 はこのロジックに手を入れない)
+- `id` は `"parcel/<roadEdgeId>/<L|R>/<slot>"`(L/R は進行方向左右、
+  slot は edge 沿いの候補スロット連番)。スロット連番は採択結果に
+  依存しない(棄却された候補も番号を消費する)ため、位置・edge 由来で安定
+- `frontEdge` は接道辺(道路側の2頂点)。その中点から接道 edge の path への
+  距離は `edge.width/2 + 2.0` 以下(接道保証。テストはこれを機械検証する)。
+  `facing` は frontEdge の中点から接道 edge の中心線へ向かう方向の偏角
+- waterside / canalside の判定基準: 敷地のプローブ(頂点4+辺中点4+
+  中心1+内部4 の 13 点。衝突棄却と共通)の最小距離で、河川・湖の
+  waterSdf < 4.5 なら waterside、水路の(中心線距離 − 幅/2)< 4.5 なら
+  canalside
+- 乱数は区画ごとの独立サブストリーム `"parcel/<id>"` のみ消費する
+  (奥行き揺らぎ・採択ロール。生成順序の変更が他区画へ波及しない)
+
+建物骨格の性質(段12「建物」の commit 12 分が保証する):
+
+- 建物は区画と 1:1(採択済み区画ごとに 1 棟)。`id` は
+  `"building/<parcelId の parcel/ 以降>"` で区画由来で安定。
+  乱数は `"building/<id>"` サブストリームのみ消費する
+- 役割(UI選択なし・文脈から決定): 広場に面する(区画と広場ポリゴンの
+  距離 < 3)× Prosperity → hall、BridgeSite 近傍(渡り長/2 + 10 以内)
+  × watersideRate → bridgehead、waterside/canalside 区画 × watersideRate →
+  waterside、final 密度の裾(< 0.14)→ outskirt、低密度(< 0.24)×
+  低 Prosperity → warehouse、それ以外 → house。優先順は
+  hall > bridgehead > waterside > outskirt > warehouse > house
+- footprint は矩形基本。広い敷地の hall は T 字、広い敷地の house は
+  確率的に L 字。waterside は矩形固定(張り出しの合成を単純に保つ)。
+  区画からのセットバック(前面 0.5 / 側面 0.7 / 背面 0.7 目安)込みで、
+  時計回り・自己交差なし
+- 向き: `facing` は区画の接道方位を初期値とし、広場に面する場合は
+  footprint の 4 軸(接道方位 ± k×90°)のうち広場方向に最も近い軸へ
+  スナップする(広場 > 道路 > 水面/水路/橋 の優先)。最後に footprint を
+  重心まわりに ±4° × (1 − tidiness) の範囲で揺らす(乱数は
+  building サブストリーム。tidiness 高で揺らぎ減)
+- floors は Settlement(floorsBias)・Prosperity・役割から 1〜3 の整数。
+  roof.pitch は 50〜58 度の連続値。roof.type は L/T footprint で
+  "compound"、大型・hall で確率的に "hip"、基本 "gable"
+- 接地: 陸上の建物は `foundation.kind = "plinth"`、`bottomY = 0`、
+  `plinthHeight` は Prosperity・役割駆動(0.15〜0.9 目安)。
+  waterside 建物は背面・左右の3辺(正面=接道側を除く)の中点から 6.0 以内に
+  水面(河川・湖)があれば、最も水面に近い辺を水面側へ延長して張り出す
+  (水際から 1.6、延長は 7.0 を上限)。張り出した建物は
+  `overWater = true`、kind は "piles"(低 Prosperity)または
+  "stonebase"(高 Prosperity)、`bottomY = -1.6`(岸スカート下端)とする。
+  張り出し延長が他の区画・道路・水路・広場・結界環と衝突する場合は
+  張り出さない。水路の上への張り出しは行わない(護岸付きチャネルのため)
+- 機械判定可能な接地契約: `overWater = true` ⇔ footprint の頂点の
+  いずれかが水面上(河川・湖の waterSdf < 0)。overWater の建物は
+  kind ∈ {"piles", "stonebase"} かつ `bottomY = -1.6`(水上に張り出す
+  部品は杭または基礎を介して水面下・岸スカート下端まで到達する)。
+  overWater でない建物の footprint 頂点はすべて陸上(waterSdf ≥ 0)で、
+  水路(中心線距離 − 幅/2)にも重ならない
+- パイプライン内アサーション(違反は throw せず件数を console に出す):
+  (1) 全建物が接道正面を持つ(親区画の frontEdge と接道 edge の距離)、
+  (2) 水上張り出しの杭到達(上記の接地契約)、(3) 建物どうし・水域・
+  道路・広場との重なりゼロ(waterside の張り出しは杭前提で水域のみ許容)
 
 ### Vegetation(PHASE 6)
 

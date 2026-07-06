@@ -62,7 +62,7 @@ interface Rng {
 | 9 | 広場 | pipeline/plazas | 〜wards | plazas、centerPlan.facing/heightHint |
 | 10 | 舗装 | pipeline/paving | 〜plazas(network / water.canals / plazas) | ground.zoneMask(舗装チャネル上書き) |
 | 11 | 区画 | pipeline/parcels | 〜舗装 | density.final、parcels |
-| 12 | 建物 | pipeline/buildings | 〜parcels | buildings(部品リスト含む) |
+| 12 | 建物 | pipeline/buildings | 〜parcels | buildings(骨格+部品リスト) |
 | 13 | 植生 | pipeline/vegetation | 〜buildings | vegetation |
 | 14 | サマリー | pipeline/summary | 全部 | summary |
 
@@ -79,6 +79,17 @@ interface Rng {
   (worldmodel.md ZoneMask 節)。段10 は乱数サブストリームを消費しない。
 - リトライを含む処理(水路の交差超過の再サンプル、結界環の縮小リトライ)は
   RNG API 節の規約どおり、リトライ回数も同一サブストリームから消費する。
+- 段11「区画」と段12「建物」は 2 段に分ける(設計判断: 区画は敷地の
+  幾何と採択、建物は役割・骨格・部品で関心が異なり、PHASE 4b の小道追加が
+  区画に手を入れずに建物段以降を再利用できるようにする)。表示名は
+  段11「敷地を区切っています…」、段12「家々を建てています…」。
+  PHASE 4a 内の分担: commit 12 は段11全体と段12の骨格データ
+  (id / parcelId / role / footprint / facing / floors / roof / foundation)を
+  埋め、commit 13 が段12の部品リスト展開(materials / parts)と
+  zoneMask の建物 footprint 上書きを足す(worldmodel.md Parcel / Building 節)。
+  段11は要素サブストリーム `"parcel/<id>"`、段12は `"building/<id>"` のみを
+  消費する(段レベルの共有ストリームを持たない)。density.final の算出は
+  乱数を消費しない(worldmodel.md Density 節)。
 
 ## チャンク実行フレームワーク
 

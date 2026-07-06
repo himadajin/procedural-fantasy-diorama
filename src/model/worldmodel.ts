@@ -331,12 +331,24 @@ export interface Wards {
   }[];
 }
 
+/**
+ * 敷地(contracts/worldmodel.md Parcel / Building 節)。
+ * 段11「区画」が道路 edge 沿いの矩形敷地として埋める。
+ */
 export interface Parcel {
+  /** "parcel/<roadEdgeId>/<L|R>/<slot>"。位置・edge 由来で安定 */
   id: string;
+  /** 接道する道路 edge の id */
+  roadEdgeId: string;
+  /** 敷地(間口×奥行きの矩形)。時計回り・自己交差なし */
   polygon: Polygon;
+  /** 接道辺(接道 edge 側の2頂点。接線方向昇順) */
   frontEdge: [Vec2, Vec2];
+  /** 正面方位(xz 偏角。敷地から接道 edge の中心線へ向かう方向) */
   facing: number;
+  /** 河川・湖の岸沿い(判定基準は contracts) */
   waterside: boolean;
+  /** 水路沿い(同) */
   canalside: boolean;
 }
 
@@ -361,14 +373,41 @@ export interface Part {
   params?: Record<string, number>;
 }
 
+/**
+ * 接地(基壇・杭・石基礎)。契約は contracts/worldmodel.md Parcel / Building 節。
+ * overWater の建物は kind ∈ {"piles", "stonebase"} かつ
+ * bottomY = SHORE_SKIRT_BOTTOM_Y(-1.6)で機械判定できる。
+ */
+export interface Foundation {
+  /** 基壇 / 杭 / 石基礎 */
+  kind: "plinth" | "piles" | "stonebase";
+  /** 基壇の立ち上がり高(y=0 から。Prosperity・役割駆動) */
+  plinthHeight: number;
+  /** footprint が水面(河川・湖)上に張り出すか */
+  overWater: boolean;
+  /** 基礎下端の y。陸上は 0、水上張り出しは -1.6(岸スカート下端) */
+  bottomY: number;
+}
+
 export interface Building {
+  /** "building/<parcelId の parcel/ 以降>"。区画由来で安定 */
   id: string;
+  /** 中心建築は null(centerPlan に立地。PHASE 5a) */
   parcelId: string | null;
   role: BuildingRole;
+  /** 矩形/L字/T字。セットバック込み。時計回り・自己交差なし */
   footprint: Polygon;
+  /** 正面方位(xz 偏角。広場 > 道路 > 水面の優先+揺らぎ込み) */
+  facing: number;
+  /** 階数。1〜3 の整数 */
   floors: number;
+  /** pitch は度数(50〜58。art-direction 6節) */
   roof: { type: "gable" | "hip" | "compound"; pitch: number };
+  /** 接地(段12の骨格データ。commit 12) */
+  foundation: Foundation;
+  /** 素材ID。展開は PHASE 4a commit 13 の担当(それまで空文字列) */
   materials: { wall: string; roof: string; trim: string };
+  /** 建築部品の展開結果。PHASE 4a commit 13 の担当(それまで空配列) */
   parts: Part[];
 }
 
