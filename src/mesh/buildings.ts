@@ -29,10 +29,17 @@
  *   (ward-wall / arch / ward-stone と再利用部品)を同じ束へ合流させる。
  *   境界標・立石は専用プールの InstancedMesh `ward-stones` 1 つ
  *   (contracts/worldmodel.md「結界構造の立体化」)
+ * - 魔法灯・浮遊要素・橋(PHASE 5b commit 18): 灯の柱(lamp-post)は
+ *   building-trim プールへ、橋(mesh/bridgeparts.ts)は既存の束へ合流。
+ *   火屋+浮遊水晶は発光の共有 InstancedMesh `ward-glow-crystals`、
+ *   浮石は `ward-floatstones`(draw call +2)。上下動・明滅は
+ *   ビューワーの時間 uniform+id ハッシュ位相で、reduced-motion では
+ *   静止する(contracts/worldmodel.md「魔法灯・浮遊要素・橋の立体化」)
  */
 import * as THREE from "three";
 import type { Building, Part, WorldModel } from "../model/worldmodel";
-import { expandWardParts } from "./wardparts";
+import { expandWardParts, type FloatInstance } from "./wardparts";
+import { expandBridgeParts } from "./bridgeparts";
 
 /** ビューワーが毎フレーム更新する時間 uniform(mesh/build.ts と共有の形) */
 export interface TimeUniform {
@@ -930,6 +937,21 @@ const INSTANCED_TYPES: Record<
       color: pieceColor(base, [px, py + part.transform.scale[1] / 2, pz]),
     });
   },
+  // --- PHASE 5b commit 18: 魔法灯の柱(柱身+足元+天板のピース分解。
+  //     火屋は部品ではなく ward-glow-crystals のインスタンス) ---
+  "lamp-post": (part, base, pools) => {
+    const [sx, sy] = part.transform.scale;
+    // 柱身
+    boxPiece(pools, part, base, -0.5, 0.5, 0, 1, -0.5, 0.5);
+    // 足元の座(実寸固定 0.3 角 × 高さ 0.12)
+    const fx = 0.15 / Math.max(sx, 1e-6);
+    const fh = 0.12 / Math.max(sy, 1e-6);
+    boxPiece(pools, part, base, -fx, fx, 0, fh, -fx, fx);
+    // 天板(実寸固定 0.36 角 × 厚み 0.07。火屋がこの上に浮く)
+    const cx = 0.18 / Math.max(sx, 1e-6);
+    const ch = 0.07 / Math.max(sy, 1e-6);
+    boxPiece(pools, part, base, -cx, cx, 1, 1 + ch, -cx, cx);
+  },
 };
 
 function buildGeoBuffer(buf: GeoBuffer): THREE.BufferGeometry {
@@ -1038,6 +1060,229 @@ function wardStoneGeometry(): THREE.BufferGeometry {
   return g;
 }
 
+// --- PHASE 5b commit 18: 魔法灯の火屋・浮遊要素の InstancedMesh ---
+
+/** 上下動の角速度(ゆっくり。周期 約8.4秒)と明滅の位相係数 */
+const FLOAT_BOB_SPEED = 0.75;
+
+/**
+ * 尖った塊(八面体系)の単位形状(底面中心 y 0〜1)。フラット法線。
+ * 発光八面体(crystalPart と同形)と浮石(不整形)で共用する。
+ */
+function lumpGeometry(
+  bottom: [number, number, number],
+  top: [number, number, number],
+  ring: [number, number, number][],
+): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const pushTri = (
+    a: [number, number, number],
+    b: [number, number, number],
+    c: [number, number, number],
+  ): void => {
+    let nx = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]);
+    let ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+    let nz = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx /= len;
+    ny /= len;
+    nz /= len;
+    const cx = (a[0] + b[0] + c[0]) / 3;
+    const cy = (a[1] + b[1] + c[1]) / 3;
+    const cz = (a[2] + b[2] + c[2]) / 3;
+    const v0 = a;
+    let v1 = b;
+    let v2 = c;
+    // 法線を塊の中心 (0, 0.5, 0) から外向きへ(巻き順も反転)
+    if (nx * cx + ny * (cy - 0.5) + nz * cz < 0) {
+      [v1, v2] = [c, b];
+      nx = -nx;
+      ny = -ny;
+      nz = -nz;
+    }
+    for (const v of [v0, v1, v2]) {
+      positions.push(v[0], v[1], v[2]);
+      normals.push(nx, ny, nz);
+    }
+  };
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i] as [number, number, number];
+    const b = ring[(i + 1) % ring.length] as [number, number, number];
+    pushTri(a, b, top);
+    pushTri(a, b, bottom);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute(
+    "position",
+    new THREE.BufferAttribute(new Float32Array(positions), 3),
+  );
+  g.setAttribute(
+    "normal",
+    new THREE.BufferAttribute(new Float32Array(normals), 3),
+  );
+  return g;
+}
+
+/** 発光八面体(火屋・浮遊水晶)。crystalPart と同じ単位形状 */
+function glowOctahedronGeometry(): THREE.BufferGeometry {
+  return lumpGeometry(
+    [0, 0, 0],
+    [0, 1, 0],
+    [
+      [-0.5, 0.42, 0],
+      [0, 0.42, -0.5],
+      [0.5, 0.42, 0],
+      [0, 0.42, 0.5],
+    ],
+  );
+}
+
+/** 浮石: 不整形に潰した塊(頂部・赤道をずらした八面体) */
+function floatStoneGeometry(): THREE.BufferGeometry {
+  return lumpGeometry(
+    [0.06, 0, -0.04],
+    [-0.05, 1, 0.04],
+    [
+      [-0.5, 0.46, -0.08],
+      [0.1, 0.4, -0.5],
+      [0.5, 0.52, 0.05],
+      [-0.07, 0.56, 0.5],
+    ],
+  );
+}
+
+/**
+ * 上下動のシェーダーパッチ: インスタンス属性 aPhase(id ハッシュ由来の
+ * 位相)・aAmp(ローカル振幅)とビューワーの時間 uniform で
+ * y をオフセットする。reduced-motion では uniform が更新されず静止する。
+ */
+function patchFloatBobVertex(shader: {
+  vertexShader: string;
+}): void {
+  shader.vertexShader = shader.vertexShader
+    .replace(
+      "#include <common>",
+      `#include <common>
+      attribute float aPhase;
+      attribute float aAmp;
+      uniform float uGlowTime;
+      varying float vFloatPhase;`,
+    )
+    .replace(
+      "#include <begin_vertex>",
+      `#include <begin_vertex>
+      transformed.y += aAmp * sin(uGlowTime * ${FLOAT_BOB_SPEED.toFixed(2)} + aPhase);
+      vFloatPhase = aPhase;`,
+    );
+}
+
+/**
+ * 発光インスタンス(火屋・浮遊水晶)のマテリアル: 発光束と同じ数値規範
+ * (ベース #2a3a38 / emissive #5fd4c0 × 2.0、明滅 ±15%・周期約5.5秒)。
+ * 明滅の位相は aPhase(id ハッシュ由来)、上下動は aAmp。
+ */
+function glowInstancedMaterial(
+  timeUniform: TimeUniform,
+): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(GLOW_BASE_COLOR),
+    emissive: new THREE.Color(GLOW_EMISSIVE_COLOR),
+    emissiveIntensity: GLOW_EMISSIVE_INTENSITY,
+    roughness: 0.55,
+    metalness: 0,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uGlowTime = timeUniform;
+    patchFloatBobVertex(shader);
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform float uGlowTime;\nvarying float vFloatPhase;",
+      )
+      .replace(
+        "#include <emissivemap_fragment>",
+        `#include <emissivemap_fragment>
+        totalEmissiveRadiance *= 1.0 + 0.15 * sin(uGlowTime * 1.14 + vFloatPhase * 1.7);`,
+      );
+  };
+  material.customProgramCacheKey = () => "pfd-ward-glow-inst";
+  return material;
+}
+
+/** 浮石のマテリアル(石色+個体ムラ instanceColor+上下動) */
+function floatStoneMaterial(
+  timeUniform: TimeUniform,
+): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({
+    roughness: 0.95,
+    metalness: 0,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uGlowTime = timeUniform;
+    patchFloatBobVertex(shader);
+  };
+  material.customProgramCacheKey = () => "pfd-ward-floatstone";
+  return material;
+}
+
+/**
+ * FloatInstance の列から InstancedMesh を組む(aPhase / aAmp 属性付き)。
+ * baseColor があれば instanceColor = 基準色×個体ムラ(浮石)。
+ * どちらも影は落とさない(小さく動く要素。1.8節の影キャスター規律)。
+ */
+function buildFloatInstancedMesh(
+  instances: FloatInstance[],
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  name: string,
+  baseColor: THREE.Color | null,
+): THREE.InstancedMesh | null {
+  if (instances.length === 0) {
+    geometry.dispose();
+    material.dispose();
+    return null;
+  }
+  const mesh = new THREE.InstancedMesh(geometry, material, instances.length);
+  const phases = new Float32Array(instances.length);
+  const amps = new Float32Array(instances.length);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+  for (let i = 0; i < instances.length; i++) {
+    const inst = instances[i];
+    if (!inst) continue;
+    q.setFromAxisAngle(up, inst.rotation);
+    pos.set(inst.position[0], inst.position[1], inst.position[2]);
+    scl.set(inst.scale[0], inst.scale[1], inst.scale[2]);
+    m.compose(pos, q, scl);
+    mesh.setMatrixAt(i, m);
+    phases[i] = inst.phase;
+    // 振幅はワールド指定 → インスタンススケール前のローカル単位へ換算
+    amps[i] = inst.amp / Math.max(inst.scale[1], 1e-6);
+    if (baseColor) {
+      mesh.setColorAt(
+        i,
+        pieceColor(baseColor, [
+          inst.position[0],
+          inst.position[1] + inst.scale[1] / 2,
+          inst.position[2],
+        ]),
+      );
+    }
+  }
+  geometry.setAttribute("aPhase", new THREE.InstancedBufferAttribute(phases, 1));
+  geometry.setAttribute("aAmp", new THREE.InstancedBufferAttribute(amps, 1));
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.name = name;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  return mesh;
+}
+
 /** ピースのプールから InstancedMesh を組む(instanceColor = 基準色×個体ムラ) */
 function buildPoolMesh(
   pieces: Piece[],
@@ -1128,12 +1373,14 @@ function glowMaterial(timeUniform: TimeUniform): THREE.MeshStandardMaterial {
 }
 
 /**
- * 建物+結界構造一式のメッシュを構築する(結界の部品は
- * mesh/wardparts.ts の展開結果を合流。PHASE 5b commit 17)。
+ * 建物+結界構造+魔法灯・浮遊要素+橋の一式のメッシュを構築する
+ * (結界・灯・浮遊は mesh/wardparts.ts、橋は mesh/bridgeparts.ts の
+ * 展開結果を合流。PHASE 5b commit 17〜18)。
  * 戻り値: 躯体マージ 1 + 屋根マージ 1 + 発光束マージ 1(発光部品が
  * あるときのみ)+ インスタンスプールの InstancedMesh(building-trim /
- * building-openings / building-piles / ward-stones。存在するもののみ)。
- * draw call は建物+結界全体で 7 前後に収まる(1.8節の予算)。
+ * building-openings / building-piles / ward-stones / ward-glow-crystals /
+ * ward-floatstones。存在するもののみ)。
+ * draw call は建物+結界+橋の全体で 9 前後に収まる(1.8節の予算)。
  * timeUniform はビューワーが毎フレーム更新する共有の時間(水面と同じ流儀)。
  */
 export function buildBuildings(
@@ -1169,9 +1416,12 @@ export function buildBuildings(
   for (const building of model.buildings as Building[]) {
     for (const part of building.parts) processPart(part);
   }
-  // 結界構造(PHASE 5b commit 17): mesh/wardparts.ts の展開結果を
-  // 同じ束(躯体/屋根/発光/インスタンスプール)へ合流させる
-  for (const part of expandWardParts(model).parts) processPart(part);
+  // 結界構造+魔法灯・浮遊要素(PHASE 5b commit 17〜18):
+  // mesh/wardparts.ts の展開結果を同じ束へ合流させる
+  const wardExpansion = expandWardParts(model);
+  for (const part of wardExpansion.parts) processPart(part);
+  // 橋(PHASE 5b commit 18): mesh/bridgeparts.ts の展開結果を合流させる
+  for (const part of expandBridgeParts(model).parts) processPart(part);
 
   if (unknown > 0) {
     console.warn(`mesh/buildings: 未知の部品型 ${unknown} 件を読み飛ばした`);
@@ -1237,5 +1487,24 @@ export function buildBuildings(
     0.95,
   );
   if (stones) out.push(stones);
+
+  // PHASE 5b commit 18: 魔法灯の火屋+浮遊水晶(発光の共有 InstancedMesh)と
+  // 浮石。上下動・明滅はビューワーの時間 uniform(reduced-motion で静止)
+  const glowInstanced = buildFloatInstancedMesh(
+    [...wardExpansion.lampHeads, ...wardExpansion.floatCrystals],
+    glowOctahedronGeometry(),
+    glowInstancedMaterial(timeUniform),
+    "ward-glow-crystals",
+    null,
+  );
+  if (glowInstanced) out.push(glowInstanced);
+  const floatStones = buildFloatInstancedMesh(
+    wardExpansion.floatStones,
+    floatStoneGeometry(),
+    floatStoneMaterial(timeUniform),
+    "ward-floatstones",
+    materialColor("stone"),
+  );
+  if (floatStones) out.push(floatStones);
   return out;
 }

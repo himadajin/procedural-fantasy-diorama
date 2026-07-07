@@ -664,11 +664,130 @@ interface Wards {
   (マテリアル規範・明滅・reduced-motion は PHASE 5a の束の規範のまま。
   draw call は増えない)。結界要素の発光面積合計は
   `glowAreaCap × 箱庭面積 × 0.65`(結界の取り分。中心建築の 0.35 の残り)
-  以下とし、予算順(塔頂 → 門紋 → 聖域 → 境界標 → 壁紋様 → 水上弧)に
-  採択して超過分を打ち切る。`glowIntensity` は紋様の間隔(密度)へ効く
+  以下とし、予算順(塔頂 → 門紋 → 聖域 → 境界標 → **魔法灯 → 浮遊水晶** →
+  壁紋様 → 水上弧)に採択して超過分を打ち切る(commit 18 改定:
+  魔法灯・浮遊水晶も同じ取り分・同じ累積予算に含め、Arcana 連動の主要
+  シグナルである点在の灯を、反復帯である壁紋様・水上弧より優先する)。
+  `glowIntensity` は紋様の間隔(密度)へ効く
 - **デバッグ描画の置換範囲**: `src/mesh/planmarks.ts` から結界環ライン・
   塔/門/聖域マーカーを撤去する。魔法灯・浮遊要素・BridgeSite のマーカーは
-  commit 18(立体化の担当)まで残す
+  commit 18 が立体へ置換し、planmarks はファイルごと撤去する(下記
+  「魔法灯・浮遊要素・橋の立体化」)
+
+#### 魔法灯・浮遊要素・橋の立体化(PHASE 5b commit 18)
+
+commit 17 と同じ流儀の**表示写像**として立体化する。パイプライン・
+WorldModel には一切書き戻さず、正規化ハッシュ(pipeline.md)は
+PHASE 5a から不変のまま。乱数ストリームは消費しない
+(個体差・採択はすべて位置ハッシュまたは安定 id のハッシュ由来)。
+これで計画デバッグ描画は全廃となり、`src/mesh/planmarks.ts` は
+ファイルごと削除する。
+
+**魔法灯**(wards.lamps。採択は段8で完了済み):
+
+- 立体 = 柱(`lamp-post`)+火屋(発光 InstancedMesh のインスタンス)。
+  柱は柱身+天板の箱ピースへ分解して既存の `building-trim` プールへ
+  合流する(draw call 不変)。柱材は `derived.roadGrade ≥ 1.4` で
+  `stone`、未満で `wood`(art-direction 5.4節「柱は木部または石」)
+- 火屋は柱天板の少し上に**浮く**小さな八面体の発光コア
+  (#5fd4c0。crystal と同形)。共有 InstancedMesh
+  `ward-glow-crystals`(浮遊水晶と共用。下記)のインスタンスとし、
+  上下動の振幅は 0(静止)。明滅は発光束と同じ規範
+  (±15%・周期約5.5秒、位相は lamp.id の文字列ハッシュ由来)
+- 発光予算: 火屋の面積(crystal と同じ glowPartArea 換算)は結界の
+  取り分の累積予算に含める(予算順は上記の改定どおり)。予算不足で
+  火屋を置けない灯は柱ごと置かない(灯らない柱を残さない)
+- **足元の照り返し**: 灯の足元(半径 2.6)の地面・舗装の頂点カラーへ
+  彩度控えめの青緑(#3f7f74、最大ブレンド 0.22、smoothstep 減衰)を
+  焼き込む(art-direction 3節)。設計判断: zoneMask は WorldModel の
+  データ(正規化ハッシュの対象)であり、照り返しは表示写像の一部の
+  ため、zoneMask のチャネルではなく**メッシュ側の頂点カラー処理**
+  (地面・舗装の両バッファへの後処理)とする。純関数
+  `createLampTint` / `applyLampTint`(`src/mesh/wardparts.ts`)を
+  地面(mesh/build.ts)と舗装(mesh/paving.ts)が共有する
+
+**浮遊要素**(wards.floaters。基準位置のみ WorldModel):
+
+- 浮遊水晶(発光)と浮石(非発光)の 2 種。割合は基準位置の
+  位置ハッシュで決め、**水晶 0.35 / 浮石 0.65** とする(発光は
+  面積と数を絞る。art-direction 2.2節)。水晶が発光予算に収まらない
+  場合はその個体を浮石へフォールバックする(クラスタの個数は保つ)
+- 浮遊水晶は `ward-glow-crystals`(発光 InstancedMesh 1 つ。
+  魔法灯の火屋と共用)、浮石は `ward-floatstones`
+  (石色の InstancedMesh 1 つ)へ集約する(draw call +2。
+  どちらも castShadow: false)
+- 上下動はビューワーの時間 uniform(水面・発光束と共有の
+  `userData.waterTime`)による頂点シェーダーオフセット
+  `y += amp × sin(t × 0.75 + phase)`。振幅はワールドで 0.14〜0.30
+  (位置ハッシュ由来。ゆっくり・小さく)、**位相は floater.id の
+  文字列ハッシュ由来**(インスタンス属性 aPhase / aAmp)。
+  prefers-reduced-motion では uniform が更新されず静止する。
+  基準位置 basePosition は浮遊の中心(立体の底 = y − 高さ/2)
+- 魔法灯・浮遊要素の展開は `expandWardParts`(mesh/wardparts.ts)が
+  担い、発光予算の累積を結界構造と共有する
+
+**橋**(water.bridges):
+
+- 展開はメッシュ層の純関数 `src/mesh/bridgeparts.ts` の
+  `expandBridgeParts(model)`(three 非依存)。Part 列は
+  mesh/buildings.ts の既存の束へ合流する(躯体/屋根マージ・
+  building-trim・building-piles。draw call は増えない)
+- **型の対応表**(over / roadClass / Prosperity):
+
+  | over | 条件 | 型 |
+  |---|---|---|
+  | river / lake | roadClass "main" かつ roadGrade ≥ 0.9 | 石造アーチ橋 |
+  | river / lake | 上記以外(connector・低 Prosperity) | 木橋(桁+杭橋脚) |
+  | canal | roadGrade ≥ 0.9 | 水路の小橋(石。桁+欄干+袂の石座) |
+  | canal | roadGrade < 0.9 | 水路の小橋(木。同上、木部) |
+
+- **河川・湖の橋**: 道路リボンが岸で止めた渡り区間を橋が受け持つ。
+  渡り区間の標本化は道路リボン(mesh/paving.ts)と**同一**の
+  `waterCrossings(edge.path, field.waterSdf, 2.0)`(model/geometry.ts。
+  rivers/lakes の waterfield、標本間隔 2.0)を共用し、取り付きに
+  隙間を出さない。橋床は渡り区間の両端から 0.9 だけ陸へ延長した
+  区間を弧長 2.4 でリサンプルした箱セグメント列(`plinth` 再利用。
+  継ぎ目は +0.35 の重なり)。**橋床天端 = roadBaseY(edgeId) +
+  ROAD_CROWN + 0.02**(道路リボンの中央盛り上げと同じ高さ関数を
+  bridgeparts が正として持ち、paving が共用する。+0.02 は接合部の
+  Z ファイティング回避で、段差としては読めない)
+- 石造アーチ橋: 渡り区間を等分(目標支間 8、1〜6 連)した `arch`
+  部品列(commit 17 の共用形状)。脚 = 橋脚として position.y = −1.6
+  (岸スカート下端)から橋床下端まで立ち上げる(水底到達)。
+  欄干は低い石の胸壁ならぬ**笠付き低欄**(`fence` 再利用)を両縁に。
+  袂に石の取り付き座(`plinth`)
+- 木橋: 橋床(木)+両縁の桁(`plinth`(木)。**桁下端は水面
+  (y=−0.6)より上**に保つ)+杭橋脚(`pile` 再利用。y=−1.6 から
+  橋床下端まで。支間約 5.5 ごとに 2 本組)+欄干(`beam` 再利用の
+  柱+手すり)
+- **水路の小橋**: 道路リボン自身が水路上を持ち上がって渡る
+  (mesh/paving.ts の既存 lift)ため橋床は作らず、リボンの下縁を
+  受ける桁(両縁。下端 y = 0.12 > 水路水面 0.04)+欄干+両袂の
+  取り付き座(`plinth`)を BridgeSite(over "canal")の
+  position / angle / length から置く。リボンの lift 形状の正は
+  bridgeparts の純関数 `canalLiftAt` とし、paving が共用する
+- **橋上小建築**: 石造アーチ橋 × 渡り長 ≥ 14 × `canalScore ≥ 0.45`
+  のとき、位置ハッシュ < clamp((canalScore − 0.3) × 1.2, 0, 0.8) で
+  採択し、橋央の橋脚上・片側張り出しに小屋(`wall` + `gable` +
+  `window`)を 1 棟置く(運河都市の気配。確率的)
+- 検証契約(テストが機械検証する): (1) 取り付き端点は陸上
+  (waterSdf ≥ −0.2)かつ接道 edge.path 上、(2) 橋床天端 =
+  roadBaseY + ROAD_CROWN + 0.02(道路と段差なし)、(3) 桁下端 >
+  水面(河川・湖 −0.6 / 水路 +0.04)、(4) 橋脚(pile・arch)の
+  下端 = −1.6、(5) 同一入力の 2 回展開が完全一致(決定性)
+
+PHASE 5b commit 18 の追加語彙:
+
+| type | 経路 | 形状 | scale の意味 | params |
+|---|---|---|---|---|
+| `lamp-post` | インスタンス(building-trim 共有プールへのピース分解: 柱身+天板) | 魔法灯の柱。火屋(発光)は部品ではなく `ward-glow-crystals` のインスタンス | 柱幅×柱高×柱幅 | なし |
+
+- 再利用する既存語彙(橋): `plinth`(橋床・桁・取り付き座)/
+  `arch`(石造アーチ)/ `pile`(杭橋脚)/ `fence`(石の低欄)/
+  `beam`(欄干の柱・手すり)/ `wall` / `gable` / `window`(橋上小建築)
+- 専用 InstancedMesh(部品語彙外): `ward-glow-crystals`(発光
+  八面体。火屋+浮遊水晶。glow マテリアル+明滅+上下動)、
+  `ward-floatstones`(浮石。石色+個体ムラ+上下動)
 
 ### Parcel / Building(PHASE 4a、部品の拡張は PHASE 4b・5a)
 

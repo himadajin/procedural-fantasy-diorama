@@ -12,9 +12,14 @@
   純関数の共用は状態依存ではないため許す(例: 発光面積の正
   `pipeline/center.ts` の `glowPartArea` を `mesh/wardparts.ts` が共用する。
   worldmodel.md「結界構造の立体化」)。
-- `mesh/wardparts.ts`(結界立体の Part 展開。PHASE 5b commit 17)は
-  mesh 配下だが three 非依存の純関数とし、テストから直接検証できる。
-  WorldModel には書き戻さない(正規化ハッシュに影響しない)。
+- `mesh/wardparts.ts`(結界立体・魔法灯・浮遊要素の Part 展開。
+  PHASE 5b commit 17〜18)と `mesh/bridgeparts.ts`(橋の Part 展開。
+  PHASE 5b commit 18)は mesh 配下だが three 非依存の純関数とし、
+  テストから直接検証できる。WorldModel には書き戻さない
+  (正規化ハッシュに影響しない)。橋の渡り区間の標本化・道路リボンの
+  基準高・水路上の持ち上げ量は bridgeparts を正とし、
+  `mesh/paving.ts` が同じ純関数・定数を共用して取り付きの隙間を
+  出さない(worldmodel.md「魔法灯・浮遊要素・橋の立体化」)。
 - `viewer/` は時間演出(浮遊の上下動、発光の明滅、カメラ慣性)を担当する。
   時間・表示状態を WorldModel に書き戻さない。
 - `ui/` は params と seed の編集、Generate の発火、サマリー表示のみを行う。

@@ -1,24 +1,32 @@
 /**
- * 結界構造(結界壁・魔導塔・結界門・聖域)の Part 展開(PHASE 5b commit 17。
- * contracts/worldmodel.md「結界構造の立体化」が正)。
+ * 結界構造(結界壁・魔導塔・結界門・聖域)と魔法灯・浮遊要素の Part 展開
+ * (PHASE 5b commit 17〜18。contracts/worldmodel.md「結界構造の立体化」
+ * 「魔法灯・浮遊要素・橋の立体化」が正)。
  *
  * 設計判断: 展開は Wards 計画+derived から一意に決まる表示写像であり、
  * 新しい計画内容を持たないため、パイプラインではなく**メッシュ層の純関数**
  * として置く。WorldModel には部品を書き戻さない(正規化ハッシュは不変)。
- * 本ファイルは three 非依存とし、接地・門通過・縮退・発光面積のテストが
- * three を経由せず機械検証できる(contracts/pipeline.md モジュール境界規則)。
+ * 本ファイルは three 非依存とし、接地・門通過・縮退・発光面積・浮遊近傍の
+ * テストが three を経由せず機械検証できる(contracts/pipeline.md)。
  *
- * - 乱数ストリームは消費しない。個体差はすべて位置ハッシュ由来
+ * - 乱数ストリームは消費しない。個体差は位置ハッシュ由来、明滅・上下動の
+ *   位相は安定 id の文字列ハッシュ由来(commit 18)
  * - 発光面積の正は pipeline/center.ts の glowPartArea を共用し、
  *   結界の取り分 glowAreaCap × 箱庭面積 × (1 − CENTER_GLOW_SHARE) 内で
- *   予算順(塔頂 → 門紋 → 聖域 → 境界標 → 壁紋様 → 水上弧)に採択する
+ *   予算順(塔頂 → 門紋 → 聖域 → 境界標 → 魔法灯 → 浮遊水晶 →
+ *   壁紋様 → 水上弧)に採択する(commit 18 改定の順)
  * - wardLevel の縮退は同一文法: 壁弧の歩行器 1 つが、wardLevel 1 では
  *   境界標(ward-stone)の点列を、2 以上では連続壁(ward-wall)を落とす
+ * - 魔法灯 = 柱(lamp-post)+浮く火屋、浮遊要素 = 水晶(発光)/浮石。
+ *   火屋・水晶・浮石は InstancedMesh のインスタンス(FloatInstance)。
+ *   足元の照り返し(createLampTint / applyLampTint)は地面・舗装の
+ *   頂点カラーへメッシュ側で焼き込む(zoneMask には書かない設計判断)
  */
 import type { Part, Vec2, WorldModel } from "../model/worldmodel";
 import { WATER_SURFACE_Y } from "../model/worldmodel";
 import { polygonArea } from "../model/waterfield";
 import { CENTER_GLOW_SHARE, glowPartArea } from "../pipeline/center";
+import { hashString } from "../rng";
 
 /** 結界壁の壁体厚 */
 const WALL_THICKNESS = 0.85;
@@ -46,6 +54,27 @@ const GATE_CLEAR_SCALE = 1.2;
 const GATE_LEG_W = 1.1;
 const GATE_HEAD = 1.6;
 const GATE_THICKNESS = 1.1;
+/** 魔法灯(PHASE 5b commit 18): 柱の寸法と火屋(浮く発光八面体) */
+const LAMP_POST_W = 0.16;
+const LAMP_POST_H = 2.3;
+const LAMP_HEAD_W = 0.34;
+const LAMP_HEAD_H = 0.5;
+const LAMP_HEAD_GAP = 0.16; // 天板の上に浮く量
+/** 柱材が石になる roadGrade の閾値(art-direction 5.4節「木部または石」) */
+const LAMP_STONE_GRADE = 1.4;
+/** 浮遊要素: 水晶の割合(残りは浮石)と上下動の振幅(ワールド) */
+const FLOATER_CRYSTAL_RATE = 0.35;
+const FLOATER_AMP_MIN = 0.14;
+const FLOATER_AMP_RANGE = 0.16;
+/** 魔法灯の足元の照り返し(頂点カラー焼き込み。art-direction 3節) */
+const LAMP_TINT_RADIUS = 2.6;
+const LAMP_TINT_STRENGTH = 0.22;
+/** 照り返しの色(彩度控えめの青緑。#3f7f74) */
+const LAMP_TINT_COLOR: readonly [number, number, number] = [
+  0x3f / 255,
+  0x7f / 255,
+  0x74 / 255,
+];
 
 /** 位置ハッシュ(0〜1)。乱数ストリームを消費しない決定論的な個体差の元 */
 function wardHash(x: number, z: number, salt: number): number {
@@ -55,17 +84,92 @@ function wardHash(x: number, z: number, salt: number): number {
       Math.imul(salt | 0, 0xc2b2ae3d)) >>>
     0;
   h = Math.imul(h ^ (h >>> 13), 0x27d4eb2f) >>> 0;
-  h ^= h >>> 16;
+  // XOR は符号付き 32bit を返すため必ず符号なしへ戻す(0〜1 の契約)
+  h = (h ^ (h >>> 16)) >>> 0;
   return h / 4294967296;
+}
+
+/**
+ * 発光八面体(魔法灯の火屋・浮遊水晶)/ 浮石のインスタンス
+ * (PHASE 5b commit 18)。position は底面中心(単位形状 y 0〜1)。
+ * phase は安定 id の文字列ハッシュ由来、amp は上下動のワールド振幅
+ * (魔法灯は 0 = 静止)。時間はビューワーの uniform(WorldModel 非依存)。
+ */
+export interface FloatInstance {
+  position: [number, number, number];
+  rotation: number;
+  scale: [number, number, number];
+  phase: number;
+  amp: number;
 }
 
 export interface WardExpansion {
   /** 展開結果(mesh/buildings.ts の既存の束へ合流する) */
   parts: Part[];
-  /** 発光部品(sigil / crystal)の面積合計(glowPartArea 基準) */
+  /** 発光の面積合計(部品+火屋・浮遊水晶のインスタンス。glowPartArea 基準) */
   glowArea: number;
   /** 発光面積の予算(glowAreaCap × 箱庭面積 × 結界の取り分) */
   glowBudget: number;
+  /** 魔法灯の火屋(amp 0)。ward-glow-crystals へ(commit 18) */
+  lampHeads: FloatInstance[];
+  /** 浮遊水晶(発光)。ward-glow-crystals へ(commit 18) */
+  floatCrystals: FloatInstance[];
+  /** 浮石(非発光)。ward-floatstones へ(commit 18) */
+  floatStones: FloatInstance[];
+}
+
+/** 発光インスタンス(八面体)の発光面積(crystal と同じ換算の正) */
+export function glowInstanceArea(inst: FloatInstance): number {
+  const [sx, sy, sz] = inst.scale;
+  return 1.8 * ((sx + sz) / 2) * sy;
+}
+
+/**
+ * 魔法灯の足元の照り返し(頂点カラー焼き込み)の重み場を作る
+ * (art-direction 3節。半径小・彩度控えめ)。
+ * 設計判断: zoneMask は WorldModel(正規化ハッシュの対象)のため、
+ * 照り返しは表示写像としてメッシュ側の頂点カラー処理で行う
+ * (contracts/worldmodel.md「魔法灯・浮遊要素・橋の立体化」)。
+ * 地面(mesh/build.ts)と舗装(mesh/paving.ts)が共有する。
+ */
+export function createLampTint(model: WorldModel): (x: number, z: number) => number {
+  const lamps = model.wards.lamps;
+  if (lamps.length === 0) return () => 0;
+  return (x, z) => {
+    let best = 0;
+    for (const l of lamps) {
+      const d = Math.hypot(x - l.position.x, z - l.position.z);
+      if (d >= LAMP_TINT_RADIUS) continue;
+      const t = 1 - d / LAMP_TINT_RADIUS;
+      const w = t * t * (3 - 2 * t);
+      if (w > best) best = w;
+    }
+    return best;
+  };
+}
+
+/**
+ * 頂点バッファ(positions xyz / colors rgb)へ照り返しを焼き込む。
+ * 地表近傍(|y| < 1.2)の頂点のみ対象(壁上部・岸スカート下端には掛けない)。
+ */
+export function applyLampTint(
+  tint: (x: number, z: number) => number,
+  positions: readonly number[],
+  colors: number[],
+): void {
+  const count = Math.min(positions.length / 3, colors.length / 3);
+  for (let i = 0; i < count; i++) {
+    const y = positions[i * 3 + 1] ?? 0;
+    if (y > 1.2 || y < -1.2) continue;
+    const w =
+      tint(positions[i * 3] ?? 0, positions[i * 3 + 2] ?? 0) *
+      LAMP_TINT_STRENGTH;
+    if (w <= 0) continue;
+    for (let k = 0; k < 3; k++) {
+      const c = colors[i * 3 + k] ?? 0;
+      colors[i * 3 + k] = c + ((LAMP_TINT_COLOR[k] ?? 0) - c) * w;
+    }
+  }
 }
 
 /** リング辺の幾何(中点・長さ・向き・外向き法線) */
@@ -119,6 +223,9 @@ export function expandWardParts(model: WorldModel): WardExpansion {
   const { derived } = model.meta;
   const wards = model.wards;
   const parts: Part[] = [];
+  const lampHeads: FloatInstance[] = [];
+  const floatCrystals: FloatInstance[] = [];
+  const floatStones: FloatInstance[] = [];
   const glowBudget =
     derived.glowAreaCap *
     Math.abs(polygonArea(model.ground.boundary)) *
@@ -126,7 +233,7 @@ export function expandWardParts(model: WorldModel): WardExpansion {
   let glowArea = 0;
 
   if (wards.wardLevel < 1 || wards.ringPath.length < 3) {
-    return { parts, glowArea, glowBudget };
+    return { parts, glowArea, glowBudget, lampHeads, floatCrystals, floatStones };
   }
 
   const push = (
@@ -160,6 +267,18 @@ export function expandWardParts(model: WorldModel): WardExpansion {
     if (glowArea + area > glowBudget) return false;
     glowArea += area;
     parts.push(part);
+    return true;
+  };
+
+  /** 発光インスタンス(火屋・浮遊水晶)。予算内なら採択して true */
+  const pushGlowInstance = (
+    list: FloatInstance[],
+    inst: FloatInstance,
+  ): boolean => {
+    const area = glowInstanceArea(inst);
+    if (glowArea + area > glowBudget) return false;
+    glowArea += area;
+    list.push(inst);
     return true;
   };
 
@@ -551,6 +670,67 @@ export function expandWardParts(model: WorldModel): WardExpansion {
     }
   }
 
+  // --- 魔法灯(柱+火屋。commit 18。予算順: 境界標の次・壁紋様より先) ---
+  // 火屋は柱天板の少し上に浮く発光八面体(ward-glow-crystals の
+  // インスタンス。上下動なし)。予算不足で火屋を置けない灯は柱ごと置かない
+  const lampMaterial = derived.roadGrade >= LAMP_STONE_GRADE ? "stone" : "wood";
+  for (const lamp of wards.lamps) {
+    const p = lamp.position;
+    const jitter = 1 + 0.1 * (wardHash(p.x, p.z, 51) - 0.5);
+    const postH = LAMP_POST_H * jitter;
+    const phase = (hashString(lamp.id) / 4294967296) * Math.PI * 2;
+    const placed = pushGlowInstance(lampHeads, {
+      position: [p.x, postH + LAMP_HEAD_GAP, p.z],
+      rotation: wardHash(p.x, p.z, 52) * Math.PI * 0.5 + Math.PI / 4,
+      scale: [LAMP_HEAD_W, LAMP_HEAD_H, LAMP_HEAD_W],
+      phase,
+      amp: 0,
+    });
+    if (!placed) continue;
+    push(
+      "lamp-post",
+      [p.x, 0, p.z],
+      wardHash(p.x, p.z, 53) * Math.PI * 2,
+      [LAMP_POST_W, postH, LAMP_POST_W],
+      lampMaterial,
+    );
+  }
+
+  // --- 浮遊要素(水晶=発光 / 浮石=非発光。commit 18) --------------------
+  // basePosition は浮遊の中心(立体の底 = y − 高さ/2)。上下動は
+  // ビューワーの時間 uniform、位相は floater.id のハッシュ由来。
+  // 水晶が予算に収まらない場合は浮石へフォールバック(個数は保つ)
+  for (const f of wards.floaters) {
+    const b = f.basePosition;
+    const phase = (hashString(f.id) / 4294967296) * Math.PI * 2;
+    const amp =
+      FLOATER_AMP_MIN + FLOATER_AMP_RANGE * wardHash(b.x, b.z, 62);
+    const wantCrystal = wardHash(b.x, b.z, 61) < FLOATER_CRYSTAL_RATE;
+    let placed = false;
+    if (wantCrystal) {
+      const sy = f.size;
+      const sxz = f.size * 0.62;
+      placed = pushGlowInstance(floatCrystals, {
+        position: [b.x, b.y - sy / 2, b.z],
+        rotation: wardHash(b.x, b.z, 63) * Math.PI * 2,
+        scale: [sxz, sy, sxz],
+        phase,
+        amp,
+      });
+    }
+    if (!placed) {
+      const sy = f.size * 0.7;
+      const sxz = f.size * 0.85;
+      floatStones.push({
+        position: [b.x, b.y - sy / 2, b.z],
+        rotation: wardHash(b.x, b.z, 64) * Math.PI * 2,
+        scale: [sxz, sy, sxz],
+        phase,
+        amp,
+      });
+    }
+  }
+
   // 壁の紋様ライン(外面・内面)
   wallGlow: for (const sg of wallSigils) {
     const bandH = Math.min(1.35, sg.h * 0.42);
@@ -591,5 +771,5 @@ export function expandWardParts(model: WorldModel): WardExpansion {
     }
   }
 
-  return { parts, glowArea, glowBudget };
+  return { parts, glowArea, glowBudget, lampHeads, floatCrystals, floatStones };
 }

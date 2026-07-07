@@ -14,7 +14,11 @@ import {
 import { polygonArea } from "../src/model/waterfield";
 import { runPipeline } from "../src/pipeline/run";
 import { CENTER_GLOW_SHARE, glowPartArea } from "../src/pipeline/center";
-import { expandWardParts } from "../src/mesh/wardparts";
+import {
+  expandWardParts,
+  glowInstanceArea,
+  createLampTint,
+} from "../src/mesh/wardparts";
 
 const SEEDS = ["everdusk-101", "seed-a"];
 
@@ -220,17 +224,112 @@ describe("wardparts: 発光面積の規律(art-direction 5.4節)", () => {
         // 取り分(結界 = 1 − CENTER_GLOW_SHARE)
         expect(ex.glowBudget).toBeCloseTo(cap * (1 - CENTER_GLOW_SHARE), 6);
         expect(ex.glowArea).toBeLessThanOrEqual(ex.glowBudget + 1e-9);
-        // glowArea は展開結果の発光部品の実面積と一致する
+        // glowArea は展開結果の発光部品+発光インスタンス(火屋・浮遊水晶)の
+        // 実面積と一致する(commit 18: 灯・浮遊水晶も同じ取り分に含める)
         let sum = 0;
         for (const part of ex.parts) sum += glowPartArea(part);
+        for (const inst of ex.lampHeads) sum += glowInstanceArea(inst);
+        for (const inst of ex.floatCrystals) sum += glowInstanceArea(inst);
         expect(sum).toBeCloseTo(ex.glowArea, 6);
-        // 中心建築(0.35)との合計が全体上限内
+        // 中心建築(0.35)との合計が全体上限内(灯・浮遊水晶込み)
         let centerGlow = 0;
         for (const building of model.buildings) {
           for (const part of building.parts) centerGlow += glowPartArea(part);
         }
         expect(centerGlow + ex.glowArea).toBeLessThanOrEqual(cap + 1e-9);
       }
+    }
+  });
+});
+
+describe("wardparts: 魔法灯・浮遊要素の立体化(PHASE 5b commit 18)", () => {
+  it("魔法灯 = 柱(lamp-post)+火屋が 1:1(灯らない柱を残さない)", async () => {
+    for (const seed of SEEDS) {
+      for (const arcana of [60, 95]) {
+        const model = await build(seed, { arcana });
+        const ex = expandWardParts(model);
+        const posts = ofType(ex.parts, "lamp-post");
+        expect(posts.length).toBe(ex.lampHeads.length);
+        expect(posts.length).toBeGreaterThan(0);
+        // 火屋は柱の直上に浮き、静止(amp 0)。柱は接地(y=0)
+        for (let i = 0; i < posts.length; i++) {
+          const post = posts[i];
+          const head = ex.lampHeads[i];
+          if (!post || !head) continue;
+          expect(post.transform.position[1]).toBe(0);
+          expect(head.position[0]).toBeCloseTo(post.transform.position[0], 9);
+          expect(head.position[2]).toBeCloseTo(post.transform.position[2], 9);
+          expect(head.position[1]).toBeGreaterThan(post.transform.scale[1]);
+          expect(head.amp).toBe(0);
+        }
+      }
+    }
+  });
+
+  it("浮遊要素(水晶+浮石)が塔/門/聖域の近傍にのみ現れ、空中(y > 0)にある", async () => {
+    for (const seed of SEEDS) {
+      const model = await build(seed, { arcana: 95 });
+      const ex = expandWardParts(model);
+      const total = ex.floatCrystals.length + ex.floatStones.length;
+      expect(total).toBe(model.wards.floaters.length);
+      expect(total).toBeGreaterThan(0);
+      const anchors = [
+        ...model.wards.towers.map((t) => t.position),
+        ...model.wards.gates.map((g) => g.position),
+        ...model.wards.shrines.map((s) => s.position),
+      ];
+      // クラスタ半径(計画の最大 5.5)+ 余裕
+      for (const inst of [...ex.floatCrystals, ...ex.floatStones]) {
+        const near = anchors.some(
+          (a) =>
+            Math.hypot(a.x - inst.position[0], a.z - inst.position[2]) < 6.5,
+        );
+        expect(near, "浮遊要素が anchor 近傍にない").toBe(true);
+        // 基準位置は空中(底 = y − 高さ/2 でも地面より上)
+        expect(inst.position[1]).toBeGreaterThan(0);
+        // 上下動はゆっくり・小振幅(0.14〜0.30)
+        expect(inst.amp).toBeGreaterThanOrEqual(0.14);
+        expect(inst.amp).toBeLessThanOrEqual(0.3);
+      }
+    }
+  });
+
+  it("Arcana 20 では浮遊要素なし(floaterAmount 0)、95 で灯・浮遊が現れる", async () => {
+    for (const seed of SEEDS) {
+      const e20 = expandWardParts(await build(seed, { arcana: 20 }));
+      expect(e20.floatCrystals.length + e20.floatStones.length).toBe(0);
+      const e95 = expandWardParts(await build(seed, { arcana: 95 }));
+      expect(e95.lampHeads.length).toBeGreaterThan(0);
+      expect(e95.floatCrystals.length + e95.floatStones.length).toBeGreaterThan(
+        0,
+      );
+    }
+  });
+
+  it("展開の決定性(同一入力の2回展開が火屋・浮遊込みで完全一致)", async () => {
+    for (const seed of SEEDS) {
+      const a = expandWardParts(
+        await runPipeline(seed, { ...DEFAULT_PARAMS, arcana: 95 }),
+      );
+      const b = expandWardParts(
+        await runPipeline(seed, { ...DEFAULT_PARAMS, arcana: 95 }),
+      );
+      expect(a.lampHeads).toEqual(b.lampHeads);
+      expect(a.floatCrystals).toEqual(b.floatCrystals);
+      expect(a.floatStones).toEqual(b.floatStones);
+    }
+  });
+
+  it("足元の照り返しは灯の近傍(半径 2.6)のみで、遠方は 0", async () => {
+    for (const seed of SEEDS) {
+      const model = await build(seed, { arcana: 95 });
+      const tint = createLampTint(model);
+      const lamp = model.wards.lamps[0];
+      if (!lamp) continue;
+      expect(tint(lamp.position.x, lamp.position.z)).toBeGreaterThan(0.9);
+      // 全灯の x 最大より 10 東の点はどの灯からも半径 2.6 の外
+      const maxX = Math.max(...model.wards.lamps.map((l) => l.position.x));
+      expect(tint(maxX + 10, lamp.position.z)).toBe(0);
     }
   });
 });

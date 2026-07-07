@@ -9,6 +9,9 @@
  *   (contracts/worldmodel.md Water 節)。水面は地面よりわずかに上に置き、
  *   護岸の立ち上がりとの段差で掘り込みを読ませる。水面ジオメトリ自体は
  *   build.ts が川と同じ水面マテリアルへ統合する
+ * - 河川・湖の渡り区間は岸で止め、橋(mesh/bridgeparts.ts)が同一の
+ *   標本化・基準高で受け持つ(PHASE 5b commit 18)。魔法灯の足元の
+ *   照り返しは頂点カラーへ焼き込む(wardparts の純関数を地面と共用)
  * - 乱数ストリームは消費しない。ムラは位置ハッシュから決定論的に導出する
  */
 import * as THREE from "three";
@@ -19,6 +22,13 @@ import {
 } from "../model/worldmodel";
 import { pathLength, pointAlong, waterCrossings } from "../model/geometry";
 import type { WaterField } from "../model/waterfield";
+import {
+  ROAD_CROWN,
+  ROAD_WATER_SAMPLE_STEP,
+  canalLiftAt,
+  roadBaseY,
+} from "./bridgeparts";
+import { applyLampTint, createLampTint } from "./wardparts";
 
 /** 道の等級の基準色(art-direction 5.2節): 土 → 砂利 → 石畳 */
 const ROAD_DIRT = new THREE.Color("#8a7458");
@@ -31,13 +41,9 @@ const PILE_COLOR = new THREE.Color("#5d4a38");
 /** 石の目地・下端の焼き込み(5.1節)に合わせた沈み係数 */
 const BURN_SHADE = 0.82;
 
-/** 道路リボンの高さ: 路肩(地面すれすれ)と中央の盛り上げ(数cm相当) */
-const ROAD_SHOULDER_Y = 0.012;
-const ROAD_CROWN = 0.1;
-/** 路肩のフェザー(地面へ馴染む張り出し) */
+/** 路肩のフェザー(地面へ馴染む張り出し)。基準高・中央の盛り上げ
+ * (roadBaseY / ROAD_CROWN)の正は mesh/bridgeparts.ts(橋床と共用) */
 const ROAD_FEATHER = 0.55;
-/** 道路どうしの重なりの z ファイティング対策の微小オフセット(edge 毎) */
-const ROAD_Y_JITTER = 0.006;
 /** リボンのサンプリング間隔 */
 const ROAD_STEP = 2.6;
 
@@ -76,16 +82,6 @@ function hash2(x: number, z: number): number {
 function smoothstep01(t: number): number {
   const k = Math.min(1, Math.max(0, t));
   return k * k * (3 - 2 * k);
-}
-
-/** 文字列ハッシュ(FNV-1a 縮小版)。edge 毎の微小オフセットに使う */
-function hashString(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h >>> 0;
 }
 
 /**
@@ -187,11 +183,16 @@ function buildRoads(model: WorldModel, field: WaterField, buf: GeoBuffer): void 
     const total = pathLength(edge.path);
     if (total <= 0) continue;
     const half = edge.width / 2;
-    const yBase = ROAD_SHOULDER_Y + (hashString(edge.id) % 5) * ROAD_Y_JITTER;
+    const yBase = roadBaseY(edge.id);
     const color = gradeColor(edge.grade);
 
-    // 河川・湖を渡る区間(canal は含まない waterSdf)を除いた陸区間
-    const crossings = waterCrossings(edge.path, field.waterSdf, 2.0);
+    // 河川・湖を渡る区間(canal は含まない waterSdf)を除いた陸区間。
+    // 渡り区間は橋(mesh/bridgeparts.ts)が同一の標本化で受け持つ
+    const crossings = waterCrossings(
+      edge.path,
+      field.waterSdf,
+      ROAD_WATER_SAMPLE_STEP,
+    );
     const spans: [number, number][] = [];
     let cursor = 0;
     for (const c of crossings) {
@@ -220,13 +221,9 @@ function buildRoads(model: WorldModel, field: WaterField, buf: GeoBuffer): void 
         const p = pts[i];
         const f = frames[i];
         if (!p || !f) continue;
-        // 水路橋位置では路面を持ち上げる(水路の水面 +0.04 との交差回避)
-        let lift = 0;
-        for (const b of canalBridges) {
-          const d = Math.hypot(p.x - b.position.x, p.z - b.position.z);
-          const reach = b.length / 2 + 2.5;
-          lift = Math.max(lift, 0.22 * (1 - smoothstep01((d - reach * 0.4) / reach)));
-        }
+        // 水路橋位置では路面を持ち上げる(水路の水面 +0.04 との交差回避。
+        // 形状の正は bridgeparts.canalLiftAt。小橋の桁・欄干と共用)
+        const lift = canalLiftAt(canalBridges, p.x, p.z);
         const heights = [
           0.004 + lift,
           yBase + ROAD_CROWN * 0.8 + lift,
@@ -687,6 +684,10 @@ export function buildPaving(
   buildRoads(model, field, buf);
   buildPlazas(model, buf);
   buildCanalWalls(model, field, buf);
+
+  // 魔法灯の足元の照り返し(頂点カラー焼き込み。PHASE 5b commit 18。
+  // 地面 mesh/build.ts と同じ純関数を共用する)
+  applyLampTint(createLampTint(model), buf.positions, buf.colors);
 
   let paving: THREE.Mesh | null = null;
   if (buf.indices.length > 0) {

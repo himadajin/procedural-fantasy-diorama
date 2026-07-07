@@ -22,7 +22,7 @@ import {
 } from "../model/waterfield";
 import { buildCanalSurfaces, buildPaving, gradeColor } from "./paving";
 import { buildBuildings } from "./buildings";
-import { buildPlanMarks } from "./planmarks";
+import { applyLampTint, createLampTint } from "./wardparts";
 
 /**
  * 材質ゾーンの基準色(art-direction 5.2節)。
@@ -199,6 +199,10 @@ function buildGround(model: WorldModel, field: WaterField): THREE.Mesh {
       }
     }
   }
+
+  // 魔法灯の足元の照り返し(頂点カラー焼き込み。PHASE 5b commit 18。
+  // 舗装 mesh/paving.ts と同じ純関数を共用する。art-direction 3節)
+  applyLampTint(createLampTint(model), positions, colors);
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
@@ -431,13 +435,10 @@ export function buildWorld(model: WorldModel): THREE.Group {
   if (paving) group.add(paving);
   if (piles) group.add(piles);
 
-  // 建物+結界構造(躯体/屋根/発光マージ+各 InstancedMesh。
-  // 結界の部品展開は mesh/wardparts.ts。mesh/buildings.ts が束ねる)
+  // 建物+結界構造+魔法灯・浮遊要素+橋(躯体/屋根/発光マージ+各
+  // InstancedMesh。部品展開は mesh/wardparts.ts / mesh/bridgeparts.ts。
+  // mesh/buildings.ts が束ねる。計画デバッグ描画は PHASE 5b で全廃)
   for (const obj of buildBuildings(model, timeUniform)) group.add(obj);
-
-  // 計画デバッグ描画(魔法灯・浮遊要素・BridgeSite。commit 18 で立体に置換)
-  const planMarks = buildPlanMarks(model);
-  if (planMarks) group.add(planMarks);
 
   return group;
 }
