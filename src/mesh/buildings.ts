@@ -4,8 +4,8 @@
  * 「Part の型語彙」)。WorldModel のみを入力とする(contracts/pipeline.md)。
  *
  * - マージ経路(plinth / wall / gable / hip / jetty / fence / stair /
- *   dormer): マテリアル束(躯体/屋根)別の頂点カラー付き統合ジオメトリへ
- *   集約する(束ごとに 1 draw call)
+ *   dormer / deck): マテリアル束(躯体/屋根)別の頂点カラー付き統合
+ *   ジオメトリへ集約する(束ごとに 1 draw call)
  * - インスタンス経路(pile / window / door / beam / chimney):
  *   型ごとのハンドラが部品を共有プールのピース(軸平行の箱・+z 向きの面)へ
  *   分解し、`building-trim`(箱)/ `building-openings`(面)/
@@ -887,6 +887,8 @@ const MERGE_HANDLERS: Record<
   // --- PHASE 5b commit 17: 結界構造(結界壁・結界門のアーチ) ---
   "ward-wall": (part, buf, base) => wardWallPart(part, buf, base),
   arch: (part, buf, base) => archPart(part, buf, base),
+  // --- PHASE 6 commit 19: 水辺建築の拡張(杭支持デッキの床板) ---
+  deck: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
 };
 
 /**

@@ -156,7 +156,11 @@ describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
       expect(general(model).length).toBeGreaterThan(0);
       for (const b of general(model)) {
-        const doors = partsOf(b, "door");
+        // 正面扉の一意性は waterfront でない door で判定する(契約。
+        // 水辺拡張の追加扉=デッキ出入り口・水路裏口は params.waterfront = 1)
+        const doors = partsOf(b, "door").filter(
+          (p) => p.params?.waterfront !== 1,
+        );
         expect(doors.length).toBe(1);
         const door = doors[0];
         if (!door) continue;
@@ -232,7 +236,11 @@ describe("building details: 素材階層と木組みの連動", () => {
     let beamBuildings = 0;
     for (const [seed, over] of COMBOS) {
       for (const b of general(cached(seed, over))) {
-        const hasBeam = partsOf(b, "beam").length > 0;
+        // 水辺拡張の beam(欄干・杭繋ぎ・持ち送り。waterfront)は
+        // 壁材に依らず付く(契約の例外)
+        const hasBeam =
+          partsOf(b, "beam").filter((p) => p.params?.waterfront !== 1).length >
+          0;
         const hasJetty = partsOf(b, "jetty").length > 0;
         if (hasBeam) beamBuildings++;
         if (hasBeam) expect(b.materials.wall).toBe("plaster");

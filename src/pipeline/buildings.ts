@@ -49,6 +49,15 @@
  * - スカイライン契約(中心最高点 ≥ 周辺一般建物の最高点 × skylineRatio)と
  *   発光面積の上限をパイプライン内アサーションで検証する
  * - 中心建築は接道正面・道路/広場の重なり検査の対象外(契約の例外)
+ *
+ * PHASE 6 commit 19 の追加分(contracts/worldmodel.md「水辺建築の拡張」):
+ * - waterside 建物の水辺拡張部品(杭繋ぎ梁・杭支持デッキ・張り出し部屋・
+ *   水路裏口)を全一般建物の確定後の第2パスで parts へ追記する。
+ *   部品はすべて params.waterfront = 1 を持つ
+ * - 乱数は派生サブストリーム "building/<id>/waterfront" のみ消費
+ *   (骨格・parts・details の消費は commit 16 から不変)
+ * - 採択は watersideRate(Water)駆動。張り出し延長と同じ衝突検査+
+ *   全一般建物 footprint・採択済み水辺領域との重なり検査に通った場合のみ
  */
 import { makeRng, type Rng } from "../rng";
 import {
@@ -179,6 +188,36 @@ const STAIR_STEP_DEPTH = 0.3;
 /** 屋根の小窓の寸法(幅×全高×奥行き)と、置ける屋根の最小スパン */
 const DORMER_SIZE: [number, number, number] = [1.2, 1.0, 1.1];
 const DORMER_MIN_SPAN = 4.6;
+
+// --- PHASE 6 commit 19: 水辺建築の拡張(waterfront)の定数
+//     (contracts/worldmodel.md「水辺建築の拡張」) ---
+/** デッキの奥行き帯・床厚・両側の引き込み */
+const DECK_DEPTH_MIN = 1.8;
+const DECK_DEPTH_MAX = 2.6;
+const DECK_THICKNESS = 0.22;
+const DECK_SIDE_INSET = 0.35;
+/** デッキ杭の太さ・間隔(建物杭よりわずかに細い) */
+const DECK_PILE_W = 0.26;
+const DECK_PILE_SPACING = 2.4;
+/** 欄干: 柱の寸法・間隔と手すり */
+const DECK_RAIL_H = 0.78;
+const DECK_RAIL_POST_W = 0.12;
+const DECK_RAIL_BAR = 0.09;
+const DECK_RAIL_SPACING = 1.9;
+/** 杭繋ぎ梁(水面 −0.6 の上)の高さ・断面 */
+const PILE_TIE_Y = -0.25;
+const PILE_TIE_H = 0.14;
+const PILE_TIE_D = 0.1;
+/** 張り出し部屋: 張り出し量・壁への食い込み・幅の帯 */
+const ROOM_DEPTH = 1.15;
+const ROOM_EMBED = 0.25;
+const ROOM_MIN_FACE = 3.2;
+const ROOM_W_MIN = 2.4;
+const ROOM_W_MAX = 5.4;
+/** 水路裏口: 水路までの最大距離(外向きプローブ 0.8 から) */
+const BACKDOOR_CANAL_DIST = 6.0;
+/** 水辺拡張部品の共通フラグ(契約: params.waterfront = 1) */
+const WATERFRONT_FLAG = 1;
 
 /** 窓の量の役割係数(倉庫は寡黙に、集会所は開く) */
 const WINDOW_ROLE_COUNT: Record<BuildingRole, number> = {
@@ -1122,6 +1161,511 @@ function expandDetailParts(parts: Part[], ctx: DetailContext): void {
   }
 }
 
+// --- PHASE 6 commit 19: 水辺建築の拡張(waterfront) ---
+
+/** 水辺拡張が部品を付ける面(正面=接道側は対象外) */
+type WaterfrontSide = "back" | "right" | "left";
+
+/**
+ * 水辺拡張の入力(段12 の主ループが建物ごとに収集し、全一般建物の
+ * footprint 確定後の第2パスで展開する。デッキが後続建物の footprint と
+ * 重ならないことを機械的に保証するため)。
+ */
+interface WaterfrontSite {
+  parcel: Parcel;
+  frame: WingFrame;
+  wing: Wing;
+  extSide: WaterfrontSide | null;
+  foundation: Foundation;
+  floors: number;
+  roofPitch: number;
+  materials: Building["materials"];
+  parts: Part[];
+}
+
+/** 面の幾何(翼ローカル): 接線範囲 [t0, t1] と 点(t, 外向きオフセット o) */
+interface WaterfrontFace {
+  side: WaterfrontSide;
+  t0: number;
+  t1: number;
+  local(t: number, o: number): LocalPoint;
+  /** 外向き(翼ローカルの単位方向) */
+  out: { du: number; dv: number };
+}
+
+function waterfrontFace(w: Wing, side: WaterfrontSide): WaterfrontFace {
+  if (side === "back") {
+    return {
+      side,
+      t0: w.u0,
+      t1: w.u1,
+      local: (t, o) => ({ u: t, v: w.v1 + o }),
+      out: { du: 0, dv: 1 },
+    };
+  }
+  if (side === "right") {
+    return {
+      side,
+      t0: w.v0,
+      t1: w.v1,
+      local: (t, o) => ({ u: w.u1 + o, v: t }),
+      out: { du: 1, dv: 0 },
+    };
+  }
+  return {
+    side,
+    t0: w.v0,
+    t1: w.v1,
+    local: (t, o) => ({ u: w.u0 - o, v: t }),
+    out: { du: -1, dv: 0 },
+  };
+}
+
+/** 点から線分への距離(窓の除去判定) */
+function distToSegment2(
+  px: number,
+  pz: number,
+  a: Vec2,
+  b: Vec2,
+): number {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lenSq = dx * dx + dz * dz;
+  const t =
+    lenSq > 0
+      ? clamp(((px - a.x) * dx + (pz - a.z) * dz) / lenSq, 0, 1)
+      : 0;
+  return Math.hypot(px - (a.x + dx * t), pz - (a.z + dz * t));
+}
+
+/**
+ * 面上の開口(waterfront の扉・部屋)に重なる既存の窓を配列から取り除く
+ * (契約: 除去は配列からの削除のみで、乱数は消費しない)。
+ * faceA→faceB は面の世界座標セグメント、centerAlong は faceA からの
+ * 接線距離、halfSpan は開口の半幅(窓自身の半幅は窓ごとに加算)。
+ */
+function removeWindowsOnFace(
+  parts: Part[],
+  faceA: Vec2,
+  faceB: Vec2,
+  y0: number,
+  y1: number,
+  centerAlong: number,
+  halfSpan: number,
+): void {
+  const dx = faceB.x - faceA.x;
+  const dz = faceB.z - faceA.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-6) return;
+  const tx = dx / len;
+  const tz = dz / len;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    if (!p || p.type !== "window" || p.params?.waterfront) continue;
+    const [px, py, pz] = p.transform.position;
+    if (py < y0 - 1e-6 || py > y1 + 1e-6) continue;
+    if (distToSegment2(px, pz, faceA, faceB) > 0.12) continue;
+    const along = (px - faceA.x) * tx + (pz - faceA.z) * tz;
+    if (Math.abs(along - centerAlong) < halfSpan + p.transform.scale[0] / 2 + 0.2) {
+      parts.splice(i, 1);
+    }
+  }
+}
+
+/**
+ * 水辺拡張の展開(PHASE 6 commit 19。contracts/worldmodel.md
+ * 「水辺建築の拡張」): 杭繋ぎ梁 → デッキ(床→杭→欄干柱→手すり→扉)→
+ * 張り出し部屋(壁→屋根→窓→持ち送り梁)→ 水路裏口(扉→段)の順で
+ * waterside 建物の parts へ追記する。乱数は "building/<id>/waterfront"
+ * ストリーム(rng)のみ消費し、部品はすべて params.waterfront = 1 を持つ。
+ */
+function expandWaterfrontParts(
+  model: WorldModel,
+  ctx: SiteContext,
+  site: WaterfrontSite,
+  buildings: Building[],
+  selfIndex: number,
+  claimedRegions: { region: Polygon; owner: number }[],
+  rng: Rng,
+): void {
+  const { parcel, frame, wing, extSide, foundation, floors, materials, parts } =
+    site;
+  const { derived } = model.meta;
+  const toWorld = (u: number, v: number): Vec2 => ({
+    x: frame.origin.x + frame.u.x * u + frame.v.x * v,
+    z: frame.origin.z + frame.u.z * u + frame.v.z * v,
+  });
+  const dirWorld = (du: number, dv: number): Vec2 => ({
+    x: frame.u.x * du + frame.v.x * dv,
+    z: frame.u.z * du + frame.v.z * dv,
+  });
+  const tangentRot = (d: Vec2): number => -Math.atan2(d.z, d.x);
+  const normalRot = (n: Vec2): number => Math.atan2(n.x, n.z);
+  const plinthTop = foundation.plinthHeight;
+
+  const push = (
+    type: string,
+    position: [number, number, number],
+    rotation: number,
+    scale: [number, number, number],
+    materialId: string,
+    params?: Record<string, number>,
+  ): void => {
+    parts.push({
+      type,
+      transform: { position, rotation, scale },
+      materialId,
+      params: { ...params, waterfront: WATERFRONT_FLAG },
+    });
+  };
+
+  /** 張り出し領域の衝突(区画・道路・水路・広場・結界環・境界+
+   *  全一般建物 footprint+採択済みの水辺領域) */
+  const regionBlocked = (region: Polygon): boolean => {
+    if (overhangBlocked(model, ctx, region, parcel.id)) return true;
+    for (let i = 0; i < buildings.length; i++) {
+      if (i === selfIndex) continue;
+      const other = buildings[i];
+      if (!other) continue;
+      if (polygonsOverlap(region, other.footprint)) return true;
+    }
+    for (const claimed of claimedRegions) {
+      // 同一建物のデッキと張り出し部屋は高さが違う(床 vs 最上階)ため
+      // 平面の重なりを許す(排他は他建物の水辺領域とのみ)
+      if (claimed.owner === selfIndex) continue;
+      if (polygonsOverlap(region, claimed.region)) return true;
+    }
+    return false;
+  };
+
+  /** 外縁プローブ(外側2隅+外縁中点)の過半が水上か */
+  const outerOverWater = (
+    face: WaterfrontFace,
+    ta: number,
+    tb: number,
+    depth: number,
+  ): boolean => {
+    let n = 0;
+    for (const t of [ta, (ta + tb) / 2, tb]) {
+      const lp = face.local(t, depth);
+      const p = toWorld(lp.u, lp.v);
+      if (ctx.riverLakeSdf(p.x, p.z) < 0) n++;
+    }
+    return n >= 2;
+  };
+
+  // --- 杭繋ぎ梁(kind "piles" の杭列の各辺。乱数非消費) ---
+  if (foundation.kind === "piles") {
+    const uu0 = wing.u0 + PILE_EDGE_INSET;
+    const uu1 = wing.u1 - PILE_EDGE_INSET;
+    const vv0 = wing.v0 + PILE_EDGE_INSET;
+    const vv1 = wing.v1 - PILE_EDGE_INSET;
+    const corners: [number, number][] = [
+      [uu0, vv0],
+      [uu1, vv0],
+      [uu1, vv1],
+      [uu0, vv1],
+    ];
+    for (let k = 0; k < corners.length; k++) {
+      const a = corners[k];
+      const b = corners[(k + 1) % corners.length];
+      if (!a || !b) continue;
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len < 1.2) continue;
+      const mid = toWorld((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+      const dir = dirWorld(b[0] - a[0], b[1] - a[1]);
+      push(
+        "beam",
+        [mid.x, PILE_TIE_Y, mid.z],
+        tangentRot(dir),
+        [len, PILE_TIE_H, PILE_TIE_D],
+        "wood",
+      );
+    }
+  }
+
+  const face = extSide ? waterfrontFace(wing, extSide) : null;
+  const faceA = face ? toWorld(face.local(face.t0, 0).u, face.local(face.t0, 0).v) : null;
+  const faceB = face ? toWorld(face.local(face.t1, 0).u, face.local(face.t1, 0).v) : null;
+  const outward = face ? dirWorld(face.out.du, face.out.dv) : null;
+  const tangentWorld = face
+    ? dirWorld(
+        face.side === "back" ? 1 : 0,
+        face.side === "back" ? 0 : 1,
+      )
+    : null;
+
+  // --- 杭支持デッキ(overWater の水側の面) ---
+  if (
+    face &&
+    faceA &&
+    faceB &&
+    outward &&
+    tangentWorld &&
+    foundation.overWater &&
+    rng.chance(clamp(0.4 + 0.6 * derived.watersideRate, 0, 1))
+  ) {
+    const depth = rng.range(DECK_DEPTH_MIN, DECK_DEPTH_MAX);
+    const ta = face.t0 + DECK_SIDE_INSET;
+    const tb = face.t1 - DECK_SIDE_INSET;
+    if (tb - ta >= 1.6) {
+      const cLocal = [
+        face.local(ta, 0),
+        face.local(tb, 0),
+        face.local(tb, depth),
+        face.local(ta, depth),
+      ].map((lp) => toWorld(lp.u, lp.v));
+      const region = ensureClockwise(cLocal);
+      if (outerOverWater(face, ta, tb, depth) && !regionBlocked(region)) {
+        claimedRegions.push({ region, owner: selfIndex });
+        const deckBottom = plinthTop - DECK_THICKNESS;
+        const cMid = face.local((ta + tb) / 2, depth / 2);
+        const cw = toWorld(cMid.u, cMid.v);
+        const rotT = tangentRot(tangentWorld);
+        // 床
+        push(
+          "deck",
+          [cw.x, deckBottom, cw.z],
+          rotT,
+          [tb - ta, DECK_THICKNESS, depth],
+          "wood",
+        );
+        // 杭(外縁の列+両脇の中間)
+        const pileTargets: LocalPoint[] = [];
+        const edgeLen = tb - ta - 0.5;
+        const n = Math.max(2, Math.ceil(edgeLen / DECK_PILE_SPACING) + 1);
+        for (let i = 0; i < n; i++) {
+          const t = ta + 0.25 + (edgeLen * i) / (n - 1);
+          pileTargets.push(face.local(t, depth - 0.22));
+        }
+        pileTargets.push(face.local(ta + 0.25, depth * 0.5));
+        pileTargets.push(face.local(tb - 0.25, depth * 0.5));
+        for (const lp of pileTargets) {
+          const p = toWorld(lp.u, lp.v);
+          push(
+            "pile",
+            [p.x, SHORE_SKIRT_BOTTOM_Y, p.z],
+            rotT,
+            [DECK_PILE_W, deckBottom - SHORE_SKIRT_BOTTOM_Y, DECK_PILE_W],
+            "wood",
+          );
+        }
+        // 欄干(外縁+両脇の 3 辺): 柱と手すり
+        const rails: [LocalPoint, LocalPoint][] = [
+          [face.local(ta + 0.08, depth - 0.1), face.local(tb - 0.08, depth - 0.1)],
+          [face.local(ta + 0.08, 0.3), face.local(ta + 0.08, depth - 0.1)],
+          [face.local(tb - 0.08, 0.3), face.local(tb - 0.08, depth - 0.1)],
+        ];
+        for (const [la, lb] of rails) {
+          const a = toWorld(la.u, la.v);
+          const b = toWorld(lb.u, lb.v);
+          const len = Math.hypot(b.x - a.x, b.z - a.z);
+          if (len < 0.8) continue;
+          const posts = Math.max(2, Math.round(len / DECK_RAIL_SPACING) + 1);
+          for (let i = 0; i < posts; i++) {
+            const t = i / (posts - 1);
+            push(
+              "beam",
+              [a.x + (b.x - a.x) * t, plinthTop, a.z + (b.z - a.z) * t],
+              rotT,
+              [DECK_RAIL_POST_W, DECK_RAIL_H, DECK_RAIL_POST_W],
+              "wood",
+            );
+          }
+          push(
+            "beam",
+            [
+              (a.x + b.x) / 2,
+              plinthTop + DECK_RAIL_H - DECK_RAIL_BAR,
+              (a.z + b.z) / 2,
+            ],
+            -Math.atan2(b.z - a.z, b.x - a.x),
+            [len + DECK_RAIL_POST_W, DECK_RAIL_BAR, DECK_RAIL_BAR],
+            "wood",
+          );
+        }
+        // デッキへの出入り口(壁面側)+重なる 1 階の窓の除去
+        const doorT = clamp((ta + tb) / 2, face.t0 + 0.8, face.t1 - 0.8);
+        const dLocal = face.local(doorT, 0);
+        const dPos = toWorld(dLocal.u, dLocal.v);
+        const doorW = 1.0;
+        push(
+          "door",
+          [dPos.x, plinthTop, dPos.z],
+          normalRot(outward),
+          [doorW, 2.05, DOOR_DEPTH],
+          "wood",
+        );
+        removeWindowsOnFace(
+          parts,
+          faceA,
+          faceB,
+          plinthTop,
+          plinthTop + FLOOR_HEIGHT,
+          doorT - face.t0,
+          doorW / 2 + 0.25,
+        );
+      }
+    }
+  }
+
+  // --- 張り出し部屋(overWater × 2階以上の最上階) ---
+  if (
+    face &&
+    faceA &&
+    faceB &&
+    outward &&
+    tangentWorld &&
+    foundation.overWater &&
+    floors >= 2 &&
+    rng.chance(clamp(0.25 + 0.55 * derived.watersideRate, 0, 1))
+  ) {
+    const faceLen = face.t1 - face.t0;
+    if (faceLen >= ROOM_MIN_FACE) {
+      const roomW = clamp(faceLen * 0.55, ROOM_W_MIN, ROOM_W_MAX);
+      const tc =
+        (face.t0 + face.t1) / 2 +
+        rng.range(-0.15, 0.15) * Math.max(0, faceLen - roomW);
+      const ra = tc - roomW / 2;
+      const rb = tc + roomW / 2;
+      const region = ensureClockwise(
+        [
+          face.local(ra, 0),
+          face.local(rb, 0),
+          face.local(rb, ROOM_DEPTH + 0.3),
+          face.local(ra, ROOM_DEPTH + 0.3),
+        ].map((lp) => toWorld(lp.u, lp.v)),
+      );
+      if (outerOverWater(face, ra, rb, ROOM_DEPTH) && !regionBlocked(region)) {
+        claimedRegions.push({ region, owner: selfIndex });
+        const y0 = plinthTop + (floors - 1) * FLOOR_HEIGHT;
+        const rotT = tangentRot(tangentWorld);
+        const cLocal = face.local(tc, (ROOM_DEPTH - ROOM_EMBED) / 2);
+        const cw = toWorld(cLocal.u, cLocal.v);
+        // 壁体(最上階の階高。壁へ 0.25 食い込ませる)
+        push(
+          "wall",
+          [cw.x, y0, cw.z],
+          rotT,
+          [roomW, FLOOR_HEIGHT, ROOM_DEPTH + ROOM_EMBED],
+          materials.wall,
+          { floor: floors - 1 },
+        );
+        // 小屋根(棟は面と平行。勾配は建物の roof.pitch と共有)
+        const span = ROOM_DEPTH + ROOM_EMBED + 0.6;
+        const roofH = Math.tan((site.roofPitch * Math.PI) / 180) * (span / 2);
+        push(
+          "gable",
+          [cw.x, y0 + FLOOR_HEIGHT - ROOF_BASE_SINK, cw.z],
+          rotT,
+          [roomW + 0.6, roofH, span],
+          materials.roof,
+          { pitch: site.roofPitch },
+        );
+        // 外面の窓(1〜2)
+        const winW = 1.0 + 0.2 * rng.next();
+        const winH = 1.15 + 0.25 * rng.next();
+        const winTs = roomW >= 3.6 ? [tc - roomW / 4, tc + roomW / 4] : [tc];
+        for (const t of winTs) {
+          const lp = face.local(t, ROOM_DEPTH);
+          const p = toWorld(lp.u, lp.v);
+          push(
+            "window",
+            [p.x, y0 + WINDOW_SILL, p.z],
+            normalRot(outward),
+            [winW, winH, WINDOW_DEPTH],
+            materials.trim,
+          );
+        }
+        // 床下の持ち送り梁(×3。x = 外向き)
+        const rotOut = tangentRot(outward);
+        for (const t of [ra + 0.45, tc, rb - 0.45]) {
+          const lp = face.local(t, (ROOM_DEPTH - ROOM_EMBED) / 2);
+          const p = toWorld(lp.u, lp.v);
+          push(
+            "beam",
+            [p.x, y0 - 0.2, p.z],
+            rotOut,
+            [ROOM_DEPTH + ROOM_EMBED, 0.2, 0.16],
+            "wood",
+          );
+        }
+        // 部屋に重なる同じ面・最上階の窓を除去
+        removeWindowsOnFace(
+          parts,
+          faceA,
+          faceB,
+          y0,
+          y0 + FLOOR_HEIGHT,
+          tc - face.t0,
+          roomW / 2,
+        );
+      }
+    }
+  }
+
+  // --- 水路裏口(canalside × overWater でない建物) ---
+  if (!foundation.overWater && parcel.canalside) {
+    let bestFace: WaterfrontFace | null = null;
+    let bestDist = BACKDOOR_CANAL_DIST;
+    for (const side of ["back", "right", "left"] as const) {
+      const f = waterfrontFace(wing, side);
+      const mid = f.local((f.t0 + f.t1) / 2, 0.8);
+      const p = toWorld(mid.u, mid.v);
+      const d = ctx.canalSdf(p.x, p.z);
+      if (d < bestDist) {
+        bestDist = d;
+        bestFace = f;
+      }
+    }
+    if (
+      bestFace &&
+      bestFace.t1 - bestFace.t0 >= 2.2 &&
+      rng.chance(clamp(0.5 + 0.4 * derived.watersideRate, 0, 1))
+    ) {
+      const f = bestFace;
+      const out = dirWorld(f.out.du, f.out.dv);
+      const doorW = 0.95 + 0.15 * rng.next();
+      const faceLen = f.t1 - f.t0;
+      const tDoor = clamp(
+        (f.t0 + f.t1) / 2 + rng.range(-1, 1) * 0.15 * faceLen,
+        f.t0 + doorW / 2 + 0.45,
+        f.t1 - doorW / 2 - 0.45,
+      );
+      const lp = f.local(tDoor, 0);
+      const p = toWorld(lp.u, lp.v);
+      push(
+        "door",
+        [p.x, plinthTop, p.z],
+        normalRot(out),
+        [doorW, 2.05, DOOR_DEPTH],
+        "wood",
+      );
+      const a0 = f.local(f.t0, 0);
+      const b0 = f.local(f.t1, 0);
+      removeWindowsOnFace(
+        parts,
+        toWorld(a0.u, a0.v),
+        toWorld(b0.u, b0.v),
+        plinthTop,
+        plinthTop + FLOOR_HEIGHT,
+        tDoor - f.t0,
+        doorW / 2 + 0.25,
+      );
+      if (plinthTop >= 0.32) {
+        push(
+          "stair",
+          [p.x + out.x * 0.3, 0, p.z + out.z * 0.3],
+          normalRot(out),
+          [doorW + 0.4, plinthTop, 0.6],
+          materials.wall === "ashlar" ? "ashlar" : "stone",
+          { steps: 2 },
+        );
+      }
+    }
+  }
+}
+
 const DIRT_CHANNEL = ZONE_KINDS.indexOf("dirt");
 const PAVED_CHANNEL = ZONE_KINDS.indexOf("paved");
 
@@ -1152,6 +1696,8 @@ export function runBuildings(model: WorldModel): void {
   const final = model.density.final;
   const ctx = createSiteContext(model);
   const buildings: Building[] = [];
+  // 水辺拡張(commit 19)の第2パス入力(建物 id → 展開文脈)
+  const waterfrontSites = new Map<string, WaterfrontSite>();
   let violations = 0;
 
   for (const parcel of model.parcels) {
@@ -1272,6 +1818,7 @@ export function runBuildings(model: WorldModel): void {
     // 背面・左右の3辺の中点から水面を探索し、最も近い水面へ向けて
     // その辺を延長する(正面=接道側は張り出さない)。
     let overWater = false;
+    let waterExtSide: WaterfrontSide | null = null;
     if (role === "waterside" && verts.length === 4) {
       // 矩形の頂点順は [fl, fr, br, bl]
       const sides: { d: Vec2; a: number; b: number }[] = [
@@ -1326,6 +1873,8 @@ export function runBuildings(model: WorldModel): void {
               else if (best.a === 1) wing0.u1 += ext; // 右側面
               else wing0.u0 -= ext; // 左側面
             }
+            // 水辺拡張(commit 19)がデッキ・張り出し部屋を付ける面
+            waterExtSide = best.a === 2 ? "back" : best.a === 1 ? "right" : "left";
           }
         }
       }
@@ -1404,6 +1953,37 @@ export function runBuildings(model: WorldModel): void {
       materials,
       parts,
     });
+
+    // 水辺拡張(commit 19)の文脈を収集(展開は全一般建物の確定後の
+    // 第2パス。デッキが後続建物の footprint と重ならないことを保証する)
+    const wing0 = wings[0];
+    if (role === "waterside" && wing0) {
+      waterfrontSites.set(id, {
+        parcel,
+        frame: { origin: originRot, u: uDir, v: { x: backX, z: backZ } },
+        wing: wing0,
+        extSide: waterExtSide,
+        foundation,
+        floors,
+        roofPitch: pitch,
+        materials,
+        parts,
+      });
+    }
+  }
+
+  // --- 水辺建築の拡張(PHASE 6 commit 19。contracts/worldmodel.md
+  //     「水辺建築の拡張」)。乱数は "building/<id>/waterfront" のみ消費 ---
+  {
+    const claimed: { region: Polygon; owner: number }[] = [];
+    for (let i = 0; i < buildings.length; i++) {
+      const b = buildings[i];
+      if (!b || b.role !== "waterside") continue;
+      const site = waterfrontSites.get(b.id);
+      if (!site) continue;
+      const wfRng = makeRng(seed, `${b.id}/waterfront`);
+      expandWaterfrontParts(model, ctx, site, buildings, i, claimed, wfRng);
+    }
   }
 
   // --- 中心建築(PHASE 5a commit 16。一般建物の後に展開する:

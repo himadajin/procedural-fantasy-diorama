@@ -120,6 +120,11 @@ interface Rng {
   `"building/center/details"` のみを消費する。スカイライン検証
   (中心最高点 ≥ 周辺一般建物の最高点 × derived.skylineRatio)と
   発光面積の上限は段12 のパイプライン内アサーションで検証する。
+- 段12「建物」は waterside 役割の建物に水辺拡張の部品(杭繋ぎ梁・
+  杭支持デッキ・張り出し部屋・水路裏口)を追記する(PHASE 6 commit 19。
+  worldmodel.md「水辺建築の拡張」)。乱数は派生サブストリーム
+  `"building/<id>/waterfront"` のみを消費し、既存の
+  `"building/<id>"` 系ストリームの消費は変えない。
 
 ## チャンク実行フレームワーク
 

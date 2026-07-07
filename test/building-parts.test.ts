@@ -35,7 +35,8 @@ const WALL_IDS = ["rough-wood", "plaster", "stone", "ashlar"];
 const ROOF_IDS = ["thatch", "shingle", "tile", "slate"];
 const TRIM_IDS = ["wood", "stone"];
 const ALL_MATERIAL_IDS = new Set([...WALL_IDS, ...ROOF_IDS, ...TRIM_IDS]);
-/** commit 13 の骨格語彙 + PHASE 4b commit 14 の詳細語彙 */
+/** commit 13 の骨格語彙 + PHASE 4b commit 14 の詳細語彙 +
+ *  PHASE 6 commit 19 の水辺拡張語彙(deck) */
 const PART_TYPES = new Set([
   "plinth",
   "pile",
@@ -50,9 +51,15 @@ const PART_TYPES = new Set([
   "fence",
   "stair",
   "dormer",
+  "deck",
 ]);
 /** 建物本体に付かない部品(敷地前面帯に置かれる。footprint 検査から除く) */
 const SITE_PART_TYPES = new Set(["fence", "stair"]);
+
+/** 水辺拡張部品(commit 19。骨格・詳細の性質検査から契約どおり除く) */
+function isWaterfront(p: Part): boolean {
+  return p.params?.waterfront === 1;
+}
 
 function buildUntilParcels(seed: string, over: Partial<Params> = {}): WorldModel {
   const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
@@ -169,7 +176,8 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
       for (const b of general(model)) {
-        const walls = partsOf(b, "wall");
+        // 張り出し部屋の壁体(waterfront)は骨格の翼数検査の対象外(契約)
+        const walls = partsOf(b, "wall").filter((p) => !isWaterfront(p));
         expect(walls.length).toBeGreaterThan(0);
         // 翼数 × 階数(矩形 1 翼、L/T 2 翼)
         expect(walls.length % b.floors).toBe(0);
@@ -196,7 +204,10 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
       for (const b of general(model)) {
-        const roofs = b.parts.filter((p) => p.type === "gable" || p.type === "hip");
+        // 張り出し部屋の小屋根(waterfront)は骨格の屋根数検査の対象外(契約)
+        const roofs = b.parts.filter(
+          (p) => (p.type === "gable" || p.type === "hip") && !isWaterfront(p),
+        );
         // 複合(L/T)は翼ごとの gable、それ以外は 1 部品
         expect(roofs.length).toBe(b.roof.type === "compound" ? 2 : 1);
         for (const r of roofs) {
@@ -217,7 +228,9 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
     let pileBuildings = 0;
     for (const [seed, over] of COMBOS) {
       for (const b of general(cached(seed, over))) {
-        const piles = partsOf(b, "pile");
+        // デッキ杭(waterfront)は上端 = デッキ床下端の別契約
+        // (test/waterfront.test.ts で検証)
+        const piles = partsOf(b, "pile").filter((p) => !isWaterfront(p));
         if (b.foundation.kind === "piles") {
           pileBuildings++;
           expect(piles.length).toBeGreaterThanOrEqual(4);
@@ -257,6 +270,9 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
         const limit = b.parts.some((p) => p.type === "jetty") ? 1.2 : 0.9;
         const parcel = b.parcelId ? parcelById.get(b.parcelId) : undefined;
         for (const p of b.parts) {
+          // 水辺拡張部品は水側へ最大 3.4 の別上限
+          // (契約「水辺建築の拡張」。test/waterfront.test.ts で検証)
+          if (isWaterfront(p)) continue;
           for (const c of partCorners(p)) {
             if (SITE_PART_TYPES.has(p.type)) {
               // 石垣・外階段は footprint の外・敷地前面帯に収まる(契約)
