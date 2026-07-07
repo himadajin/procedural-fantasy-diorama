@@ -191,12 +191,15 @@ describe("段15 サマリー: centerDescription が軸スコアと整合(4類型
     expect(buildCenterDescription(m)).toContain("完全な結界環");
   });
 
-  it("10 以上は算用数字", () => {
+  it("10 以上は算用数字(「つ」は付けず、他の助数詞は付ける)", () => {
     const m = modelWithAxes(
       { arcane: 0.9, authority: 0, waterside: 0, rustic: 0 },
-      { bridges: 12 },
+      { towers: 11, bridges: 12 },
     );
-    expect(buildCenterDescription(m)).toContain("12つの橋");
+    const desc = buildCenterDescription(m);
+    expect(desc).toContain("11基の魔導塔");
+    expect(desc).toContain("12の橋");
+    expect(desc).not.toContain("12つ");
   });
 
   it("特徴が無いときは「静かなたたずまい」", () => {

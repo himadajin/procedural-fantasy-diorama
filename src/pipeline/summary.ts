@@ -27,11 +27,15 @@ const AXIS_ORDER: (keyof WorldModel["centerPlan"]["axes"])[] = [
   "rustic",
 ];
 
-/** 数量詞: 1〜9 は漢数字+助数詞、10 以上は算用数字(contracts Summary 節) */
+/**
+ * 数量詞: 1〜9 は漢数字+助数詞、10 以上は算用数字+助数詞。
+ * 助数詞「つ」は 10 以上に付かない(「10つ」は不自然)ため省く
+ * (contracts Summary 節)
+ */
 const KANJI = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
 function counted(n: number, counter: string): string {
-  const num = n < 10 ? KANJI[n] : String(n);
-  return `${num}${counter}`;
+  if (n < 10) return `${KANJI[n]}${counter}`;
+  return counter === "つ" ? String(n) : `${n}${counter}`;
 }
 
 /** 閉ループ(ringPath)の周長。閉じる辺(末尾→先頭)を含める */
