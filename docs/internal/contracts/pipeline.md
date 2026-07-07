@@ -11,7 +11,7 @@
 - `mesh/` は WorldModel のみを入力とし、パイプラインの内部状態に依存しない。
   純関数の共用は状態依存ではないため許す(例: 発光面積の正
   `pipeline/center.ts` の `glowPartArea` を `mesh/wardparts.ts` が共用する。
-  worldmodel.md「結界構造の立体化」)。
+  wards.md「結界構造の立体化」)。
 - `mesh/wardparts.ts`(結界立体・魔法灯・浮遊要素の Part 展開。
   PHASE 5b commit 17〜18)と `mesh/bridgeparts.ts`(橋の Part 展開。
   PHASE 5b commit 18)は mesh 配下だが three 非依存の純関数とし、
@@ -19,7 +19,7 @@
   (正規化ハッシュに影響しない)。橋の渡り区間の標本化・道路リボンの
   基準高・水路上の持ち上げ量は bridgeparts を正とし、
   `mesh/paving.ts` が同じ純関数・定数を共用して取り付きの隙間を
-  出さない(worldmodel.md「魔法灯・浮遊要素・橋の立体化」)。
+  出さない(wards.md「魔法灯・浮遊要素・橋の立体化」)。
 - `viewer/` は時間演出(浮遊の上下動、発光の明滅、カメラ慣性)と
   描画プリセットの適用(下記「描画プリセット・LOD・デバッグ表示」)を
   担当する。時間・表示状態・プリセットを WorldModel に書き戻さない。
@@ -86,14 +86,14 @@ interface Rng {
   そのまま使う(art-direction 9.5節)。
 - 段6「水路」の BridgeSite 追加は仮のもので、段8「結界計画」が結界門
   スナップ後に全道路 edge を河川・湖・水路の合成水域で標本化し直して
-  bridges 全体を置き換える(worldmodel.md Water 節)。水路は waterfield・
+  bridges 全体を置き換える(ground-water.md Water 節)。水路は waterfield・
   岸線に影響させない(同節の設計判断)。zoneMask への舗装上書きは
   段5/6/9 の各段では行わず、段10「舗装」へ集約する
-  (worldmodel.md ZoneMask 節)。段10 は乱数サブストリームを消費しない。
+  (ground-water.md ZoneMask 節)。段10 は乱数サブストリームを消費しない。
 - 段13「小道」(PHASE 4b)は段12「建物」の後に走る専用段とし、
   裏手の小道(区画の列の奥)と水路沿いの岸沿い道(towpathSide 側)を
   lane class の edge として network へ**追記のみ**で加える
-  (既存 node / edge の id・内容は不変。worldmodel.md Network 節
+  (既存 node / edge の id・内容は不変。network-plaza.md Network 節
   「小道の性質」)。小道は水域を渡らず(bridges は段8 の出力のまま)、
   結界環も横切らない(gates は段8 確定のまま)。小道の舗装被覆は
   段10 と同じ流儀で zoneMask へ追記する(乱数非消費)。乱数は要素ごとの
@@ -109,34 +109,34 @@ interface Rng {
   PHASE 4a 内の分担: commit 12 は段11全体と段12の骨格データ
   (id / parcelId / role / footprint / facing / floors / roof / foundation)を
   埋め、commit 13 が段12の部品リスト展開(materials / parts)と
-  zoneMask の建物 footprint 上書きを足す(worldmodel.md Parcel / Building 節)。
+  zoneMask の建物 footprint 上書きを足す(buildings.md Parcel / Building 節)。
   段11は要素サブストリーム `"parcel/<id>"`、段12は `"building/<id>"` のみを
   消費する(段レベルの共有ストリームを持たない)。density.final の算出は
-  乱数を消費しない(worldmodel.md Density 節)。
+  乱数を消費しない(network-plaza.md Density 節)。
 - 段12「建物」は一般建物の展開後、中心建築 1 棟(role "center"、
   parcelId null)を専用の拡張文法(pipeline/center)で展開して
   buildings の末尾に追加し、中庭の Plaza(kind "courtyard")を
-  plazas へ追記する(PHASE 5a。worldmodel.md Parcel / Building 節
+  plazas へ追記する(PHASE 5a。buildings.md Parcel / Building 節
   「中心建築」)。乱数は `"building/center"` /
   `"building/center/details"` のみを消費する。スカイライン検証
   (中心最高点 ≥ 周辺一般建物の最高点 × derived.skylineRatio)と
   発光面積の上限は段12 のパイプライン内アサーションで検証する。
 - 段12「建物」は waterside 役割の建物に水辺拡張の部品(杭繋ぎ梁・
   杭支持デッキ・張り出し部屋・水路裏口)を追記する(PHASE 6 commit 19。
-  worldmodel.md「水辺建築の拡張」)。乱数は派生サブストリーム
+  buildings.md「水辺建築の拡張」)。乱数は派生サブストリーム
   `"building/<id>/waterfront"` のみを消費し、既存の
   `"building/<id>"` 系ストリームの消費は変えない。
 - 段14「植生」(PHASE 6 commit 20)は段13「小道」の後に走り、
   `vegetation` のみを書く(他フィールドには触れない)。散布はセル格子の
   マスクベース(森リング > 外縁草地 > 水辺低木・湿地植生 >
-  道・広場周辺 > 結界内僅少。worldmodel.md Vegetation 節)で、
+  道・広場周辺 > 結界内僅少。vegetation-summary.md Vegetation 節)で、
   建物・道路・広場・水面・水路バッファとの衝突をハード除外する。
   乱数はセルごとの独立サブストリーム `"vegetation/<ix>_<iz>"` のみを
   消費する。表示名は段14「草木を茂らせています…」。
 - 段15「サマリー」(PHASE 7 commit 21)は全段の後に走り、`summary` の
   全フィールドを最終状態の WorldModel から機械的に**再算出**して確定する
   (中間PHASEの各段の部分先埋めを上書きするため、乖離は起こらない。
-  worldmodel.md Summary 節)。`buildingCounts`(役割別集計)・
+  vegetation-summary.md Summary 節)。`buildingCounts`(役割別集計)・
   `centerDescription`(支配軸+特徴からの記述文)・`waterOverview` /
   `wardOverview` / `scale` を書く。複雑度(頂点数・インスタンス数・
   draw call)は表示依存の実測値のため WorldModel に持たず UI が

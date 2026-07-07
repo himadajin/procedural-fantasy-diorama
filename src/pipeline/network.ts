@@ -1,7 +1,7 @@
 /**
  * 段5「道路網」: グリッドA*で進入点→中心の主道と進入点間の補完路を引き、
  * 道路グラフ(nodes/edges)と橋(BridgeSite)を確定する。
- * データの正は docs/internal/contracts/worldmodel.md(Network / Water 節)、
+ * データの正は docs/internal/contracts/network-plaza.md(Network 節)・ground-water.md(Water 節)、
  * 設計は implementation-spec 1.3節(段5)・PHASE 3・9節(リスクと対策)。
  *
  * - コスト = 距離 + 低周波ノイズのコスト場(seed 駆動の格子ノイズ。
@@ -70,7 +70,7 @@ const BRIDGE_FORCE_THRESHOLD = 0.5;
 const WATER_WIDTH_CAP_RATIO = 0.35;
 /** 境界外セルの距離あたり追加コスト(道を箱庭の内側に保つ) */
 const OUTSIDE_COST = 6;
-/** 道路幅(実寸)。contracts/worldmodel.md Network 節 */
+/** 道路幅(実寸)。contracts/network-plaza.md Network 節 */
 const MAIN_WIDTH = 3.6;
 const CONNECTOR_WIDTH = 2.6;
 /** main の等級格上げ(grade は 0〜2 連続) */

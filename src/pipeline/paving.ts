@@ -1,6 +1,6 @@
 /**
  * 段10「舗装」: 道路・広場・水路の footprint で zoneMask の舗装チャネルを
- * 上書きする(contracts/worldmodel.md ZoneMask 節、implementation-spec PHASE 3)。
+ * 上書きする(contracts/ground-water.md ZoneMask 節、implementation-spec PHASE 3)。
  *
  * - 各セルの舗装被覆度 p(0〜1)を、道路(edge.path への距離 − width/2)、
  *   広場(polygon の符号付き距離)、水路(スプラインへの距離 − width/2 −
@@ -28,7 +28,7 @@ const CANAL_BLEND = 1.6;
  * ブレンド帯の下限(セル寸比)。zoneMask のセル寸(≒5)は道路幅(2.6〜3.6)
  * より粗いため、固定のブレンド帯ではセル中心の間で被覆が途切れる。
  * 下限をセル寸の 0.9 倍とし、細い footprint でも帯が連続するようにする
- * (contracts/worldmodel.md ZoneMask 節)。
+ * (contracts/ground-water.md ZoneMask 節)。
  */
 const BLEND_CELL_RATIO = 0.9;
 
@@ -96,7 +96,7 @@ function cellRange(
 /**
  * 折れ線(半幅 halfWidth)の被覆をセルへスタンプする。
  * 被覆は max 合成なので、スプライン・セグメントの走査順に依存しない。
- * 段13「小道」の lane 被覆の追記も共有する(contracts/worldmodel.md ZoneMask 節)。
+ * 段13「小道」の lane 被覆の追記も共有する(contracts/ground-water.md ZoneMask 節)。
  */
 export function stampPath(
   grid: CellGrid,
@@ -136,7 +136,7 @@ export function stampPath(
 /**
  * 閉多角形の被覆をセルへスタンプする(内側 1、縁で blend 幅のフォールオフ)。
  * max 合成なのでスタンプ順に依存しない。段12「建物」の footprint 上書きも
- * 同じ流儀を共有する(contracts/worldmodel.md ZoneMask 節)。
+ * 同じ流儀を共有する(contracts/ground-water.md ZoneMask 節)。
  */
 export function stampPolygon(
   grid: CellGrid,

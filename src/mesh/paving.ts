@@ -6,7 +6,7 @@
  * - 道路・広場・護岸は単一の MeshStandardMaterial にマージして 1 draw call、
  *   杭は InstancedMesh 1 call に収める(1.8節の draw call 予算)
  * - 水路は地面をクリップしない「重ねる掘り込みチャネル」
- *   (contracts/worldmodel.md Water 節)。水面は地面よりわずかに上に置き、
+ *   (contracts/ground-water.md Water 節)。水面は地面よりわずかに上に置き、
  *   護岸の立ち上がりとの段差で掘り込みを読ませる。水面ジオメトリ自体は
  *   build.ts が川と同じ水面マテリアルへ統合する
  * - 河川・湖の渡り区間は岸で止め、橋(mesh/bridgeparts.ts)が同一の
@@ -54,7 +54,7 @@ const PLAZA_CURB_WIDTH = 0.34;
 const PLAZA_STEP = 2.4;
 
 /** 水路の造形: 水面は地面よりわずかに上、縁石天端は水面 +0.4 前後
- * (contracts/worldmodel.md Water 節の設計判断) */
+ * (contracts/ground-water.md Water 節の設計判断) */
 export const CANAL_WATER_Y = 0.04;
 const CANAL_WALL_RISE = 0.4;
 const CANAL_WALL_DIP = 0.3; // 護岸内面が水面下へ潜る深さ(水際を見せない)
@@ -88,7 +88,7 @@ function smoothstep01(t: number): number {
 /**
  * 等級 0〜2 → 土/砂利/石畳の補間色(5.2節)。
  * zoneMask の paved チャネル(derived.roadGrade)と道路リボン(edge.grade)が
- * 同じ写像を共有する(contracts/worldmodel.md ZoneMask 節)。
+ * 同じ写像を共有する(contracts/ground-water.md ZoneMask 節)。
  */
 export function gradeColor(grade: number): THREE.Color {
   const g = Math.min(2, Math.max(0, grade));

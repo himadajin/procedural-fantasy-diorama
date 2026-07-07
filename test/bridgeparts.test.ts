@@ -2,7 +2,7 @@
  * 橋の立体化(PHASE 5b commit 18)のテスト。
  * 展開はメッシュ層の純関数 src/mesh/bridgeparts.ts(three 非依存)のため、
  * three を経由せず機械検証できる
- * (contracts/worldmodel.md「魔法灯・浮遊要素・橋の立体化」の検証契約)。
+ * (contracts/wards.md「魔法灯・浮遊要素・橋の立体化」の検証契約)。
  */
 import { describe, expect, it } from "vitest";
 import {

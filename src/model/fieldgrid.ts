@@ -1,6 +1,6 @@
 /**
  * 密度場グリッド(FieldGrid)の実体表現とアクセスヘルパー。
- * 表現の正は docs/internal/contracts/worldmodel.md(Density 節)。
+ * 表現の正は docs/internal/contracts/network-plaza.md(Density 節)。
  * zoneMask と同様のフラット配列グリッドで、プレーンな JSON シリアライズ可能
  * データと純関数のみで構成する(three 非依存・乱数非消費)。
  */

@@ -1,6 +1,6 @@
 /**
  * 建物メッシュビルダー: Building.parts(「型+パラメータ」)を型ごとに
- * 一括処理する(implementation-spec 1.8節・9節、contracts/worldmodel.md
+ * 一括処理する(implementation-spec 1.8節・9節、contracts/buildings.md
  * 「Part の型語彙」)。WorldModel のみを入力とする(contracts/pipeline.md)。
  *
  * - マージ経路(plinth / wall / gable / hip / jetty / fence / stair /
@@ -10,7 +10,7 @@
  *   型ごとのハンドラが部品を共有プールのピース(軸平行の箱・+z 向きの面)へ
  *   分解し、`building-trim`(箱)/ `building-openings`(面)/
  *   `building-piles`(杭)の InstancedMesh へ集約する
- *   (contracts/worldmodel.md「インスタンス経路のピース分解」)。
+ *   (contracts/buildings.md「インスタンス経路のピース分解」)。
  *   経路の切替は MERGE_HANDLERS / INSTANCED_TYPES の型キー単位の登録移動
  *   のみで行える。未知の型は warn を出して読み飛ばす(生成は壊さない)
  * - 頂点カラー / instanceColor: 基準色(art-direction 5.1節)× ±8% 明度ムラ
@@ -23,18 +23,18 @@
  *   独立の小さなマージ束 `buildings-glow` 1 つに集約する(draw call +1)。
  *   emissive #5fd4c0 / emissiveIntensity 2.0、明滅 ±0.3 はビューワーの
  *   時間 uniform(水面と共有)で行い、reduced-motion では静止する
- *   (contracts/worldmodel.md「PHASE 5a commit 16 の追加語彙」、
+ *   (contracts/buildings.md「PHASE 5a commit 16 の追加語彙」、
  *   art-direction 5.4節)。Bloom・動的光源は使わない
  * - 結界構造(PHASE 5b commit 17): mesh/wardparts.ts の展開結果
  *   (ward-wall / arch / ward-stone と再利用部品)を同じ束へ合流させる。
  *   境界標・立石は専用プールの InstancedMesh `ward-stones` 1 つ
- *   (contracts/worldmodel.md「結界構造の立体化」)
+ *   (contracts/wards.md「結界構造の立体化」)
  * - 魔法灯・浮遊要素・橋(PHASE 5b commit 18): 灯の柱(lamp-post)は
  *   building-trim プールへ、橋(mesh/bridgeparts.ts)は既存の束へ合流。
  *   火屋+浮遊水晶は発光の共有 InstancedMesh `ward-glow-crystals`、
  *   浮石は `ward-floatstones`(draw call +2)。上下動・明滅は
  *   ビューワーの時間 uniform+id ハッシュ位相で、reduced-motion では
- *   静止する(contracts/worldmodel.md「魔法灯・浮遊要素・橋の立体化」)
+ *   静止する(contracts/wards.md「魔法灯・浮遊要素・橋の立体化」)
  */
 import * as THREE from "three";
 import type { Building, Part, WorldModel } from "../model/worldmodel";
@@ -47,7 +47,7 @@ export interface TimeUniform {
 }
 
 /**
- * materialId → 基準色(contracts/worldmodel.md「materialId の語彙」の正。
+ * materialId → 基準色(contracts/materials.md「materialId の語彙」の正。
  * art-direction 5.1節と同期させる)。
  */
 export const MATERIAL_COLORS: Record<string, string> = {
@@ -177,7 +177,7 @@ type L = [number, number, number];
 type W = [number, number, number];
 
 /**
- * 部品の変換(contracts/worldmodel.md「Part の変換規約」):
+ * 部品の変換(contracts/buildings.md「Part の変換規約」):
  * ローカル [-0.5,0.5]×[0,1]×[-0.5,0.5] → scale → Y回転(three.js の
  * rotateY と同義: +x → (cosθ, 0, −sinθ))→ position(底面中心)。
  */
@@ -345,7 +345,7 @@ function subBox(
 }
 
 // --- インスタンス経路のピース分解(PHASE 4b commit 15。
-//     contracts/worldmodel.md「インスタンス経路のピース分解」) ---
+//     contracts/buildings.md「インスタンス経路のピース分解」) ---
 
 /** 共有プールへ積むピース(色は基準色×個体ムラを掛けた最終値) */
 interface Piece {
@@ -424,7 +424,7 @@ function planePiece(
 /**
  * 開口(窓・扉): 壁面上の枠+枠より奥まった暗色面(壁に穴は開けない。
  * art-direction 6節のセットバック表現)。position は壁面上の開口下端中心、
- * ローカル +z が外向き法線(contracts/worldmodel.md 開口部品の変換規約)。
+ * ローカル +z が外向き法線(contracts/buildings.md 開口部品の変換規約)。
  * 枠は z −0.2〜+0.5 で壁へ半ば埋まり、奥面は枠より低い +z に置く。
  * 枠の見付け(FRAME_T)は部品寸法からピース生成時に計算するため実寸固定。
  */
@@ -507,7 +507,7 @@ function dormerPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
 /**
  * 切妻(gable)/ 寄棟(hip)の閉じた屋根ソリッド。
  * 棟はローカル +x 軸・y=1。hip は棟が両端からスパン/2 ずつ縮み、
- * 妻側も同じ勾配で流れる(contracts/worldmodel.md「Part の型語彙」)。
+ * 妻側も同じ勾配で流れる(contracts/buildings.md「Part の型語彙」)。
  */
 function roofPart(part: Part, buf: GeoBuffer, base: THREE.Color, hip: boolean): void {
   const xf = makeXform(part);
@@ -533,7 +533,7 @@ function roofPart(part: Part, buf: GeoBuffer, base: THREE.Color, hip: boolean): 
   face(buf, xf, [A, B, C, D], soff, inside, base);
 }
 
-// --- PHASE 5a: 中心建築の部品(contracts/worldmodel.md
+// --- PHASE 5a: 中心建築の部品(contracts/buildings.md
 //     「PHASE 5a commit 16 の追加語彙」) ---
 
 /** 塔身: 先細りの角柱(上端の辺長 = 底辺 × taper)+天端面 */
@@ -574,7 +574,7 @@ function courtyardWallPart(part: Part, buf: GeoBuffer, base: THREE.Color): void 
   subBox(buf, xf, base, -0.5, 0.5, 0.88, 1, -0.5, 0.5);
 }
 
-// --- PHASE 5b commit 17: 結界構造(contracts/worldmodel.md
+// --- PHASE 5b commit 17: 結界構造(contracts/buildings.md
 //     「PHASE 5b commit 17 の追加語彙」「結界構造の立体化」) ---
 
 /** 結界壁の基部高・頂縁高・張り出し(実寸固定。scale から逆算する) */

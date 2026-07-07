@@ -1,6 +1,6 @@
 /**
  * 段12「建物」: 役割・footprint・向き・階数・屋根・接地(基壇・杭)の骨格データ。
- * データの正は docs/internal/contracts/worldmodel.md(Parcel / Building 節)、
+ * データの正は docs/internal/contracts/buildings.md(Parcel / Building 節)、
  * 設計は implementation-spec 1.3節(段11「建物」相当)・PHASE 4a。
  *
  * PHASE 4a 内の分担(契約): 本段のうち id / parcelId / role / footprint /
@@ -18,7 +18,7 @@
  *
  * PHASE 4a commit 13 の追加分:
  * - materials(wall/roof/trim)を役割+wallTier/roofTier+seed で決定
- *   (基準色の語彙は contracts/worldmodel.md「materialId の語彙」=
+ *   (基準色の語彙は contracts/materials.md「materialId の語彙」=
  *   art-direction 5.1節)
  * - 骨格文法: footprint を翼(wing)へ分解し、基壇(plinth / 杭 pile)→
  *   壁体(階数×翼)→ 屋根(gable / hip。複合は翼ごとの gable)の
@@ -27,7 +27,7 @@
  * - 部品の乱数は派生サブストリーム "building/<id>/parts" のみ消費
  *   (commit 12 の骨格データの乱数消費を変えない)
  *
- * PHASE 4b commit 14(本実装)の追加分(contracts/worldmodel.md
+ * PHASE 4b commit 14(本実装)の追加分(contracts/buildings.md
  * 「PHASE 4b commit 14 の詳細部品の性質」):
  * - 開口: 窓(少なく大きく、整列度と数は detailAmount/役割)・
  *   扉(正面 frontEdge 側に必ず 1 つ。役割で寸法差)
@@ -50,7 +50,7 @@
  *   発光面積の上限をパイプライン内アサーションで検証する
  * - 中心建築は接道正面・道路/広場の重なり検査の対象外(契約の例外)
  *
- * PHASE 6 commit 19 の追加分(contracts/worldmodel.md「水辺建築の拡張」):
+ * PHASE 6 commit 19 の追加分(contracts/buildings.md「水辺建築の拡張」):
  * - waterside 建物の水辺拡張部品(杭繋ぎ梁・杭支持デッキ・張り出し部屋・
  *   水路裏口)を全一般建物の確定後の第2パスで parts へ追記する。
  *   部品はすべて params.waterfront = 1 を持つ
@@ -137,7 +137,7 @@ const OVERHANG_ROAD_CLEAR = 0.3;
 const ROOF_PITCH_MIN = 50;
 const ROOF_PITCH_MAX = 58;
 
-// --- 部品展開(contracts/worldmodel.md「Part の型語彙」) ---
+// --- 部品展開(contracts/buildings.md「Part の型語彙」) ---
 // 階高は model/worldmodel.ts の FLOOR_HEIGHT を正とする(中心建築文法と共有)
 export { FLOOR_HEIGHT } from "../model/worldmodel";
 /** 軒の張り出し(スパン側)。深めに取る(art-direction 6節) */
@@ -156,7 +156,7 @@ const PILE_WIDTH = 0.3;
 const PILE_EDGE_INSET = 0.25;
 
 // --- PHASE 4b commit 14: 開口・木組み・煙突・付属の定数
-//     (contracts/worldmodel.md「PHASE 4b commit 14 の詳細部品の性質」) ---
+//     (contracts/buildings.md「PHASE 4b commit 14 の詳細部品の性質」) ---
 /** 窓枠の壁面からの突出(セットバックの読み。art-direction 6節) */
 const WINDOW_DEPTH = 0.16;
 /** 窓下端の階床からの高さ */
@@ -190,7 +190,7 @@ const DORMER_SIZE: [number, number, number] = [1.2, 1.0, 1.1];
 const DORMER_MIN_SPAN = 4.6;
 
 // --- PHASE 6 commit 19: 水辺建築の拡張(waterfront)の定数
-//     (contracts/worldmodel.md「水辺建築の拡張」) ---
+//     (contracts/buildings.md「水辺建築の拡張」) ---
 /** デッキの奥行き帯・床厚・両側の引き込み */
 const DECK_DEPTH_MIN = 1.8;
 const DECK_DEPTH_MAX = 2.6;
@@ -268,7 +268,7 @@ const DORMER_ROLES = new Set<BuildingRole>([
   "bridgehead",
 ]);
 
-// --- 素材(contracts/worldmodel.md「materialId の語彙」= art-direction 5.1節) ---
+// --- 素材(contracts/materials.md「materialId の語彙」= art-direction 5.1節) ---
 const WALL_MATERIALS = ["rough-wood", "plaster", "stone", "ashlar"] as const;
 const ROOF_MATERIALS = ["thatch", "shingle", "tile", "slate"] as const;
 /** 石造系の壁(zoneMask 上書きが paved になる。trim も stone) */
@@ -519,7 +519,7 @@ function overhangBlocked(
 /**
  * 素材の決定(契約: derived の tier + 役割補正 + seed 揺らぎを丸めて添字)。
  * 乱数消費は建物あたり 2 回で固定。基準色の語彙は
- * contracts/worldmodel.md「materialId の語彙」(art-direction 5.1節)。
+ * contracts/materials.md「materialId の語彙」(art-direction 5.1節)。
  * 壁材階層・屋根パレットの本格移行は PHASE 4b(ここは基準色の選定まで)。
  */
 function decideMaterials(
@@ -586,7 +586,7 @@ function wallRect(
  * 建築文法: 翼ごとに 基壇(plinth。kind "piles" では杭列)→ 壁体(階数ぶん)→
  * 屋根(gable / hip)の骨格を展開し(commit 13)、続けて
  * 扉 → 窓 → 梁 → ジェッティ床帯 → 煙突 → 屋根小窓 → 石垣 → 外階段 の
- * 詳細部品を展開する(PHASE 4b commit 14。contracts/worldmodel.md
+ * 詳細部品を展開する(PHASE 4b commit 14。contracts/buildings.md
  * 「建物部品の性質」)。乱数は詳細部品の rng("building/<id>/details")のみ
  * 消費する(骨格は骨格データと materials から決定的)。
  */
@@ -1273,7 +1273,7 @@ function removeWindowsOnFace(
 }
 
 /**
- * 水辺拡張の展開(PHASE 6 commit 19。contracts/worldmodel.md
+ * 水辺拡張の展開(PHASE 6 commit 19。contracts/buildings.md
  * 「水辺建築の拡張」): 杭繋ぎ梁 → デッキ(床→杭→欄干柱→手すり→扉)→
  * 張り出し部屋(壁→屋根→窓→持ち送り梁)→ 水路裏口(扉→段)の順で
  * waterside 建物の parts へ追記する。乱数は "building/<id>/waterfront"
@@ -1972,7 +1972,7 @@ export function runBuildings(model: WorldModel): void {
     }
   }
 
-  // --- 水辺建築の拡張(PHASE 6 commit 19。contracts/worldmodel.md
+  // --- 水辺建築の拡張(PHASE 6 commit 19。contracts/buildings.md
   //     「水辺建築の拡張」)。乱数は "building/<id>/waterfront" のみ消費 ---
   {
     const claimed: { region: Polygon; owner: number }[] = [];
@@ -1988,7 +1988,7 @@ export function runBuildings(model: WorldModel): void {
 
   // --- 中心建築(PHASE 5a commit 16。一般建物の後に展開する:
   //     スカイライン検証が周辺一般建物の最高点を入力とするため。
-  //     契約は contracts/worldmodel.md「中心建築(PHASE 5a commit 16)」) ---
+  //     契約は contracts/buildings.md「中心建築(PHASE 5a commit 16)」) ---
   const centerBuilding = expandCenterBuilding(model, ctx, buildings);
   buildings.push(centerBuilding);
   model.buildings = buildings;

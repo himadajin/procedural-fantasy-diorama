@@ -1,7 +1,7 @@
 /**
  * 段7「一次密度場」: 中心からの距離(densityPeak / densityFalloff)、
  * 道路近接、Settlement Pressure から一次密度場を構成する。結界に依存しない。
- * データの正は docs/internal/contracts/worldmodel.md(Density 節)、
+ * データの正は docs/internal/contracts/network-plaza.md(Density 節)、
  * 設計は implementation-spec 1.3節(段7)・PHASE 3。
  *
  * - FieldGrid(model/fieldgrid.ts)へ格納する。解像度 64 固定、

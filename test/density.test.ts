@@ -36,7 +36,7 @@ describe("density: 決定性", () => {
   });
 });
 
-describe("density: FieldGrid 実体(contracts/worldmodel.md Density 節)", () => {
+describe("density: FieldGrid 実体(contracts/network-plaza.md Density 節)", () => {
   it("解像度 64・張り size×1.1 のグリッドに 0〜1 の値を持つ。final は null のまま", () => {
     for (const seed of SEEDS) {
       const model = build(seed);

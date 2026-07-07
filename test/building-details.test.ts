@@ -1,6 +1,6 @@
 /**
  * PHASE 4b commit 14: 開口・木組み・煙突・素材階層のテスト。
- * 契約は docs/internal/contracts/worldmodel.md
+ * 契約は docs/internal/contracts/buildings.md
  * 「PHASE 4b commit 14 の追加語彙」「PHASE 4b commit 14 の詳細部品の性質」
  * 「Building.materials の決め方」。
  */

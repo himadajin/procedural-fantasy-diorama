@@ -1,7 +1,7 @@
 /**
  * 植生メッシュビルダー: Vegetation(trees / shrubs / grassPatches)を
  * 専用の InstancedMesh 2 + マージ 1 で立体化する(PHASE 6 commit 20。
- * contracts/worldmodel.md Vegetation 節「植生の立体化」)。
+ * contracts/vegetation-summary.md Vegetation 節「植生の立体化」)。
  *
  * - `vegetation-trunks`: 幹の 6 角円錐台(castShadow: false)。色 #55452f
  * - `vegetation-canopy`: 不整形な塊のプール。樹冠(木ごとに 2〜3 個)と

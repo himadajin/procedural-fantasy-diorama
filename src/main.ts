@@ -99,7 +99,7 @@ if (!viewer) {
 
   // 複雑度(頂点数・インスタンス数・draw call・triangle)はレンダラー
   // 実測値であり WorldModel には持たない(表示時にサマリー・デバッグ表示へ
-  // 埋める。contracts/worldmodel.md Summary 節の設計判断)
+  // 埋める。contracts/vegetation-summary.md Summary 節の設計判断)
   function measureComplexity(group: THREE.Group | null): Complexity {
     const info = viewer!.renderer.info.render;
     let vertices = 0;

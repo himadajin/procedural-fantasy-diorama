@@ -1,7 +1,7 @@
 /**
  * 水域・陸地のスカラー場と、グリッド等値線による三角形分割(マーチング三角形)。
  * 水域判定・岸距離・陸地クリップのサンプリングの正
- * (docs/internal/contracts/worldmodel.md Water 節)。
+ * (docs/internal/contracts/ground-water.md Water 節)。
  * pipeline(岸線抽出・面積検証)と mesh(地面・水面・岸スカートの三角形分割)が
  * ここの同じ純関数を共有することで、絵とデータの岸線を一致させる。
  * three 非依存・乱数ストリーム非消費(順序非依存規約)。
@@ -96,7 +96,7 @@ export function polygonArea(polygon: Polygon): number {
 }
 
 /**
- * 星形境界ポリゴン(contracts/worldmodel.md Ground 節)の偏角→半径関数。
+ * 星形境界ポリゴン(contracts/ground-water.md Ground 節)の偏角→半径関数。
  * 頂点を偏角順に並べ、角度の線形補間で半径を返す。
  */
 export function createBoundaryRadius(
@@ -186,7 +186,7 @@ export function createWaterField(
 
 /**
  * 境界内の水域面積の見積もり(グリッド標本化)。
- * waterAreaCap のクリップと検証はこの見積もりを正とする(contracts/worldmodel.md)。
+ * waterAreaCap のクリップと検証はこの見積もりを正とする(contracts/ground-water.md)。
  */
 export function estimateWaterArea(
   field: WaterField,

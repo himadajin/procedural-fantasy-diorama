@@ -1,6 +1,6 @@
 /**
  * PHASE 5a commit 16: 中心建築の拡張文法のテスト。
- * 契約は docs/internal/contracts/worldmodel.md「中心建築(PHASE 5a commit 16)」
+ * 契約は docs/internal/contracts/buildings.md「中心建築(PHASE 5a commit 16)」
  * (スカイライン契約・4軸→骨格/装飾・発光の規律)、
  * 設計は implementation-spec 1.7節・PHASE 5a。
  */

@@ -1,11 +1,11 @@
 /**
  * 段8「結界計画」: 結界環(ringPath / ringSegments)・結界門・魔導塔・聖域・
  * 魔法灯・浮遊要素の位置計画と、結界門スナップ後の BridgeSite 再抽出。
- * データの正は docs/internal/contracts/worldmodel.md(Wards / Water 節)、
+ * データの正は docs/internal/contracts/wards.md(Wards 節)・ground-water.md(Water 節)、
  * 設計は implementation-spec 1.3節(段8)・1.6節・PHASE 3・9節。
  * 立体化は PHASE 5b、デバッグ描画は PHASE 3 commit 11 の担当。
  *
- * ringPath の生成手順(contracts/worldmodel.md):
+ * ringPath の生成手順(contracts/wards.md):
  *   一次密度場の等値線(marchPositiveRegion)を初期形状
  *   → 中心まわりの偏角リサンプル+循環平滑化(平滑性)
  *   → 星形化(自己交差の除去)

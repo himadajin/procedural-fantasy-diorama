@@ -1,6 +1,6 @@
 /**
  * 段11「区画」: 最終密度場(density.final)と道路沿いの敷地分割(parcels)。
- * データの正は docs/internal/contracts/worldmodel.md(Density / Parcel 節)、
+ * データの正は docs/internal/contracts/network-plaza.md(Density 節)・buildings.md(Parcel 節)、
  * 設計は implementation-spec 1.3節(段10「区画」相当)・PHASE 4a。
  *
  * - density.final = 一次密度場 + 結界内ブースト(ringPath 内側で最大 +0.15、
@@ -44,13 +44,13 @@ function smoothstep(edge0: number, edge1: number, v: number): number {
   return t * t * (3 - 2 * t);
 }
 
-// --- density.final(contracts/worldmodel.md Density 節) ---
+// --- density.final(contracts/network-plaza.md Density 節) ---
 /** 結界内ブーストの最大値 */
 const WARD_BOOST = 0.15;
 /** 環の縁の減衰幅(実寸) */
 const WARD_FADE = 8;
 
-// --- 区画分割の寸法(contracts/worldmodel.md Parcel 節) ---
+// --- 区画分割の寸法(contracts/buildings.md Parcel 節) ---
 /** 道路縁から敷地前面までの帯(実寸) */
 const FRONT_GAP = 1.0;
 /** 敷地間の隙間(実寸) */

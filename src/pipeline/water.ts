@@ -1,6 +1,6 @@
 /**
  * 段3「水系」: 主河川・湖・岸線・湿地/砂洲・外周の閉じ方を確定する。
- * データの正は docs/internal/contracts/worldmodel.md(Water 節)、
+ * データの正は docs/internal/contracts/ground-water.md(Water 節)、
  * 設計は implementation-spec 1.3節・1.6節・PHASE 2。
  *
  * - 主河川: derived.riverCount 本(0〜2)。外縁の外側の一点から箱庭を横断して
@@ -265,7 +265,7 @@ function extractShoreline(
   return { cellSize, loops };
 }
 
-/** 湿地・砂洲を岸辺周辺の zoneMask チャネルへ書き込む(contracts/worldmodel.md) */
+/** 湿地・砂洲を岸辺周辺の zoneMask チャネルへ書き込む(contracts/ground-water.md) */
 function writeShoreZones(model: WorldModel, field: WaterField): void {
   const { seed, derived } = { seed: model.meta.seed, derived: model.meta.derived };
   const mask = model.ground.zoneMask;

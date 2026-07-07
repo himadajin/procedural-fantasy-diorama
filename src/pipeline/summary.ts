@@ -1,5 +1,5 @@
 /**
- * 段15「サマリー」: 生成結果サマリー(contracts/worldmodel.md Summary 節)。
+ * 段15「サマリー」: 生成結果サマリー(contracts/vegetation-summary.md Summary 節)。
  * 最終状態の WorldModel から機械的に全フィールドを再算出して確定する。
  * 中間PHASEの各段は同名フィールドを部分的に先埋めするが、本段が最終値で
  * 上書きするため、サマリーは常に生成物と一致する(乖離しない)。

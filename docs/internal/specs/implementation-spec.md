@@ -74,7 +74,7 @@ test/             Vitest テスト
 
 後続PHASEの追加・修正は原則として担当モジュール内の局所的な変更で行い、
 モジュールをまたぐ変更(インターフェース変更)は最小化する。
-モジュール間のインターフェースは `../contracts/`(worldmodel.md、pipeline.md)を
+モジュール間のインターフェースは `../contracts/`(README.md、pipeline.md)を
 正とし、変更はコードより先に contracts を更新する。
 `rng/`・`model/`・`pipeline/` から `three` を import することを禁止し、
 ESLint の import 制約で機械化する。
@@ -115,7 +115,7 @@ ESLint の import 制約で機械化する。
 
 ### 1.5 WorldModel データ構造(概要)
 
-詳細スキーマは `../contracts/worldmodel.md` を正とする。以下は概要。
+詳細スキーマは `../contracts/`(索引: README.md) を正とする。以下は概要。
 
 ```
 WorldModel {
@@ -342,7 +342,7 @@ Node上のVitestでそのままテストできる。
 - パイプライン実行フレームワーク: ステップ配列を順にチャンク実行し、
   進捗をインジケーターへ通知、完了時にシーン差し替え(dispose含む)を行う仕組み
 - WorldModelの型定義(TypeScript の型として `model/` に定義し、
-  `../contracts/worldmodel.md` と同期する)と、この時点での最小生成物:
+  `../contracts/`(索引: README.md) と同期する)と、この時点での最小生成物:
   無地の平坦な仮グラウンド(PHASE 2 で外縁形状と材質ゾーンを持つ
   正式な地面に置換される)
 

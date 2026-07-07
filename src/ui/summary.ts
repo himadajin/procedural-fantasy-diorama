@@ -6,7 +6,7 @@
  * ヘアラインで区切る。UI に結界青緑は使わない(琥珀のみ)。
  * 複雑度(頂点数・インスタンス数・draw call・triangle)はレンダラー実測値
  * (renderer.info)を表示時に埋める(WorldModel には持たない。
- * contracts/worldmodel.md Summary 節の設計判断)。
+ * contracts/vegetation-summary.md Summary 節の設計判断)。
  * PHASE 7 commit 22 で開発用デバッグ表示を本サマリーへ統合した:
  * ハッシュは「ハッシュ」行、renderer.info は「複雑度」行
  * (implementation-spec 1.10節、contracts/pipeline.md

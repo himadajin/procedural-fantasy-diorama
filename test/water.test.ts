@@ -178,7 +178,7 @@ describe("water: 河川スプライン", () => {
             (p) => field.boundarySdf(p.x, p.z) > model.ground.size * 0.05,
           );
           expect(interior.length).toBeGreaterThan(0);
-          // 隣接点間隔が川幅の 1.5 倍以下(contracts/worldmodel.md)
+          // 隣接点間隔が川幅の 1.5 倍以下(contracts/ground-water.md)
           for (let i = 0; i + 1 < river.points.length; i++) {
             const a = river.points[i];
             const b = river.points[i + 1];

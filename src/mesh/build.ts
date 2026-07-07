@@ -30,7 +30,7 @@ import { applyLampTint, createLampTint } from "./wardparts";
  * 明度ムラは zoneMask.brightness(±8%)を乗じる。明度の一様スケールは
  * HSV 彩度を変えないため、大面積の彩度上限(同 2.1節)は基準色の規律のまま保たれる。
  * 舗装("paved")チャネルの色は固定値ではなく derived.roadGrade による
- * 土→砂利→石畳の補間(contracts/worldmodel.md ZoneMask 節)。
+ * 土→砂利→石畳の補間(contracts/ground-water.md ZoneMask 節)。
  */
 const ZONE_COLORS: Record<Exclude<ZoneKind, "paved">, string> = {
   grass: "#7a8a55",
@@ -330,7 +330,7 @@ function buildWater(
 
   // 水路の水面: 川と同じマテリアル・同じ頂点カラー規範のまま同一メッシュへ
   // 統合する(art-direction 5.3節「水路の水色は川と共通」。draw call も増えない)。
-  // 高さは地面よりわずかに上の掘り込みチャネル(contracts/worldmodel.md Water 節)
+  // 高さは地面よりわずかに上の掘り込みチャネル(contracts/ground-water.md Water 節)
   for (const surf of canalSurfaces) {
     const base = positions.length / 3;
     const band = Math.min(SHALLOW_BAND, surf.width * 0.45);

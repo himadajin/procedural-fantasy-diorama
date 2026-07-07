@@ -19,7 +19,7 @@ function build(seed: string, over: Partial<Params> = {}): WorldModel {
   return model;
 }
 
-/** shoelace 符号(x, z)。時計回りの契約は負(contracts/worldmodel.md) */
+/** shoelace 符号(x, z)。時計回りの契約は負(contracts/worldmodel-core.md) */
 function shoelace(polygon: Vec2[]): number {
   let sum = 0;
   for (let i = 0; i < polygon.length; i++) {

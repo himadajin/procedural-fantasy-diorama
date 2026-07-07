@@ -1,6 +1,6 @@
 /**
  * WorldModel 型定義。
- * スキーマの正は docs/internal/contracts/worldmodel.md。本ファイルは同文書と同期させる。
+ * スキーマの正は docs/internal/contracts/ の各契約(索引: contracts/README.md)。本ファイルは同文書と同期させる。
  * WorldModel はプレーンなデータ構造(JSONシリアライズ可能)であり、
  * 時間・表示状態を持ち込まない。
  */
@@ -57,7 +57,7 @@ export const DEFAULT_PARAMS: Params = {
 
 /**
  * パラメータ→内部変数(implementation-spec 1.6節)。
- * フィールドの正は contracts/worldmodel.md(Meta 節)。
+ * フィールドの正は contracts/worldmodel-core.md(Meta 節)。
  * 各フィールドは駆動パラメータに対して単調な写像とし、seed 揺らぎは
  * entryPointCount・riverCount の丸め閾値にのみ使う(pipeline/derive.ts)。
  */
@@ -214,7 +214,7 @@ export interface Meta {
 }
 
 /**
- * 街中の水路(contracts/worldmodel.md Water 節)。
+ * 街中の水路(contracts/ground-water.md Water 節)。
  * waterfield・岸線・zoneMask には影響させない(護岸で縁取られた
  * 掘り込みチャネル。立体化は PHASE 3 commit 11)。
  */
@@ -227,7 +227,7 @@ export interface Canal extends Spline {
 }
 
 /**
- * 岸線ループ(contracts/worldmodel.md Water 節)。
+ * 岸線ループ(contracts/ground-water.md Water 節)。
  * 境界内の陸地と水域の境界の等値線。抽出の正は model/waterfield.ts。
  */
 export interface ShoreLoop {
@@ -254,7 +254,7 @@ export interface Ground {
   size: number;
   /**
    * 有機的な外縁形状。閉多角形・自己交差なし・時計回り
-   * (shoelace 符号負)・原点まわりの星形(contracts/worldmodel.md)
+   * (shoelace 符号負)・原点まわりの星形(contracts/ground-water.md)
    */
   boundary: Polygon;
   /** 外周の閉じ方(水系段が確定。Water 0付近は "fog" 固定) */
@@ -338,7 +338,7 @@ export interface Wards {
 }
 
 /**
- * 敷地(contracts/worldmodel.md Parcel / Building 節)。
+ * 敷地(contracts/buildings.md Parcel / Building 節)。
  * 段11「区画」が道路 edge 沿いの矩形敷地として埋める。
  */
 export interface Parcel {
@@ -380,7 +380,7 @@ export interface Part {
 }
 
 /**
- * 接地(基壇・杭・石基礎)。契約は contracts/worldmodel.md Parcel / Building 節。
+ * 接地(基壇・杭・石基礎)。契約は contracts/buildings.md Parcel / Building 節。
  * overWater の建物は kind ∈ {"piles", "stonebase"} かつ
  * bottomY = SHORE_SKIRT_BOTTOM_Y(-1.6)で機械判定できる。
  */
@@ -431,7 +431,7 @@ export interface Vegetation {
 }
 
 /**
- * 生成結果サマリー(contracts/worldmodel.md Summary 節)。
+ * 生成結果サマリー(contracts/vegetation-summary.md Summary 節)。
  * 段15「サマリー」(pipeline/summary.ts)が全フィールドを最終状態の
  * WorldModel から機械算出して確定する。生成物と乖離させない。
  * 複雑度(頂点数・インスタンス数・draw call)はレンダラー実測値

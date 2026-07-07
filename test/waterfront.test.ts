@@ -1,6 +1,6 @@
 /**
  * PHASE 6 commit 19: 水辺建築の拡張(杭支持デッキ・張り出し部屋・
- * 水路裏口・杭繋ぎ梁)のテスト。契約は docs/internal/contracts/worldmodel.md
+ * 水路裏口・杭繋ぎ梁)のテスト。契約は docs/internal/contracts/buildings.md
  * 「水辺建築の拡張」「PHASE 6 commit 19 の追加語彙」。
  */
 import { describe, expect, it } from "vitest";

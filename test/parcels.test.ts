@@ -68,7 +68,7 @@ function combinedWaterSdf(model: WorldModel): (x: number, z: number) => number {
   };
 }
 
-describe("parcels: 決定性(contracts/worldmodel.md Parcel 節)", () => {
+describe("parcels: 決定性(contracts/buildings.md Parcel 節)", () => {
   it("同一 seed + params で parcels と density.final が完全一致する", () => {
     for (const seed of SEEDS) {
       const a = build(seed);
@@ -81,7 +81,7 @@ describe("parcels: 決定性(contracts/worldmodel.md Parcel 節)", () => {
   });
 });
 
-describe("density.final: 一次+結界内ブースト(contracts/worldmodel.md Density 節)", () => {
+describe("density.final: 一次+結界内ブースト(contracts/network-plaza.md Density 節)", () => {
   it("primary と同じ張りで、primary 以上・0〜1 の値を持つ", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
