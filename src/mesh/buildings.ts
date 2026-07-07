@@ -112,14 +112,15 @@ const GLOW_EDGE_WEIGHT = 0.35;
 const COURTYARD_BODY_SHADE = 0.97;
 
 /** 位置ハッシュ(0〜1)。乱数ストリームを消費しない決定論的なムラの元 */
-function hash3(x: number, y: number, z: number): number {
+export function hash3(x: number, y: number, z: number): number {
   let h =
     (Math.imul(Math.round(x * 8) | 0, 0x9e3779b1) ^
       Math.imul(Math.round(y * 8) | 0, 0x85ebca77) ^
       Math.imul(Math.round(z * 8) | 0, 0xc2b2ae3d)) >>>
     0;
   h = Math.imul(h ^ (h >>> 13), 0x27d4eb2f) >>> 0;
-  h ^= h >>> 16;
+  // XOR は符号付き 32bit を返すため必ず符号なしへ戻す(0〜1 の契約)
+  h = (h ^ (h >>> 16)) >>> 0;
   return h / 4294967296;
 }
 
