@@ -430,8 +430,18 @@ export interface Vegetation {
   grassPatches: { id: string; polygon: Polygon }[];
 }
 
+/**
+ * 生成結果サマリー(contracts/worldmodel.md Summary 節)。
+ * 段15「サマリー」(pipeline/summary.ts)が全フィールドを最終状態の
+ * WorldModel から機械算出して確定する。生成物と乖離させない。
+ * 複雑度(頂点数・インスタンス数・draw call)はレンダラー実測値
+ * (renderer.info)であり表示プリセット依存のため WorldModel には持たず、
+ * UI が表示時に埋める(正規化ハッシュをレンダラー非依存に保つ設計判断)。
+ */
 export interface Summary {
+  /** 役割別内訳(出現した役割のみ。合計 = buildings.length) */
   buildingCounts: Record<string, number>;
+  /** 軸スコア+特徴から生成する短い日本語記述文(決定論的) */
   centerDescription: string;
   waterOverview: { rivers: number; lakes: number; canals: number; bridges: number };
   wardOverview: {
@@ -443,7 +453,6 @@ export interface Summary {
     floaters: number;
   };
   scale: { worldSize: number; roadLength: number };
-  complexity: { vertices: number; instances: number; drawCalls: number };
   hash: string;
 }
 
@@ -515,7 +524,6 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
         floaters: 0,
       },
       scale: { worldSize: 0, roadLength: 0 },
-      complexity: { vertices: 0, instances: 0, drawCalls: 0 },
       hash: "",
     },
   };

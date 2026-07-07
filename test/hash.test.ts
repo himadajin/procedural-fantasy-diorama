@@ -39,30 +39,35 @@ describe("hashWorldModel: 決定性(contracts/pipeline.md)", () => {
 describe("hashWorldModel: 代表 seed×params のスナップショット固定", () => {
   // 意図した生成変更でこの表が変わる場合は、スナップショット更新を同一commitに
   // 含め、意図を commit メッセージに記す(implementation-spec 1.10節)
-  // commit 20(PHASE 6)で植生ぶんを更新。意図した変更:
-  // 段14「植生」が vegetation(trees / shrubs / grassPatches)を埋める
-  // (contracts/worldmodel.md Vegetation 節)。乱数はセルごとの独立
-  // サブストリーム "vegetation/<ix>_<iz>" のみ消費する追記のため、
-  // vegetation 以外のフィールドは commit 19 から不変だが、vegetation は
-  // 全組で非空になるため 8 組すべてのハッシュが変わる。
-  // 新旧対応(commit 19 → commit 20):
-  //   everdusk-101 {}              5d0f8d8a → 884882c7
-  //   everdusk-101 {water:0}       c34855b1 → f1a62db2
-  //   everdusk-101 {water:95}      f0ddcce4 → 58609e07
-  //   everdusk-101 {worldScale:0}  afcc7682 → cd8205af
-  //   everdusk-101 {worldScale:100} 7973e55b → 06acdfcb
-  //   seed-a {}                    63531fdd → 413344bc
-  //   seed-b {}                    544a44f9 → 360ce1b7
-  //   seed-b {water:70}            333123e8 → 37add040
+  // commit 21(PHASE 7)でサマリーぶんを更新。意図した変更:
+  // 段15「サマリー」が summary(buildingCounts / centerDescription /
+  // waterOverview / wardOverview / scale)を最終確定する
+  // (contracts/worldmodel.md Summary 節)。段15 は乱数を消費しないが、
+  // 従来 buildingCounts は {}・centerDescription は "" のままだったのに対し、
+  // 本段が両者を最終状態から機械算出して埋めるため、8 組すべてのハッシュが
+  // 変わる(その他のフィールドは commit 20 から不変)。summary.complexity は
+  // WorldModel から除外した(レンダラー実測=表示依存のため。同節の設計判断)
+  // が、従来も 0 固定でハッシュに寄与していたのはキー名 "complexity" 等の
+  // 構造ぶんであり、除外と summary 埋めの両方が今回のハッシュ差に含まれる。
+  // summary.hash 自身は従来どおりハッシュ計算から除外される。
+  // 新旧対応(commit 20 → commit 21):
+  //   everdusk-101 {}              884882c7 → 1125a04d
+  //   everdusk-101 {water:0}       f1a62db2 → eed82045
+  //   everdusk-101 {water:95}      58609e07 → f7773829
+  //   everdusk-101 {worldScale:0}  cd8205af → aff7f80d
+  //   everdusk-101 {worldScale:100} 06acdfcb → 7bfd75e6
+  //   seed-a {}                    413344bc → 9913230d
+  //   seed-b {}                    360ce1b7 → a7018aa7
+  //   seed-b {water:70}            37add040 → 8765d9eb
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "884882c7"],
-    ["everdusk-101", { water: 0 }, "f1a62db2"],
-    ["everdusk-101", { water: 95 }, "58609e07"],
-    ["everdusk-101", { worldScale: 0 }, "cd8205af"],
-    ["everdusk-101", { worldScale: 100 }, "06acdfcb"],
-    ["seed-a", {}, "413344bc"],
-    ["seed-b", {}, "360ce1b7"],
-    ["seed-b", { water: 70 }, "37add040"],
+    ["everdusk-101", {}, "1125a04d"],
+    ["everdusk-101", { water: 0 }, "eed82045"],
+    ["everdusk-101", { water: 95 }, "f7773829"],
+    ["everdusk-101", { worldScale: 0 }, "aff7f80d"],
+    ["everdusk-101", { worldScale: 100 }, "7bfd75e6"],
+    ["seed-a", {}, "9913230d"],
+    ["seed-b", {}, "a7018aa7"],
+    ["seed-b", { water: 70 }, "8765d9eb"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

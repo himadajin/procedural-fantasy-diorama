@@ -5,6 +5,7 @@ import { OrbitController } from "./viewer/orbit";
 import { createPanel } from "./ui/panel";
 import { createIndicator } from "./ui/indicator";
 import { createDebugOverlay } from "./ui/debug";
+import { renderSummary, type Complexity, type SummaryView } from "./ui/summary";
 import { runPipeline } from "./pipeline/run";
 import { buildWorld, disposeWorld, type WaterTimeUniform } from "./mesh/build";
 import {
@@ -62,6 +63,25 @@ if (!viewer) {
 
   // 開発用デバッグ表示: ハッシュと renderer.info(implementation-spec 1.10節)
   const debug = createDebugOverlay(app);
+
+  // 複雑度(頂点数・インスタンス数・draw call)はレンダラー実測値であり
+  // WorldModel には持たない(表示時にサマリー・デバッグ表示へ埋める。
+  // contracts/worldmodel.md Summary 節の設計判断)
+  function measureComplexity(group: THREE.Group | null): Complexity {
+    const info = viewer!.renderer.info.render;
+    let vertices = 0;
+    let instances = 0;
+    group?.traverse((obj) => {
+      const geom = (obj as THREE.Mesh).geometry as
+        | THREE.BufferGeometry
+        | undefined;
+      if (geom?.attributes.position) vertices += geom.attributes.position.count;
+      if (obj instanceof THREE.InstancedMesh) instances += obj.count;
+    });
+    return { vertices, instances, drawCalls: info.calls };
+  }
+
+  let currentSummary: SummaryView | null = null;
   let debugTimer = 0;
   viewer.onFrame((dt) => {
     debugTimer += dt;
@@ -69,6 +89,7 @@ if (!viewer) {
     debugTimer = 0;
     const info = viewer.renderer.info.render;
     debug.setRenderInfo(info.calls, info.triangles);
+    currentSummary?.setComplexity(measureComplexity(currentWorld));
   });
 
   let currentWorld: THREE.Group | null = null;
@@ -118,6 +139,12 @@ if (!viewer) {
     currentWorld = group;
 
     debug.setHash(model.summary.hash);
+    // 生成結果サマリーを描画(複雑度はレンダラー実測を随時埋める)
+    currentSummary = renderSummary(
+      panel.summaryElement,
+      model,
+      measureComplexity(group),
+    );
     viewer.setWorldSize(model.ground.size);
     // パン範囲をワールド境界に、極角制限の基準を水面高さに接続する
     controls.configure(model.ground.size, WATER_SURFACE_Y);

@@ -132,6 +132,15 @@ interface Rng {
   建物・道路・広場・水面・水路バッファとの衝突をハード除外する。
   乱数はセルごとの独立サブストリーム `"vegetation/<ix>_<iz>"` のみを
   消費する。表示名は段14「草木を茂らせています…」。
+- 段15「サマリー」(PHASE 7 commit 21)は全段の後に走り、`summary` の
+  全フィールドを最終状態の WorldModel から機械的に**再算出**して確定する
+  (中間PHASEの各段の部分先埋めを上書きするため、乖離は起こらない。
+  worldmodel.md Summary 節)。`buildingCounts`(役割別集計)・
+  `centerDescription`(支配軸+特徴からの記述文)・`waterOverview` /
+  `wardOverview` / `scale` を書く。複雑度(頂点数・インスタンス数・
+  draw call)は表示依存の実測値のため WorldModel に持たず UI が
+  `renderer.info` から埋める(同節の設計判断)。段15 は乱数サブストリームを
+  消費しない(決定的な集計)。表示名は段15「箱庭を書き留めています…」。
 
 ## チャンク実行フレームワーク
 

@@ -259,12 +259,45 @@ button {
 .pfd-summary {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   font-size: 13px;
 }
 
 .pfd-summary:empty {
   display: none;
+}
+
+/* 先頭: 生成記述文(やや大きい暖白) */
+.pfd-summary-desc {
+  margin: 0 0 10px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-hi);
+}
+
+/* ラベル(青灰)+値(暖白・数値は等幅)の行。ヘアラインで区切る */
+.pfd-summary-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.pfd-summary-label {
+  flex: 0 0 auto;
+  min-width: 64px;
+  color: var(--text-lo);
+}
+
+.pfd-summary-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  color: var(--text-hi);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 /* ============ Generating インジケーター(上部中央のピル) ============ */
