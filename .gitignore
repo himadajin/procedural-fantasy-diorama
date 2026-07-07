@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Other files
 /.claude/
+
+# Claude Code local symlink to AGENTS.md (see AGENTS.md "Claude Code Setup")
+/CLAUDE.md
