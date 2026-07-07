@@ -28,8 +28,7 @@ import {
   type WorldModel,
 } from "./model/worldmodel";
 
-/** 見栄えの良い既定 seed は PHASE 7 の目視検証で選定し直す */
-const DEFAULT_SEED = "everdusk-101";
+import { DEFAULT_SEED } from "./defaults";
 
 const app = document.getElementById("app");
 if (!app) throw new Error("#app not found");
