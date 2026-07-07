@@ -22,6 +22,7 @@ import {
 } from "../model/waterfield";
 import { buildCanalSurfaces, buildPaving, gradeColor } from "./paving";
 import { buildBuildings } from "./buildings";
+import { buildVegetation } from "./vegetation";
 import { applyLampTint, createLampTint } from "./wardparts";
 
 /**
@@ -439,6 +440,10 @@ export function buildWorld(model: WorldModel): THREE.Group {
   // InstancedMesh。部品展開は mesh/wardparts.ts / mesh/bridgeparts.ts。
   // mesh/buildings.ts が束ねる。計画デバッグ描画は PHASE 5b で全廃)
   for (const obj of buildBuildings(model, timeUniform)) group.add(obj);
+
+  // 植生(PHASE 6 commit 20): 幹・樹冠+低木の InstancedMesh と草むらの
+  // マージメッシュ(mesh/vegetation.ts。draw call +3 以内)
+  for (const obj of buildVegetation(model)) group.add(obj);
 
   return group;
 }
