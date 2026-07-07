@@ -25,9 +25,14 @@
  *   時間 uniform(水面と共有)で行い、reduced-motion では静止する
  *   (contracts/worldmodel.md「PHASE 5a commit 16 の追加語彙」、
  *   art-direction 5.4節)。Bloom・動的光源は使わない
+ * - 結界構造(PHASE 5b commit 17): mesh/wardparts.ts の展開結果
+ *   (ward-wall / arch / ward-stone と再利用部品)を同じ束へ合流させる。
+ *   境界標・立石は専用プールの InstancedMesh `ward-stones` 1 つ
+ *   (contracts/worldmodel.md「結界構造の立体化」)
  */
 import * as THREE from "three";
 import type { Building, Part, WorldModel } from "../model/worldmodel";
+import { expandWardParts } from "./wardparts";
 
 /** ビューワーが毎フレーム更新する時間 uniform(mesh/build.ts と共有の形) */
 export interface TimeUniform {
@@ -311,6 +316,8 @@ interface InstancePools {
   planes: Piece[];
   /** 杭(building-piles。従来どおり部品 1 つ = 1 インスタンス) */
   piles: Piece[];
+  /** 境界標・立石(ward-stones。部品 1 つ = 1 インスタンス。PHASE 5b) */
+  stones: Piece[];
 }
 
 /** ピース中心の位置ハッシュによる ±8% の個体ムラ(faceMottle と同係数) */
@@ -518,6 +525,100 @@ function courtyardWallPart(part: Part, buf: GeoBuffer, base: THREE.Color): void 
   const xf = makeXform(part);
   subBox(buf, xf, base, -0.5, 0.5, 0, 0.88, -0.38, 0.38, COURTYARD_BODY_SHADE);
   subBox(buf, xf, base, -0.5, 0.5, 0.88, 1, -0.5, 0.5);
+}
+
+// --- PHASE 5b commit 17: 結界構造(contracts/worldmodel.md
+//     「PHASE 5b commit 17 の追加語彙」「結界構造の立体化」) ---
+
+/** 結界壁の基部高・頂縁高・張り出し(実寸固定。scale から逆算する) */
+const WARD_WALL_BASE_H = 0.42;
+const WARD_WALL_RIM_H = 0.3;
+const WARD_WALL_BASE_EXTRA = 0.17;
+const WARD_WALL_RIM_EXTRA = 0.15;
+/** 基部・壁体の沈み(足元AOと同族の焼き込み) */
+const WARD_WALL_BASE_SHADE = 0.84;
+const WARD_WALL_BODY_SHADE = 0.97;
+
+/**
+ * 結界壁セグメント: 基部+壁体+頂縁(胸壁・狭間なし=非軍事)。
+ * scale = 長さ×高さ×厚み(壁体)。基部・頂縁は実寸固定で厚みへ張り出す。
+ */
+function wardWallPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  const [, sy, sz] = part.transform.scale;
+  const bh = Math.min(0.35, WARD_WALL_BASE_H / Math.max(sy, 1e-6));
+  const rh = Math.min(0.2, WARD_WALL_RIM_H / Math.max(sy, 1e-6));
+  const eb = WARD_WALL_BASE_EXTRA / Math.max(sz, 1e-6);
+  const er = WARD_WALL_RIM_EXTRA / Math.max(sz, 1e-6);
+  subBox(buf, xf, base, -0.5, 0.5, 0, bh, -0.5 - eb, 0.5 + eb, WARD_WALL_BASE_SHADE);
+  subBox(buf, xf, base, -0.5, 0.5, bh, 1 - rh, -0.5, 0.5, WARD_WALL_BODY_SHADE);
+  subBox(buf, xf, base, -0.5, 0.5, 1 - rh, 1, -0.5 - er, 0.5 + er);
+}
+
+/**
+ * アーチ開口を持つ門躯体(両脚+アーチ頭+開口ソフィット)。開口はローカル
+ * z 方向へ貫通する。scale = スパン×全高×厚み。params.open = 開口幅/スパン、
+ * params.rise = 開口天端高/全高。アーチの縦半径はワールドで半円に近づくよう
+ * scale から決める(結界門。橋=commit 18 と共用できる汎用形状)。
+ */
+function archPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  const [sx, sy] = part.transform.scale;
+  const open = Math.min(0.92, Math.max(0.1, part.params?.open ?? 0.55));
+  const rise = Math.min(0.95, Math.max(0.2, part.params?.rise ?? 0.75));
+  const hw = open / 2;
+  // 縦半径(ローカル)。ワールドで半円 = (hw·sx)/sy。天端が潰れない範囲へ
+  const ry = Math.min((hw * sx) / Math.max(sy, 1e-6), rise * 0.55);
+  const ys = rise - ry; // アーチの起拱点
+  // 両脚(y 0〜rise)と頭部の帯(y rise〜1)
+  subBox(buf, xf, base, -0.5, -hw, 0, rise, -0.5, 0.5, 0.94);
+  subBox(buf, xf, base, hw, 0.5, 0, rise, -0.5, 0.5, 0.94);
+  subBox(buf, xf, base, -0.5, 0.5, rise, 1, -0.5, 0.5);
+  // アーチ曲線(起拱点 → 天端 → 起拱点)
+  const m = 8;
+  const arc: [number, number][] = [];
+  for (let j = 0; j <= m; j++) {
+    const t = (j / m) * Math.PI;
+    arc.push([-hw * Math.cos(t), ys + ry * Math.sin(t)]);
+  }
+  const insideMid = xf([0, (rise + 1) / 2, 0]);
+  for (let j = 0; j < m; j++) {
+    const p0 = arc[j];
+    const p1 = arc[j + 1];
+    if (!p0 || !p1) continue;
+    // 前面・背面のスパンドレル(アーチと天端ラインの間の帯)
+    for (const zf of [0.5, -0.5]) {
+      const inside = xf([(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2 - 0.05, 0]);
+      pushFace(
+        buf,
+        [
+          xf([p0[0], p0[1], zf]),
+          xf([p1[0], p1[1], zf]),
+          xf([p1[0], rise, zf]),
+          xf([p0[0], rise, zf]),
+        ],
+        [1, 1, 1, 1],
+        inside,
+        base,
+        faceMottle([xf([p0[0], p0[1], zf]), xf([p1[0], rise, zf])]),
+      );
+    }
+    // 開口ソフィット(アーチ裏。上方の内部点から離れる=下向き)
+    pushFace(
+      buf,
+      [
+        xf([p0[0], p0[1], 0.5]),
+        xf([p1[0], p1[1], 0.5]),
+        xf([p1[0], p1[1], -0.5]),
+        xf([p0[0], p0[1], -0.5]),
+      ],
+      [0.8, 0.8, 0.8, 0.8],
+      insideMid,
+      base,
+      1,
+    );
+  }
+  // 開口脚の内側面(起拱点まで)は脚の subBox が持つ(重複させない)
 }
 
 /** 発光の重み色(頂点カラー = 発光束の emissive・拡散の両方に乗る) */
@@ -775,6 +876,9 @@ const MERGE_HANDLERS: Record<
   "courtyard-wall": (part, buf, base) => courtyardWallPart(part, buf, base),
   "rose-window": (part, buf, base) => roseWindowPart(part, buf, base),
   "arch-window": (part, buf, base) => archWindowPart(part, buf, base),
+  // --- PHASE 5b commit 17: 結界構造(結界壁・結界門のアーチ) ---
+  "ward-wall": (part, buf, base) => wardWallPart(part, buf, base),
+  arch: (part, buf, base) => archPart(part, buf, base),
 };
 
 /**
@@ -816,6 +920,16 @@ const INSTANCED_TYPES: Record<
   beam: (part, base, pools) =>
     boxPiece(pools, part, base, -0.5, 0.5, 0, 1, -0.5, 0.5),
   chimney: (part, base, pools) => chimneyPieces(pools, part, base),
+  // --- PHASE 5b commit 17: 境界標・立石(専用プール ward-stones) ---
+  "ward-stone": (part, base, pools) => {
+    const [px, py, pz] = part.transform.position;
+    pools.stones.push({
+      position: [px, py, pz],
+      rotation: part.transform.rotation,
+      scale: [...part.transform.scale],
+      color: pieceColor(base, [px, py + part.transform.scale[1] / 2, pz]),
+    });
+  },
 };
 
 function buildGeoBuffer(buf: GeoBuffer): THREE.BufferGeometry {
@@ -854,6 +968,73 @@ function unitBoxGeometry(): THREE.BufferGeometry {
 function unitPlaneGeometry(): THREE.BufferGeometry {
   const g = new THREE.PlaneGeometry(1, 1);
   g.translate(0, 0.5, 0);
+  return g;
+}
+
+/**
+ * 境界標・立石の単位形状(ward-stones プール用): 先細り(0.58)+
+ * 頂部が +z 側へ前傾した立石。フラット法線(面ごとに頂点を持つ)。
+ */
+function wardStoneGeometry(): THREE.BufferGeometry {
+  const t = 0.29; // 頂部の半幅(taper 0.58)
+  const b: [number, number, number][] = [
+    [-0.5, 0, -0.5],
+    [0.5, 0, -0.5],
+    [0.5, 0, 0.5],
+    [-0.5, 0, 0.5],
+  ];
+  const tp: [number, number, number][] = [
+    [-t, 1, -t],
+    [t, 1, -t],
+    [t, 0.86, t],
+    [-t, 0.86, t],
+  ];
+  const quads: [number, number, number, number][] = [
+    [0, 1, 5, 4], // -z 面
+    [1, 2, 6, 5], // +x 面
+    [2, 3, 7, 6], // +z 面(前傾側)
+    [3, 0, 4, 7], // -x 面
+    [4, 5, 6, 7], // 頂面
+    [3, 2, 1, 0], // 底面
+  ];
+  const v = [...b, ...tp];
+  const positions: number[] = [];
+  const normals: number[] = [];
+  for (const quad of quads) {
+    let [p0, p1, p2, p3] = quad.map((i) => v[i]) as [
+      [number, number, number],
+      [number, number, number],
+      [number, number, number],
+      [number, number, number],
+    ];
+    let nx =
+      (p1[1] - p0[1]) * (p2[2] - p0[2]) - (p1[2] - p0[2]) * (p2[1] - p0[1]);
+    let ny =
+      (p1[2] - p0[2]) * (p2[0] - p0[0]) - (p1[0] - p0[0]) * (p2[2] - p0[2]);
+    let nz =
+      (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0]);
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx /= len;
+    ny /= len;
+    nz /= len;
+    // 法線を立石の中心 (0, 0.5, 0) から外向きへ揃える(巻き順も反転)
+    const cx = (p0[0] + p1[0] + p2[0] + p3[0]) / 4;
+    const cy = (p0[1] + p1[1] + p2[1] + p3[1]) / 4;
+    const cz = (p0[2] + p1[2] + p2[2] + p3[2]) / 4;
+    if (nx * cx + ny * (cy - 0.5) + nz * cz < 0) {
+      [p0, p1, p2, p3] = [p3, p2, p1, p0];
+      nx = -nx;
+      ny = -ny;
+      nz = -nz;
+    }
+    for (const p of [p0, p1, p2, p0, p2, p3]) {
+      positions.push(p[0], p[1], p[2]);
+      normals.push(nx, ny, nz);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
+  g.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(normals), 3));
   return g;
 }
 
@@ -947,11 +1128,12 @@ function glowMaterial(timeUniform: TimeUniform): THREE.MeshStandardMaterial {
 }
 
 /**
- * 建物一式のメッシュを構築する。
+ * 建物+結界構造一式のメッシュを構築する(結界の部品は
+ * mesh/wardparts.ts の展開結果を合流。PHASE 5b commit 17)。
  * 戻り値: 躯体マージ 1 + 屋根マージ 1 + 発光束マージ 1(発光部品が
  * あるときのみ)+ インスタンスプールの InstancedMesh(building-trim /
- * building-openings / building-piles。存在するもののみ)。
- * draw call は建物全体で 6 前後に収まる(1.8節の予算)。
+ * building-openings / building-piles / ward-stones。存在するもののみ)。
+ * draw call は建物+結界全体で 7 前後に収まる(1.8節の予算)。
  * timeUniform はビューワーが毎フレーム更新する共有の時間(水面と同じ流儀)。
  */
 export function buildBuildings(
@@ -961,30 +1143,36 @@ export function buildBuildings(
   const solid: GeoBuffer = { positions: [], normals: [], colors: [], indices: [] };
   const roof: GeoBuffer = { positions: [], normals: [], colors: [], indices: [] };
   const glow: GeoBuffer = { positions: [], normals: [], colors: [], indices: [] };
-  const pools: InstancePools = { boxes: [], planes: [], piles: [] };
+  const pools: InstancePools = { boxes: [], planes: [], piles: [], stones: [] };
   let unknown = 0;
 
-  for (const building of model.buildings as Building[]) {
-    for (const part of building.parts) {
-      const handler = MERGE_HANDLERS[part.type];
-      if (handler) {
-        const buf = ROOF_MATERIAL_IDS.has(part.materialId) ? roof : solid;
-        handler(part, buf, materialColor(part.materialId));
-        continue;
-      }
-      const glowHandler = GLOW_HANDLERS[part.type];
-      if (glowHandler) {
-        glowHandler(part, solid, glow, materialColor(part.materialId));
-        continue;
-      }
-      const instanced = INSTANCED_TYPES[part.type];
-      if (instanced) {
-        instanced(part, materialColor(part.materialId), pools);
-        continue;
-      }
-      unknown++;
+  const processPart = (part: Part): void => {
+    const handler = MERGE_HANDLERS[part.type];
+    if (handler) {
+      const buf = ROOF_MATERIAL_IDS.has(part.materialId) ? roof : solid;
+      handler(part, buf, materialColor(part.materialId));
+      return;
     }
+    const glowHandler = GLOW_HANDLERS[part.type];
+    if (glowHandler) {
+      glowHandler(part, solid, glow, materialColor(part.materialId));
+      return;
+    }
+    const instanced = INSTANCED_TYPES[part.type];
+    if (instanced) {
+      instanced(part, materialColor(part.materialId), pools);
+      return;
+    }
+    unknown++;
+  };
+
+  for (const building of model.buildings as Building[]) {
+    for (const part of building.parts) processPart(part);
   }
+  // 結界構造(PHASE 5b commit 17): mesh/wardparts.ts の展開結果を
+  // 同じ束(躯体/屋根/発光/インスタンスプール)へ合流させる
+  for (const part of expandWardParts(model).parts) processPart(part);
+
   if (unknown > 0) {
     console.warn(`mesh/buildings: 未知の部品型 ${unknown} 件を読み飛ばした`);
   }
@@ -1039,5 +1227,15 @@ export function buildBuildings(
     0.95,
   );
   if (piles) out.push(piles);
+  // 境界標・立石(PHASE 5b)。wardLevel 1 の主要な結界表現のため
+  // 主要 InstancedMesh として影を落とす(contracts「結界構造の立体化」)
+  const stones = buildPoolMesh(
+    pools.stones,
+    wardStoneGeometry(),
+    "ward-stones",
+    true,
+    0.95,
+  );
+  if (stones) out.push(stones);
   return out;
 }

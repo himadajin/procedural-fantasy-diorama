@@ -610,6 +610,66 @@ interface Wards {
   summary.wardOverview(level / ringLength / towers / gates / shrines /
   floaters)を部分的に埋める
 
+#### 結界構造の立体化(PHASE 5b commit 17)
+
+結界壁・魔導塔・結界門・聖域の立体は、**メッシュ層の純関数**
+`src/mesh/wardparts.ts` の `expandWardParts(model)` が Wards 計画+
+`derived` から Part 列(「型+パラメータ」。Part の変換規約に従う)へ
+展開し、`src/mesh/buildings.ts` の既存の束(躯体/屋根/発光/インスタンス
+プール)へ合流させる(設計判断)。パイプラインには置かない:
+
+- 展開は Wards 計画と derived から一意に決まる**表示写像**であり、
+  新しい計画内容を持たない。WorldModel には部品を書き戻さないため、
+  正規化ハッシュ(pipeline.md)は PHASE 5a から不変
+- `wardparts.ts` は three 非依存(WorldModel のみを入力とする純関数)とし、
+  接地・門通過・縮退・発光面積のテストが three を経由せず機械検証できる
+- 乱数ストリームは消費しない。個体差(壁高・立石の寸法・頂部の選択)は
+  すべて位置ハッシュ由来(メッシュ層の既存流儀)
+- 発光面積の正は `src/pipeline/center.ts` の `glowPartArea` を共用する
+  (面積定義を中心建築と二重化しない)
+
+造形の文法(implementation-spec 6章 PHASE 5b、art-direction 2.2 / 5.4 / 6節):
+
+- **結界壁**(`ward-wall`): ringSegments の kind "wall" の辺ごとに
+  基部+壁体+頂縁のセグメントを置く(胸壁・狭間は作らない=非軍事)。
+  壁高は `wallClosure` の連続関数(1.7 + 2.3 × closure。±4% の位置ハッシュ
+  揺らぎ)で、段階内・段階間とも連続に変化する。継ぎ目は長さ +0.35 の
+  重なりで隠す。材は `stone`。壁外面・内面には**間隔規則**
+  (5.5 + 6 × (1 − glowIntensity) の弧長間隔)で縦の発光紋様ライン
+  (`sigil`。小面積)を刻む
+- **縮退(wardLevel 1 / 2。同一文法・別実装にしない)**: 壁セグメントの
+  展開は「wall 弧に沿った歩行器」1 つで行い、wardLevel 1 では壁体の
+  代わりに境界標(`ward-stone`。発光紋様 `sigil` を1本持つ立石)の点列
+  (間隔 7 − 2 × closure)を落とす。2 以上では同じ歩行器が連続壁を出す。
+  弧の途切れ方(閉じ率)は計画側 ringSegments が持つ(1.6節)
+- **水上結界**(kind "overwater"): 壁体を持たない。水面上
+  (y ≈ −0.45 起点、高さ 0.34)の発光ラインの弧を `sigil`(外面+内面)で
+  張る。壁の接地検証から除外される区間の別部品表現
+- **魔導塔**(wards.towers): `plinth` + `tower`(taper 0.8。幅 =
+  clamp(height × 0.16, 1.8, 2.9) で一般建物より明確に細長い)+頂部は
+  水晶(`crystal`。位置ハッシュ < 0.25 + 0.75 × towerScale で採択、
+  発光予算不足時は尖屋根へフォールバック)または尖屋根(`spire`、
+  材 `slate`)。塔身に `sigil` のリング(glowIntensity ≥ 0.25 で 2 段、
+  未満で 1 段 × 4 面)。躯体材は `stone`(art-direction 5.1節)
+- **結界門**(wards.gates): `arch`(アーチ開口の門躯体)+両脇の
+  小塔(`tower` + 頂部)+発光門紋(`sigil` の菱形紋+脚の縦帯。両面)。
+  開口幅 = 道路幅 + 1.8、開口天端 = 3.4 + 1.2 × gateScale
+  (道路は必ず開口をくぐれる)。門開口の "gap" 弧(段8)が壁を開けるため、
+  門前広場・道路との接続を壊さない
+- **聖域**(wards.shrines): kind "shrine" = 基壇+躯体+石の切妻+
+  `door` +門前紋様の小さな祠 / "stones" = 立石の環(`ward-stone` × 6。
+  紋様は内向き)/ "crystals" = 岩座+水晶クラスタ(`crystal` × 4。
+  中央大+周囲小)
+- **発光の規律**: 発光は既存の `buildings-glow` 束へ合流する
+  (マテリアル規範・明滅・reduced-motion は PHASE 5a の束の規範のまま。
+  draw call は増えない)。結界要素の発光面積合計は
+  `glowAreaCap × 箱庭面積 × 0.65`(結界の取り分。中心建築の 0.35 の残り)
+  以下とし、予算順(塔頂 → 門紋 → 聖域 → 境界標 → 壁紋様 → 水上弧)に
+  採択して超過分を打ち切る。`glowIntensity` は紋様の間隔(密度)へ効く
+- **デバッグ描画の置換範囲**: `src/mesh/planmarks.ts` から結界環ライン・
+  塔/門/聖域マーカーを撤去する。魔法灯・浮遊要素・BridgeSite のマーカーは
+  commit 18(立体化の担当)まで残す
+
 ### Parcel / Building(PHASE 4a、部品の拡張は PHASE 4b・5a)
 
 ```ts
@@ -763,6 +823,22 @@ PHASE 5a commit 16 の追加語彙(中心建築の拡張文法):
   周期約 5.5 秒、位相は位置ハッシュ由来(乱数ストリーム非消費)。
   prefers-reduced-motion では uniform が更新されず静止する。
   Bloom・動的光源は使わない。castShadow は false
+
+PHASE 5b commit 17 の追加語彙(結界構造。部品の出所は Building.parts では
+なく `src/mesh/wardparts.ts` の展開結果 — Wards 節「結界構造の立体化」):
+
+| type | 経路 | 形状 | scale の意味 | params |
+|---|---|---|---|---|
+| `ward-wall` | マージ(躯体) | 結界壁セグメント(基部+壁体+頂縁。胸壁・狭間なし)。基部・頂縁の張り出しと基部高(0.42)・頂縁高(0.3)は実寸固定でピース生成時に scale から逆算する | 長さ×高さ×厚み(壁体) | なし |
+| `arch` | マージ(躯体) | アーチ開口を持つ門躯体(両脚+アーチ頭+開口ソフィット)。開口はローカル z 方向へ貫通し、アーチはワールドで半円に近づくよう縦半径を scale から決める。橋(PHASE 5b commit 18)と共用できる汎用形状 | スパン×全高×厚み | `open`: 開口幅/スパン(0〜1)、`rise`: 開口天端高/全高(0〜1) |
+| `ward-stone` | インスタンス(専用プール `ward-stones`) | 境界標・立石(先細り・頂部が前傾した立石)。ワールド形状は部品 1 つ = 1 インスタンス | 幅×高さ×奥行き | なし |
+
+- 再利用する既存語彙: `plinth` / `tower` / `spire` / `crystal` / `sigil` /
+  `gable` / `door`
+- `ward-stones` は建物の共有プール(building-trim 等)とは独立の
+  InstancedMesh 1 つ(draw call +1)。境界標は wardLevel 1 の主要な結界
+  表現のため、主要 InstancedMesh として castShadow: true とする。
+  instanceColor は石の基準色 × ±8% の個体ムラ(位置ハッシュ由来)
 
 #### materialId の語彙(基準色は art-direction 5.1節)
 

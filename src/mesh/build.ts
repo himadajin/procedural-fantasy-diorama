@@ -431,10 +431,11 @@ export function buildWorld(model: WorldModel): THREE.Group {
   if (paving) group.add(paving);
   if (piles) group.add(piles);
 
-  // 建物(躯体マージ+屋根マージ+発光束+杭 InstancedMesh。mesh/buildings.ts)
+  // 建物+結界構造(躯体/屋根/発光マージ+各 InstancedMesh。
+  // 結界の部品展開は mesh/wardparts.ts。mesh/buildings.ts が束ねる)
   for (const obj of buildBuildings(model, timeUniform)) group.add(obj);
 
-  // 計画デバッグ描画(結界環ライン+マーカー。PHASE 5b で立体に置換)
+  // 計画デバッグ描画(魔法灯・浮遊要素・BridgeSite。commit 18 で立体に置換)
   const planMarks = buildPlanMarks(model);
   if (planMarks) group.add(planMarks);
 

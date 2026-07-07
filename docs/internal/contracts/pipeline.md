@@ -9,6 +9,12 @@
 - `rng/`・`model/`・`pipeline/` は Three.js 非依存の純関数群とする。
   `three` の import を禁止し、ESLint の import 制約で機械化する。
 - `mesh/` は WorldModel のみを入力とし、パイプラインの内部状態に依存しない。
+  純関数の共用は状態依存ではないため許す(例: 発光面積の正
+  `pipeline/center.ts` の `glowPartArea` を `mesh/wardparts.ts` が共用する。
+  worldmodel.md「結界構造の立体化」)。
+- `mesh/wardparts.ts`(結界立体の Part 展開。PHASE 5b commit 17)は
+  mesh 配下だが three 非依存の純関数とし、テストから直接検証できる。
+  WorldModel には書き戻さない(正規化ハッシュに影響しない)。
 - `viewer/` は時間演出(浮遊の上下動、発光の明滅、カメラ慣性)を担当する。
   時間・表示状態を WorldModel に書き戻さない。
 - `ui/` は params と seed の編集、Generate の発火、サマリー表示のみを行う。
