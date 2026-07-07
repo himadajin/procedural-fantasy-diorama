@@ -1,7 +1,7 @@
 /**
  * 段13「小道」: 建物裏手を結ぶ細い道と、水路沿いの岸沿い道(towpath)を
  * lane class の edge として道路網へ追記する(PHASE 4b commit 15)。
- * データの正は docs/internal/contracts/worldmodel.md(Network 節
+ * データの正は docs/internal/contracts/network-plaza.md(Network 節
  * 「小道の性質」)、段の位置づけは contracts/pipeline.md の段契約表。
  *
  * - 段12「建物」の後に走る専用段(建物 footprint・広場・水路の最終配置を
@@ -38,7 +38,7 @@ function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
 }
 
-/** 小道の幅(実寸。contracts/worldmodel.md Network 節) */
+/** 小道の幅(実寸。contracts/network-plaza.md Network 節) */
 export const LANE_WIDTH = 1.6;
 /** 等級の格下げ(lane = roadGrade − 0.5、下限 0。道路より低い等級) */
 export const LANE_GRADE_DROP = 0.5;

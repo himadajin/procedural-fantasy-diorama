@@ -1,6 +1,6 @@
 /**
  * 段14「植生」(PHASE 6 commit 20)のテスト。
- * 契約は docs/internal/contracts/worldmodel.md(Vegetation 節)と
+ * 契約は docs/internal/contracts/vegetation-summary.md(Vegetation 節)と
  * contracts/pipeline.md の段契約表。implementation-spec 7章の完了条件
  * (衝突なし・植生勾配・森リング・岸辺植生・draw call 予算・決定性)に対応する。
  */

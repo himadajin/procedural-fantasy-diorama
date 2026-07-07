@@ -131,7 +131,7 @@ describe("siting: 主中心と占有範囲", () => {
       const cz = fp.reduce((s, p) => s + p.z, 0) / fp.length;
       expect(cx).toBeCloseTo(model.centerPlan.position.x, 9);
       expect(cz).toBeCloseTo(model.centerPlan.position.z, 9);
-      // 時計回り(shoelace 符号負。contracts/worldmodel.md 基本型)
+      // 時計回り(shoelace 符号負。contracts/worldmodel-core.md 基本型)
       let shoelace = 0;
       for (let i = 0; i < fp.length; i++) {
         const p = fp[i];

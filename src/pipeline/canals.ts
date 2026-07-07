@@ -1,11 +1,11 @@
 /**
  * 段6「水路」: canalScore 発火で川・湖から分岐して中心域を通る水路を計画し、
  * 道路との交差区間を BridgeSite として仮追加する。
- * データの正は docs/internal/contracts/worldmodel.md(Water 節)、
+ * データの正は docs/internal/contracts/ground-water.md(Water 節)、
  * 設計は implementation-spec 1.3節(段6)・PHASE 3・9節(リスクと対策)。
  *
  * - 水路は waterfield・岸線・zoneMask に影響させない(護岸で縁取られた
- *   掘り込みチャネルとして扱う設計判断。contracts/worldmodel.md)。
+ *   掘り込みチャネルとして扱う設計判断。contracts/ground-water.md)。
  *   立体化(水面+護岸+杭)と zoneMask 上書きは PHASE 3 commit 11 の担当
  * - 水路 1 本が生む BridgeSite は最大 3。超過時は経路と蛇行を縮めて交差が
  *   減る方向へ再サンプルし、3 回のリトライで収まらなければ棄却する
@@ -15,7 +15,7 @@
  * - 経由点は主道どうしの角度間隙へ向け、道路交差の発生を構造的に抑える
  * - 始端・終端の接続部を除き、中間点は既存水域(川・湖)の外へ押し出す
  *   (川筋の中を走る水路は「街の水路」として現れないため。
- *   contracts/worldmodel.md Water 節)
+ *   contracts/ground-water.md Water 節)
  */
 import { makeRng } from "../rng";
 import type { Canal, Vec2, WorldModel } from "../model/worldmodel";
@@ -185,7 +185,7 @@ function enforceCorridor(
 
 /**
  * 経路の中間点を既存水域(川・湖)の外へ押し出す
- * (contracts/worldmodel.md Water 節。目安は「中心線の waterSdf ≥ 幅/2 + 1」)。
+ * (contracts/ground-water.md Water 節。目安は「中心線の waterSdf ≥ 幅/2 + 1」)。
  *
  * - 始端・終端の接続窓(弧長 width×2+4)は水域接続のため押し出さない
  * - 深い点(waterSdf < −(幅/2+6))は水域横断・湖内の接続部とみなし保持する
@@ -337,7 +337,7 @@ function buildCanalPath(
 
 /**
  * 経路の中間部(接続窓を除く)の陸上率。押し出し後もこの値が低い経路は
- * 水中に沈んだままで「街の水路」として現れない(contracts/worldmodel.md)
+ * 水中に沈んだままで「街の水路」として現れない(contracts/ground-water.md)
  */
 function midLandFraction(
   points: Vec2[],
@@ -360,7 +360,7 @@ function midLandFraction(
 /**
  * 中間部の陸上率の下限(これ未満はリトライ)。全試行が満たさない場合は
  * 交差上限を満たす試行のうち陸上率最大のものを受理する(水域が広い設定で
- * 良路の全滅により本数の単調性を壊さないため。contracts/worldmodel.md)
+ * 良路の全滅により本数の単調性を壊さないため。contracts/ground-water.md)
  */
 const CANAL_MIN_LAND_FRACTION = 0.7;
 
@@ -443,7 +443,7 @@ function planCanal(
       x: center.x + Math.cos(viaAngle) * viaDist,
       z: center.z + Math.sin(viaAngle) * viaDist,
     };
-    // 経由点が水中なら陸側へ押し出す(contracts/worldmodel.md Water 節)
+    // 経由点が水中なら陸側へ押し出す(contracts/ground-water.md Water 節)
     for (let k = 0; k < 20; k++) {
       const d = field.waterSdf(via.x, via.z);
       if (d >= width / 2 + 1) break;
@@ -493,7 +493,7 @@ function planCanal(
 /**
  * フォールバックの堀留: 水域のアンカーから中心域へ向かう短い水路。
  * 終端は陸上へ押し出して「街区内で止まる」を保証し(見えない水中の堀留を
- * 作らない。contracts/worldmodel.md)、終端が中心へ最も近くなるアンカーを
+ * 作らない。contracts/ground-water.md)、終端が中心へ最も近くなるアンカーを
  * 決定論的に選ぶ。交差が上限以下になる弧長へ切り詰める(始端のみ水域接続)。
  */
 function planFallbackCanal(

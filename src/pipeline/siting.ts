@@ -1,7 +1,7 @@
 /**
  * 段4「立地評価」: 主中心の位置・中心建築の予定地(占有範囲)・4軸スコアと、
  * 外縁の進入点を確定する。
- * データの正は docs/internal/contracts/worldmodel.md(CenterPlan / Network 節)、
+ * データの正は docs/internal/contracts/network-plaza.md(CenterPlan / Network 節)、
  * 設計は implementation-spec 1.3節(段4)・1.7節・PHASE 3。
  *
  * - 主中心のスコア = 水辺近接×√Water + 中央寄り + 進入点からのアクセス性

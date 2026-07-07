@@ -133,7 +133,7 @@ export interface CrossingInterval {
 /**
  * 折れ線に沿って sdf を標本化し、負(水中)の区間ごとに渡り区間を返す。
  * 水際は隣接標本間の線形補間で確定する。BridgeSite 抽出
- * (contracts/worldmodel.md Water 節)と水路の道路交差カウントの共通実装。
+ * (contracts/ground-water.md Water 節)と水路の道路交差カウントの共通実装。
  */
 export function waterCrossings(
   path: Vec2[],
@@ -299,7 +299,7 @@ export function ensureClockwise(polygon: Polygon): Polygon {
 
 /**
  * BridgeSite の安定 id の基部(中点座標由来。小数1桁へ丸め)。
- * contracts/worldmodel.md Water 節。
+ * contracts/ground-water.md Water 節。
  */
 export function bridgeBaseId(p: Vec2): string {
   const fmt = (v: number): string => (Math.abs(v) < 0.05 ? 0 : v).toFixed(1);

@@ -71,7 +71,7 @@ function riverLakeSdf(model: WorldModel): (x: number, z: number) => number {
   ).waterSdf;
 }
 
-describe("buildings: 決定性(contracts/worldmodel.md Building 節)", () => {
+describe("buildings: 決定性(contracts/buildings.md Building 節)", () => {
   it("同一 seed + params で buildings が完全一致する", () => {
     for (const seed of SEEDS) {
       const a = build(seed);

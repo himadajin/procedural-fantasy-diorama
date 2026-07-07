@@ -1,6 +1,6 @@
 /**
  * 結界構造(結界壁・魔導塔・結界門・聖域)と魔法灯・浮遊要素の Part 展開
- * (PHASE 5b commit 17〜18。contracts/worldmodel.md「結界構造の立体化」
+ * (PHASE 5b commit 17〜18。contracts/wards.md「結界構造の立体化」
  * 「魔法灯・浮遊要素・橋の立体化」が正)。
  *
  * 設計判断: 展開は Wards 計画+derived から一意に決まる表示写像であり、
@@ -129,7 +129,7 @@ export function glowInstanceArea(inst: FloatInstance): number {
  * (art-direction 3節。半径小・彩度控えめ)。
  * 設計判断: zoneMask は WorldModel(正規化ハッシュの対象)のため、
  * 照り返しは表示写像としてメッシュ側の頂点カラー処理で行う
- * (contracts/worldmodel.md「魔法灯・浮遊要素・橋の立体化」)。
+ * (contracts/wards.md「魔法灯・浮遊要素・橋の立体化」)。
  * 地面(mesh/build.ts)と舗装(mesh/paving.ts)が共有する。
  */
 export function createLampTint(model: WorldModel): (x: number, z: number) => number {
@@ -218,7 +218,7 @@ function ringEdges(ring: Vec2[], center: Vec2): RingEdge[] {
   return edges;
 }
 
-/** 結界構造一式を Part 列へ展開する(contracts/worldmodel.md が正) */
+/** 結界構造一式を Part 列へ展開する(contracts/wards.md が正) */
 export function expandWardParts(model: WorldModel): WardExpansion {
   const { derived } = model.meta;
   const wards = model.wards;

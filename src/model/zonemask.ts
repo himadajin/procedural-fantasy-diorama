@@ -1,13 +1,13 @@
 /**
  * 材質ゾーングリッド(ZoneMask)の実体表現とアクセスヘルパー。
- * 表現の正は docs/internal/contracts/worldmodel.md(Ground 節)。
+ * 表現の正は docs/internal/contracts/ground-water.md(Ground 節)。
  * プレーンな JSON シリアライズ可能データと純関数のみで構成する(three 非依存)。
  */
 
 /**
  * 材質ゾーンの種類。この並びが weights のチャネル順の正。
  * grass/dirt は地面段、sandbar/marsh は水系段、paved は段10「舗装」が書く
- * (contracts/worldmodel.md ZoneMask 節)。
+ * (contracts/ground-water.md ZoneMask 節)。
  */
 export const ZONE_KINDS = ["grass", "dirt", "sandbar", "marsh", "paved"] as const;
 export type ZoneKind = (typeof ZONE_KINDS)[number];
@@ -60,7 +60,7 @@ function clampIndex(i: number, max: number): number {
 /**
  * ワールド座標 (x, z) の材質ゾーンをバイリニア補間でサンプリングする。
  * セル中心を格子点とし、グリッド範囲外は端のセルへクランプする。
- * メッシュビルダーが頂点カラーへ変換する際の正とする(contracts/worldmodel.md)。
+ * メッシュビルダーが頂点カラーへ変換する際の正とする(contracts/ground-water.md)。
  */
 export function sampleZoneMask(mask: ZoneMask, x: number, z: number): ZoneSample {
   const { resolution, cellSize, weights, brightness } = mask;

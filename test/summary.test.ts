@@ -73,7 +73,7 @@ function modelWithAxes(
   return m;
 }
 
-describe("段15 サマリー: WorldModel 実態との一致(contracts/worldmodel.md Summary 節)", () => {
+describe("段15 サマリー: WorldModel 実態との一致(contracts/vegetation-summary.md Summary 節)", () => {
   // 特徴の出やすい水準を混ぜた代表組
   const CASES: [string, Params][] = [
     ["default", DEFAULT_PARAMS],

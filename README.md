@@ -16,8 +16,11 @@ npm run dev
 
 ## ドキュメント
 
+- **AI エージェント向け入口**(コマンド・文書地図・不変条件): [AGENTS.md](AGENTS.md)
 - 利用ガイド(操作・パラメータの意味): [docs/user/README.md](docs/user/README.md)
 - 内部仕様(何であるか / どう見えるか / どう作るか):
   [docs/internal/specs/](docs/internal/specs/)
-- データ契約(WorldModel・パイプライン): [docs/internal/contracts/](docs/internal/contracts/)
-- 実装計画・検証記録: [docs/internal/plans/](docs/internal/plans/)
+- データ契約(WorldModel・パイプライン。索引: [contracts/README.md](docs/internal/contracts/README.md)):
+  [docs/internal/contracts/](docs/internal/contracts/)
+- 開発ワークフロー規範(進め方・レビュー体制): [docs/internal/workflow.md](docs/internal/workflow.md)
+- 実装計画・検証記録(歴史的記録・凍結): [docs/internal/plans/](docs/internal/plans/)

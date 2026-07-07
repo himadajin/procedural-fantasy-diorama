@@ -1,7 +1,7 @@
 /**
  * 結界構造の立体化(PHASE 5b commit 17)のテスト。
  * 展開はメッシュ層の純関数 src/mesh/wardparts.ts(three 非依存)のため、
- * three を経由せず機械検証できる(contracts/worldmodel.md「結界構造の立体化」)。
+ * three を経由せず機械検証できる(contracts/wards.md「結界構造の立体化」)。
  */
 import { describe, expect, it } from "vitest";
 import {

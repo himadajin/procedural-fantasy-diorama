@@ -1,7 +1,7 @@
 /**
  * 段9「広場」: 中心前・結界門前・橋詰め・主道交差点の空地ポリゴンを確定し、
  * centerPlan.facing / heightHint を埋める。
- * データの正は docs/internal/contracts/worldmodel.md(Plaza / CenterPlan 節)、
+ * データの正は docs/internal/contracts/network-plaza.md(Plaza / CenterPlan 節)、
  * 設計は implementation-spec 1.3節(段9)・PHASE 3。舗装の描画と zoneMask
  * 上書きは PHASE 3 commit 11 の担当。
  *

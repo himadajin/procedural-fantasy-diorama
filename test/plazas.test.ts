@@ -54,7 +54,7 @@ describe("plazas: 決定性", () => {
   });
 });
 
-describe("plazas: 空地ポリゴンの確定(contracts/worldmodel.md Plaza 節)", () => {
+describe("plazas: 空地ポリゴンの確定(contracts/network-plaza.md Plaza 節)", () => {
   it("中心前広場が存在し、種別が契約の範囲(courtyard は段12 の中庭のみ)", async () => {
     for (const seed of SEEDS) {
       for (const over of [{}, { water: 70 }, { monumentality: 95 }]) {

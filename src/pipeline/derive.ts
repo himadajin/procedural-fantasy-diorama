@@ -1,6 +1,6 @@
 /**
  * 段1「導出設定」: 6パラメータ(0〜100)を内部変数群へ写像する。
- * フィールドの正は docs/internal/contracts/worldmodel.md(Meta 節)、
+ * フィールドの正は docs/internal/contracts/worldmodel-core.md(Meta 節)、
  * 設計意図は implementation-spec 1.6節。
  *
  * 各写像はパラメータに対して単調とし、seed 揺らぎは進入点数・河川本数の

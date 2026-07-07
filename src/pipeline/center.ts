@@ -1,6 +1,6 @@
 /**
  * 中心建築の拡張文法(PHASE 5a commit 16)。
- * 契約は docs/internal/contracts/worldmodel.md「中心建築(PHASE 5a commit 16)」、
+ * 契約は docs/internal/contracts/buildings.md「中心建築(PHASE 5a commit 16)」、
  * 設計は implementation-spec 1.7節(4軸スコア・モードなし連続分岐)・PHASE 5a。
  *
  * - 段12「建物」が一般建物の展開後に呼び、buildings の末尾へ 1 棟追加する

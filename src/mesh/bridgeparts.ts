@@ -1,6 +1,6 @@
 /**
  * 橋(石造アーチ橋・木橋・水路の小橋)の Part 展開(PHASE 5b commit 18。
- * contracts/worldmodel.md「魔法灯・浮遊要素・橋の立体化」が正)。
+ * contracts/wards.md「魔法灯・浮遊要素・橋の立体化」が正)。
  *
  * 設計判断: 展開は water.bridges / network / derived から一意に決まる
  * **表示写像**であり、新しい計画内容を持たないため、パイプラインではなく
@@ -585,7 +585,7 @@ function expandCanalBridge(
   };
 }
 
-/** 橋一式を Part 列へ展開する(contracts/worldmodel.md が正) */
+/** 橋一式を Part 列へ展開する(contracts/wards.md が正) */
 export function expandBridgeParts(model: WorldModel): BridgeExpansion {
   const parts: Part[] = [];
   const bridges: BridgeBuildInfo[] = [];

@@ -1,6 +1,6 @@
 /**
  * 段14「植生」: 樹木・低木・草むらをマスクベースで散布する
- * (PHASE 6 commit 20)。データの正は docs/internal/contracts/worldmodel.md
+ * (PHASE 6 commit 20)。データの正は docs/internal/contracts/vegetation-summary.md
  * (Vegetation 節)、段の位置づけは contracts/pipeline.md の段契約表。
  *
  * - セル格子(一辺 VEG_CELL)ごとに候補 1 点。乱数はセルごとの独立
@@ -36,7 +36,7 @@ function smoothstep(edge0: number, edge1: number, v: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/** 散布セルの一辺(実寸。contracts/worldmodel.md Vegetation 節) */
+/** 散布セルの一辺(実寸。contracts/vegetation-summary.md Vegetation 節) */
 export const VEG_CELL = 5.0;
 /** InstancedMesh 上限(性能配慮。同節) */
 export const TREE_MAX = 2000;
@@ -294,7 +294,7 @@ interface MaskProbs {
 /**
  * 散布マスク: 優先順位(森リング > 外縁草地 > 道・広場周辺 > 内地)で
  * 基準カテゴリを決め、水辺(shoreVegetation 駆動)を森リング外の帯へ
- * 加算し、結界内・市街地の抑制を乗じる(contracts/worldmodel.md
+ * 加算し、結界内・市街地の抑制を乗じる(contracts/vegetation-summary.md
  * Vegetation 節の優先順位)。
  */
 function maskAt(

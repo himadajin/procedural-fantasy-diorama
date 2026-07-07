@@ -1,7 +1,7 @@
 /**
  * 段2「地面」: World Scale 駆動の実寸、seed ごとに歪む有機的な外縁境界ポリゴン、
  * 材質ゾーン(zoneMask)の下地を生成する。
- * データの正は docs/internal/contracts/worldmodel.md(Ground 節)。
+ * データの正は docs/internal/contracts/ground-water.md(Ground 節)。
  *
  * - 境界は低周波の調和波で円を歪めた星形ポリゴン(makeRng(seed, "ground"))。
  *   閉多角形・自己交差なし・時計回り(shoelace 符号負)を保証する
@@ -114,6 +114,6 @@ export function runGround(model: WorldModel): void {
   model.ground.boundary = generateBoundary(model.meta.seed, size);
   model.ground.zoneMask = generateZoneMask(model.meta.seed, size);
   // サマリーは段13(summary)の担当だが、中間PHASEでは部分的に埋める
-  // (contracts/worldmodel.md の Summary 節)
+  // (contracts/vegetation-summary.md の Summary 節)
   model.summary.scale.worldSize = size;
 }

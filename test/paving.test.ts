@@ -79,7 +79,7 @@ describe("paving: 決定性", () => {
   });
 });
 
-describe("paving: footprint の上書き(contracts/worldmodel.md ZoneMask 節)", () => {
+describe("paving: footprint の上書き(contracts/ground-water.md ZoneMask 節)", () => {
   it("道路の経路上(陸上)で舗装チャネルが上書きされている", () => {
     for (const seed of SEEDS) {
       const model = build(seed);

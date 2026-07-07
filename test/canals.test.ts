@@ -38,7 +38,7 @@ describe("canals: 決定性", () => {
   });
 });
 
-describe("canals: 発火条件と接続(contracts/worldmodel.md Water 節)", () => {
+describe("canals: 発火条件と接続(contracts/ground-water.md Water 節)", () => {
   it("デフォルト(全パラメータ50)で必ず1本以上生成される", () => {
     for (const seed of SEEDS) {
       const model = build(seed);

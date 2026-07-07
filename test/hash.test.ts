@@ -42,7 +42,7 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   // commit 21(PHASE 7)でサマリーぶんを更新。意図した変更:
   // 段15「サマリー」が summary(buildingCounts / centerDescription /
   // waterOverview / wardOverview / scale)を最終確定する
-  // (contracts/worldmodel.md Summary 節)。段15 は乱数を消費しないが、
+  // (contracts/vegetation-summary.md Summary 節)。段15 は乱数を消費しないが、
   // 従来 buildingCounts は {}・centerDescription は "" のままだったのに対し、
   // 本段が両者を最終状態から機械算出して埋めるため、8 組すべてのハッシュが
   // 変わる(その他のフィールドは commit 20 から不変)。summary.complexity は

@@ -1,6 +1,6 @@
 /**
  * PHASE 4a commit 13: 骨格文法(materials / parts)と zoneMask 建物上書きの
- * テスト。契約は docs/internal/contracts/worldmodel.md
+ * テスト。契約は docs/internal/contracts/buildings.md
  * 「Part の型語彙」「materialId の語彙」「建物部品の性質」。
  */
 import { describe, expect, it } from "vitest";
@@ -30,7 +30,7 @@ import { FLOOR_HEIGHT, runBuildings } from "../src/pipeline/buildings";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
-/** materialId の語彙(contracts/worldmodel.md = art-direction 5.1節) */
+/** materialId の語彙(contracts/materials.md = art-direction 5.1節) */
 const WALL_IDS = ["rough-wood", "plaster", "stone", "ashlar"];
 const ROOF_IDS = ["thatch", "shingle", "tile", "slate"];
 const TRIM_IDS = ["wood", "stone"];
@@ -145,7 +145,7 @@ describe("building parts: 決定性", () => {
   });
 });
 
-describe("building parts: 語彙(contracts/worldmodel.md)", () => {
+describe("building parts: 語彙(contracts/buildings.md)", () => {
   it("materials が語彙に収まり、trim は石造壁のとき stone", () => {
     for (const [seed, over] of COMBOS) {
       for (const b of general(cached(seed, over))) {
