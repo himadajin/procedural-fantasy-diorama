@@ -12,6 +12,7 @@ import {
   sunDirection,
 } from "./constants";
 import { createSky } from "./sky";
+import { PRESETS, type RenderPreset } from "./preset";
 
 export interface Viewer {
   scene: THREE.Scene;
@@ -22,6 +23,12 @@ export interface Viewer {
   /** ワールド実寸の変更に追従(霧密度、影カメラ、空の半径) */
   setWorldSize(size: number): void;
   worldSize(): number;
+  /**
+   * 描画プリセットの適用(pixelRatio・影解像度・影カメラ far)。
+   * 表示のみを変え、絵(色・光・構図)は変えない
+   * (contracts/pipeline.md「描画プリセット・LOD・デバッグ表示」)
+   */
+  setRenderPreset(preset: RenderPreset): void;
   /** 毎フレーム呼ばれるコールバックを登録し、解除関数を返す(dt: 秒, elapsed: 秒) */
   onFrame(cb: (dt: number, elapsed: number) => void): () => void;
   dispose(): void;
@@ -41,7 +48,11 @@ export function createViewer(container: HTMLElement): Viewer | null {
     return null;
   }
 
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // プリセット(pixelRatio 上限・影解像度・影の距離のみ表示側で変える)。
+  // 初期値は「高」。起動時判定・実測補正は main が setRenderPreset で行う
+  let preset: RenderPreset = PRESETS.high;
+
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, preset.pixelRatioMax));
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = EXPOSURE;
@@ -61,7 +72,7 @@ export function createViewer(container: HTMLElement): Viewer | null {
   const sunDir = sunDirection();
   const sun = new THREE.DirectionalLight(SUN_COLOR, SUN_INTENSITY);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
   sun.shadow.bias = -0.0005;
   sun.shadow.normalBias = 0.5;
   scene.add(sun);
@@ -102,7 +113,7 @@ export function createViewer(container: HTMLElement): Viewer | null {
     cam.top = half;
     cam.bottom = -half;
     cam.near = 1;
-    cam.far = next * 3;
+    cam.far = next * preset.shadowFarFactor;
     cam.updateProjectionMatrix();
     sun.position.set(sunDir.x, sunDir.y, sunDir.z).multiplyScalar(next);
     sun.target.position.set(0, 0, 0);
@@ -113,6 +124,30 @@ export function createViewer(container: HTMLElement): Viewer | null {
     (sky.material as THREE.Material).dispose();
     sky = createSky(next * 4);
     scene.add(sky);
+  };
+
+  // プリセット適用: pixelRatio・影マップ解像度・影カメラ far。
+  // 実測補正でライブに切り替わるため、旧影マップは必ず dispose する
+  const setRenderPreset = (next: RenderPreset): void => {
+    preset = next;
+    renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio, preset.pixelRatioMax),
+    );
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    if (
+      sun.shadow.mapSize.x !== preset.shadowMapSize &&
+      sun.shadow.map
+    ) {
+      // 解像度変更時は旧レンダーターゲットを破棄して再確保させる(漏れ防止)
+      sun.shadow.map.dispose();
+      sun.shadow.map = null;
+    }
+    sun.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
+    if (size > 0) {
+      const cam = sun.shadow.camera;
+      cam.far = size * preset.shadowFarFactor;
+      cam.updateProjectionMatrix();
+    }
   };
 
   const frameCallbacks: ((dt: number, elapsed: number) => void)[] = [];
@@ -142,6 +177,7 @@ export function createViewer(container: HTMLElement): Viewer | null {
     worldGroup,
     setWorldSize,
     worldSize: () => size,
+    setRenderPreset,
     onFrame: (cb) => {
       frameCallbacks.push(cb);
       return () => {

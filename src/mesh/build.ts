@@ -235,6 +235,15 @@ export interface WaterTimeUniform {
 }
 
 /**
+ * 水面ノイズの簡略度 uniform(1=3オクターブ / 0=1オクターブ)。
+ * 描画プリセットが表示側で切り替える(WorldModel・色の規範は不変。
+ * contracts/pipeline.md「描画プリセット・LOD・デバッグ表示」)
+ */
+export interface WaterDetailUniform {
+  value: number;
+}
+
+/**
  * 水面メッシュ。河川スプライン+湖ポリゴン(+外縁水面)から生成し、
  * 水面高 y=-0.6 に置く。岸距離による浅瀬→深みの色を頂点カラーに焼き、
  * 低周波の緩い法線揺らぎと控えめなフレネル風ハイライトを
@@ -246,6 +255,7 @@ function buildWater(
   model: WorldModel,
   field: WaterField,
   timeUniform: WaterTimeUniform,
+  detailUniform: WaterDetailUniform,
 ): THREE.Mesh | null {
   const size = model.ground.size;
   const seaEdge = model.ground.edgeStyle === "water";
@@ -365,6 +375,7 @@ function buildWater(
   });
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uWaterTime = timeUniform;
+    shader.uniforms.uWaterDetail = detailUniform;
     shader.vertexShader = shader.vertexShader
       .replace(
         "#include <common>",
@@ -377,22 +388,30 @@ function buildWater(
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
-        "#include <common>\nuniform float uWaterTime;\nvarying vec3 vWaterWorld;",
+        "#include <common>\nuniform float uWaterTime;\nuniform float uWaterDetail;\nvarying vec3 vWaterWorld;",
       )
       .replace(
         "#include <normal_fragment_begin>",
         `#include <normal_fragment_begin>
         {
           // 低周波ノイズの緩い法線揺らぎ(art-direction 7節)。時間はビューワーの uniform。
-          // 周波数は非整数比で混ぜ、縞に見えないようにする
+          // 周波数は非整数比で混ぜ、縞に見えないようにする。
+          // uWaterDetail は描画プリセットの簡略度(1=3オクターブ / 0=主
+          // オクターブのみ。uniform 分岐なので実行パスは一様に短絡される)
           float t = uWaterTime * 0.45;
           vec2 wp = vWaterWorld.xz;
-          float nx = sin(wp.x * 0.231 + wp.y * 0.113 + t)
-                   + 0.7 * sin(wp.x * 0.071 - wp.y * 0.157 + t * 0.73)
-                   + 0.5 * sin(wp.y * 0.317 - t * 0.61);
-          float nz = cos(wp.y * 0.197 - wp.x * 0.089 - t * 0.87)
-                   + 0.7 * sin(wp.x * 0.149 + wp.y * 0.059 + t * 0.55)
-                   + 0.5 * cos(wp.x * 0.283 + t * 0.49);
+          float nx = sin(wp.x * 0.231 + wp.y * 0.113 + t);
+          float nz = cos(wp.y * 0.197 - wp.x * 0.089 - t * 0.87);
+          if (uWaterDetail > 0.5) {
+            nx += 0.7 * sin(wp.x * 0.071 - wp.y * 0.157 + t * 0.73)
+                + 0.5 * sin(wp.y * 0.317 - t * 0.61);
+            nz += 0.7 * sin(wp.x * 0.149 + wp.y * 0.059 + t * 0.55)
+                + 0.5 * cos(wp.x * 0.283 + t * 0.49);
+          } else {
+            // 簡略時も揺らぎの見かけの振幅を保つ(絵の規範は同一)
+            nx *= 1.4;
+            nz *= 1.4;
+          }
           normal = normalize(normal + vec3(nx, 0.0, nz) * 0.028);
         }`,
       )
@@ -428,7 +447,11 @@ export function buildWorld(model: WorldModel): THREE.Group {
   // main が更新を止めるため両方とも静止する)
   const timeUniform: WaterTimeUniform = { value: 0 };
   group.userData.waterTime = timeUniform;
-  const water = buildWater(model, field, timeUniform);
+  // 水面ノイズの簡略度(描画プリセット。既定は高=3オクターブ。
+  // main が userData 経由でライブに切り替える)
+  const detailUniform: WaterDetailUniform = { value: 1 };
+  group.userData.waterDetail = detailUniform;
+  const water = buildWater(model, field, timeUniform, detailUniform);
   if (water) group.add(water);
 
   // 道路・広場・水路の護岸(マージ 1 メッシュ)+杭(InstancedMesh 1)

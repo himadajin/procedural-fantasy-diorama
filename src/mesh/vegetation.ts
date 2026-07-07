@@ -14,6 +14,12 @@
  *   broadleaf = 主塊+側塊 1〜2 / conifer = 縦積み 3 塊の先細り。
  *   個体差は tree フィールド+位置ハッシュ由来(乱数ストリーム非消費)
  * - 色は art-direction 5.3節。樹冠は明度階段の「屋根と壁の間」(同 2.2節)
+ * - 描画プリセットの表示個体数上限(PHASE 7 commit 22): 個体(樹木・低木)を
+ *   位置ハッシュの優先順位で降順に整列してインスタンスを積み、
+ *   各メッシュの userData.vegBudget(prefix 表)で viewer 側が count を絞る。
+ *   幹と樹冠の間引きは同じ個体集合で揃う。上限無制限のとき表示集合は
+ *   全個体で、整列は描画順のみの違い(絵は不変)。
+ *   contracts/pipeline.md「描画プリセット・LOD・デバッグ表示」
  */
 import * as THREE from "three";
 import type { WorldModel } from "../model/worldmodel";
@@ -198,6 +204,62 @@ function trunkGeometry(): THREE.BufferGeometry {
   return g;
 }
 
+/** 表示優先順位で整列した個体(model.vegetation の trees / shrubs の添字) */
+export interface VegIndividual {
+  kind: "tree" | "shrub";
+  index: number;
+}
+
+/**
+ * 個体(樹木・低木)の描画順: 位置ハッシュの優先度の降順
+ * (決定論的・乱数ストリーム非消費)。プリセットの表示個体数上限は
+ * この順の先頭 k 個体を残す prefix 間引きで行うため、間引きが
+ * 空間的に一様になる(contracts/pipeline.md)。
+ */
+export function vegetationDrawOrder(model: WorldModel): VegIndividual[] {
+  const items: {
+    ind: VegIndividual;
+    priority: number;
+    x: number;
+    z: number;
+  }[] = [];
+  for (let i = 0; i < model.vegetation.trees.length; i++) {
+    const t = model.vegetation.trees[i];
+    if (!t) continue;
+    items.push({
+      ind: { kind: "tree", index: i },
+      priority: vegHash(t.position.x, t.position.z, 60),
+      x: t.position.x,
+      z: t.position.z,
+    });
+  }
+  for (let i = 0; i < model.vegetation.shrubs.length; i++) {
+    const s = model.vegetation.shrubs[i];
+    if (!s) continue;
+    items.push({
+      ind: { kind: "shrub", index: i },
+      priority: vegHash(s.position.x, s.position.z, 61),
+      x: s.position.x,
+      z: s.position.z,
+    });
+  }
+  // 同点は座標でタイブレーク(環境非依存の全順序)
+  items.sort(
+    (a, b) => b.priority - a.priority || a.x - b.x || a.z - b.z,
+  );
+  return items.map((item) => item.ind);
+}
+
+/**
+ * 表示個体数上限の適用表(メッシュの userData.vegBudget)。
+ * prefix[k] = 優先上位 k 個体が使うインスタンス数(k = 0〜individuals)。
+ * viewer が count = prefix[min(k, 上限)] に絞る。
+ */
+export interface VegBudget {
+  individuals: number;
+  prefix: number[];
+}
+
 /** インスタンス列(位置・回転・スケール・色) */
 interface Instance {
   position: [number, number, number];
@@ -325,30 +387,44 @@ export function buildVegetation(model: WorldModel): THREE.Object3D[] {
   const canopyDark = new THREE.Color(CANOPY_DARK);
   const shrubBase = new THREE.Color(SHRUB_COLOR);
 
+  // 個体を表示優先順位で積む(プリセットの表示個体数上限に備えた
+  // prefix 間引き。順序が変わるだけで全個体表示時の絵は不変)
+  const order = vegetationDrawOrder(model);
   const trunks: Instance[] = [];
   const lumps: Instance[] = [];
-  for (const tree of model.vegetation.trees) {
-    const { x, z } = tree.position;
-    const trunk = trunkTransform(tree);
-    trunks.push({ ...trunk, color: mottled(trunkBase, x, z, 30) });
-    const canopyBase = canopyLight.clone().lerp(canopyDark, tree.colorVar);
-    const treeLumpList = treeLumps(tree);
-    for (let i = 0; i < treeLumpList.length; i++) {
-      const lump = treeLumpList[i];
-      if (!lump) continue;
-      lumps.push({ ...lump, color: mottled(canopyBase, x, z, 40 + i) });
+  const trunkPrefix: number[] = [0];
+  const lumpPrefix: number[] = [0];
+  for (const ind of order) {
+    const tree =
+      ind.kind === "tree" ? model.vegetation.trees[ind.index] : undefined;
+    const shrub =
+      ind.kind === "shrub" ? model.vegetation.shrubs[ind.index] : undefined;
+    if (tree) {
+      const { x, z } = tree.position;
+      const trunk = trunkTransform(tree);
+      trunks.push({ ...trunk, color: mottled(trunkBase, x, z, 30) });
+      const canopyBase = canopyLight.clone().lerp(canopyDark, tree.colorVar);
+      const treeLumpList = treeLumps(tree);
+      for (let i = 0; i < treeLumpList.length; i++) {
+        const lump = treeLumpList[i];
+        if (!lump) continue;
+        lumps.push({ ...lump, color: mottled(canopyBase, x, z, 40 + i) });
+      }
+    } else if (shrub) {
+      const { x, z } = shrub.position;
+      const w = 1.7 * shrub.scale * (0.9 + 0.2 * vegHash(x, z, 50));
+      lumps.push({
+        position: [x, 0, z],
+        rotation: vegHash(x, z, 51) * Math.PI * 2,
+        scale: [w, 1.0 * shrub.scale, w],
+        color: mottled(shrubBase, x, z, 52),
+      });
     }
+    // 個体ごとに 1 行(prefix 表と order の添字を一致させる)
+    trunkPrefix.push(trunks.length);
+    lumpPrefix.push(lumps.length);
   }
-  for (const shrub of model.vegetation.shrubs) {
-    const { x, z } = shrub.position;
-    const w = 1.7 * shrub.scale * (0.9 + 0.2 * vegHash(x, z, 50));
-    lumps.push({
-      position: [x, 0, z],
-      rotation: vegHash(x, z, 51) * Math.PI * 2,
-      scale: [w, 1.0 * shrub.scale, w],
-      color: mottled(shrubBase, x, z, 52),
-    });
-  }
+  const individuals = trunkPrefix.length - 1;
 
   const out: THREE.Object3D[] = [];
   const trunkMesh = buildInstancedMesh(
@@ -358,7 +434,13 @@ export function buildVegetation(model: WorldModel): THREE.Object3D[] {
     false,
     false,
   );
-  if (trunkMesh) out.push(trunkMesh);
+  if (trunkMesh) {
+    trunkMesh.userData.vegBudget = {
+      individuals,
+      prefix: trunkPrefix,
+    } satisfies VegBudget;
+    out.push(trunkMesh);
+  }
   // 主要 InstancedMesh として影を落とす(implementation-spec 1.8節)
   const canopyMesh = buildInstancedMesh(
     lumps,
@@ -367,7 +449,13 @@ export function buildVegetation(model: WorldModel): THREE.Object3D[] {
     true,
     true,
   );
-  if (canopyMesh) out.push(canopyMesh);
+  if (canopyMesh) {
+    canopyMesh.userData.vegBudget = {
+      individuals,
+      prefix: lumpPrefix,
+    } satisfies VegBudget;
+    out.push(canopyMesh);
+  }
   const grass = buildGrass(model);
   if (grass) out.push(grass);
   return out;

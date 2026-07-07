@@ -4,9 +4,13 @@
  * 表示書体は使わず、記述文は日本語のため本文書体+やや大きめ)、以下は
  * ラベル(青灰 --text-lo)+値(暖白 --text-hi、数値は等幅 --font-mono)の行を
  * ヘアラインで区切る。UI に結界青緑は使わない(琥珀のみ)。
- * 複雑度(頂点数・インスタンス数・draw call)はレンダラー実測値
+ * 複雑度(頂点数・インスタンス数・draw call・triangle)はレンダラー実測値
  * (renderer.info)を表示時に埋める(WorldModel には持たない。
  * contracts/worldmodel.md Summary 節の設計判断)。
+ * PHASE 7 commit 22 で開発用デバッグ表示を本サマリーへ統合した:
+ * ハッシュは「ハッシュ」行、renderer.info は「複雑度」行
+ * (implementation-spec 1.10節、contracts/pipeline.md
+ * 「描画プリセット・LOD・デバッグ表示」)。
  */
 import { DEFAULT_PARAMS, type Params, type WorldModel } from "../model/worldmodel";
 
@@ -15,6 +19,7 @@ export interface Complexity {
   vertices: number;
   instances: number;
   drawCalls: number;
+  triangles: number;
 }
 
 /** パラメータの表示ラベル(design.md「入力」の順) */
@@ -71,7 +76,7 @@ function row(label: string, value: string): HTMLElement {
 
 function complexityText(complexity?: Complexity): string {
   return complexity
-    ? `${fmtInt(complexity.drawCalls)} calls / ${fmtInt(complexity.instances)} inst / ${(complexity.vertices / 1000).toFixed(1)}k 頂点`
+    ? `${fmtInt(complexity.drawCalls)} calls / ${(complexity.triangles / 1000).toFixed(1)}k tri / ${fmtInt(complexity.instances)} inst / ${(complexity.vertices / 1000).toFixed(1)}k 頂点`
     : "—";
 }
 
@@ -148,6 +153,9 @@ export function renderSummary(
   const cxRow = row("複雑度", complexityText(complexity));
   const cxValue = cxRow.querySelector<HTMLElement>(".pfd-summary-value");
   container.appendChild(cxRow);
+
+  // 正規化ハッシュ(旧デバッグ表示の統合。実機・ブラウザ間の決定性確認用)
+  container.appendChild(row("ハッシュ", `#${s.hash}`));
 
   return {
     setComplexity(next) {

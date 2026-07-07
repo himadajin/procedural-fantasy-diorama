@@ -20,8 +20,9 @@
   基準高・水路上の持ち上げ量は bridgeparts を正とし、
   `mesh/paving.ts` が同じ純関数・定数を共用して取り付きの隙間を
   出さない(worldmodel.md「魔法灯・浮遊要素・橋の立体化」)。
-- `viewer/` は時間演出(浮遊の上下動、発光の明滅、カメラ慣性)を担当する。
-  時間・表示状態を WorldModel に書き戻さない。
+- `viewer/` は時間演出(浮遊の上下動、発光の明滅、カメラ慣性)と
+  描画プリセットの適用(下記「描画プリセット・LOD・デバッグ表示」)を
+  担当する。時間・表示状態・プリセットを WorldModel に書き戻さない。
 - `ui/` は params と seed の編集、Generate の発火、サマリー表示のみを行う。
   生成内容には関与しない。
 
@@ -179,5 +180,72 @@ runPipeline(seed: string, params: Params, opts?: {
 - 実装は `src/model/hash.ts` の `hashWorldModel`(three 非依存の純関数)。
 - Vitest では「同一入力で2回生成してハッシュ一致」と
   「代表 seed×params 組のハッシュのスナップショット固定」の両方を行う。
-- 画面のデバッグ表示にも同じ値を出す(実機確認用。renderer.info の
-  draw call・triangle 数と併記し、PHASE 7 でサマリーへ統合する)。
+- 画面ではサマリーの「ハッシュ」行に同じ値を出す(実機・ブラウザ間の
+  決定性確認用)。開発用オーバーレイは既定非表示とし、URL パラメータ
+  `?debug=1` のときのみ表示する(PHASE 7 commit 22 で統合済み。
+  下記「描画プリセット・LOD・デバッグ表示」)。
+
+## 描画プリセット・LOD・デバッグ表示(viewer / ui。PHASE 7 commit 22)
+
+モバイル性能の確保は**表示側のみ**で行う(implementation-spec 8章、
+art-direction 10節)。規律:
+
+- **不変条件**: プリセット・LOD は `runPipeline` に一切入力されない。
+  WorldModel(生成内容・正規化ハッシュ)と絵(色・光・構図。
+  art-direction の全数値)はプリセットの高低で変わらない。
+  判定・間引きに `Math.random()` を使わない(全て決定論的)。
+
+**プリセット定義**(`src/viewer/preset.ts` の `RenderPreset`。高/低の2段階):
+
+| 変えてよいもの(表示のみ) | 高 | 低 |
+|---|---|---|
+| pixelRatio 上限 | 2.0 | 1.5 |
+| 影マップ解像度 | 2048 | 1024 |
+| 影カメラ far(ワールド一辺比) | ×3 | ×2 |
+| 植生の表示個体数上限(InstancedMesh の count 縮小) | 無制限 | 900 |
+| 水面シェーダーのノイズ簡略度(uniform 分岐) | 3オクターブ | 1オクターブ |
+| 時間 uniform(水面揺らぎ・発光明滅・浮遊上下動)の更新間隔 | 毎フレーム | 50ms |
+
+変えてはいけないもの: WorldModel、色・光・構図(トーンマッピング露出、
+ライティング、霧、パレット、カメラ構図)。発光の明滅・浮遊の簡略化は
+**更新頻度の削減のみ**で行い、位相・振幅・強度の数値規範は変えない。
+
+**デバイス簡易判定**(`choosePresetByDevice` / `correctPresetByFps`):
+
+- 起動時に1回: `devicePixelRatio ≥ 2.5`、または物理ピクセル数
+  (CSSビューポート幅×高さ×dpr²)≥ 4.6M なら「低」、それ以外は「高」。
+- 初回生成の完了後に実測補正を1回だけ行う: ウォームアップ 30 フレームの後
+  90 フレームの平均 fps を実測し、「高」で 40fps 未満なら「低」へ、
+  「低」で 55fps 以上なら「高」へ切り替える(適用は pixelRatio・影・
+  植生 count・水面 uniform・更新間隔のライブ反映のみで、再生成しない)。
+- URL パラメータ `?preset=high|low` で強制でき、その場合は自動判定・
+  実測補正とも行わない(検証用)。
+
+**植生間引きの決定性**(`src/mesh/vegetation.ts`):
+個体(樹木・低木)を位置ハッシュの優先順位で降順に整列し
+(`vegetationDrawOrder`。乱数ストリーム非消費)、InstancedMesh には
+この順で個体単位に積む。各メッシュの `userData.vegBudget` に
+prefix 表(優先上位 k 個体 → インスタンス数)を持ち、viewer 側が
+`count = prefix[min(k, 上限)]` に絞る。幹と樹冠の間引きは同じ個体集合で
+揃う(幹だけ・樹冠だけの欠けを作らない)。同一モデル+同一プリセット →
+同一表示集合。上限無制限(高)のとき表示集合は全個体で、整列は
+描画順のみの違い(絵は不変)。
+
+**遠距離 LOD**(`src/mesh/buildings.ts`。プリセット非依存):
+小部品の InstancedMesh(`building-trim` / `building-openings`)は、
+カメラ距離がワールド一辺の 1.15 倍から 1.5 倍にかけて
+ディザ(`alphaHash`)で減衰し、透明ソートなしでポッピングを見せずに
+消える。初期構図(距離 = 一辺×0.75。art-direction 8節)では減衰しない
+(署名の絵を変えない)。
+
+**メモリ規律**: 再生成時は `disposeWorld` が geometry / material /
+InstancedMesh を破棄し、viewer は空ドームの差し替え時と影マップの
+解像度変更時に旧リソースを破棄する。開発時は `?debug=1` で
+`window.pfdSoak(n)`(連続 n 回再生成し `renderer.info.memory` を
+console へ出す)により単調増加がないことを検証できる。
+
+**デバッグ表示の縮退**(implementation-spec 1.10節の PHASE 7 対応):
+WorldModel ハッシュはサマリーの「ハッシュ」行へ、renderer.info
+(draw call・triangle・インスタンス・頂点)はサマリーの「複雑度」行へ
+統合した。開発用オーバーレイ(calls/予算・tri・ハッシュ・プリセット名)は
+既定非表示で、`?debug=1` のときのみ表示する。

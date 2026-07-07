@@ -111,6 +111,45 @@ const GLOW_EDGE_WEIGHT = 0.35;
 /** 中庭壁の笠より下の壁体の暗まり */
 const COURTYARD_BODY_SHADE = 0.97;
 
+// --- 遠距離 LOD(PHASE 7 commit 22。contracts/pipeline.md
+//     「描画プリセット・LOD・デバッグ表示」) ---
+/**
+ * 小部品(building-trim / building-openings)のフェード帯
+ * (ワールド一辺比のカメラ距離)。初期構図の距離(一辺×0.75。
+ * art-direction 8節)では減衰しない(署名の絵を変えない)。
+ * プリセット非依存で常に有効。
+ */
+const LOD_FADE_START_RATIO = 1.15;
+const LOD_FADE_END_RATIO = 1.5;
+
+/**
+ * カメラ距離によるディザ(alphaHash)の減衰をマテリアルへ付ける。
+ * 透明ソートなしでポッピングを見せずに小部品を消す(遠距離 LOD)。
+ */
+function applyDistanceFade(
+  material: THREE.MeshStandardMaterial,
+  worldSize: number,
+): void {
+  material.alphaHash = true;
+  const prev = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    prev?.call(material, shader, renderer);
+    shader.uniforms.uFadeStart = { value: worldSize * LOD_FADE_START_RATIO };
+    shader.uniforms.uFadeEnd = { value: worldSize * LOD_FADE_END_RATIO };
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform float uFadeStart;\nuniform float uFadeEnd;",
+      )
+      .replace(
+        "#include <alphahash_fragment>",
+        `diffuseColor.a *= 1.0 - smoothstep(uFadeStart, uFadeEnd, length(vViewPosition));
+        #include <alphahash_fragment>`,
+      );
+  };
+  material.customProgramCacheKey = () => "pfd-lod-fade";
+}
+
 /** 位置ハッシュ(0〜1)。乱数ストリームを消費しない決定論的なムラの元 */
 export function hash3(x: number, y: number, z: number): number {
   let h =
@@ -1286,23 +1325,25 @@ function buildFloatInstancedMesh(
   return mesh;
 }
 
-/** ピースのプールから InstancedMesh を組む(instanceColor = 基準色×個体ムラ) */
+/**
+ * ピースのプールから InstancedMesh を組む(instanceColor = 基準色×個体ムラ)。
+ * fadeWorldSize を渡すと遠距離 LOD のディザ減衰が付く(小部品プール用)。
+ */
 function buildPoolMesh(
   pieces: Piece[],
   geometry: THREE.BufferGeometry,
   name: string,
   castShadow: boolean,
   roughness: number,
+  fadeWorldSize?: number,
 ): THREE.InstancedMesh | null {
   if (pieces.length === 0) {
     geometry.dispose();
     return null;
   }
-  const mesh = new THREE.InstancedMesh(
-    geometry,
-    new THREE.MeshStandardMaterial({ roughness }),
-    pieces.length,
-  );
+  const material = new THREE.MeshStandardMaterial({ roughness });
+  if (fadeWorldSize !== undefined) applyDistanceFade(material, fadeWorldSize);
+  const mesh = new THREE.InstancedMesh(geometry, material, pieces.length);
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const up = new THREE.Vector3(0, 1, 0);
@@ -1455,13 +1496,16 @@ export function buildBuildings(
   }
 
   // インスタンス経路(共有プールごとに 1 InstancedMesh)。
-  // 影は building-trim(主要 InstancedMesh)のみ落とす(1.8節)
+  // 影は building-trim(主要 InstancedMesh)のみ落とす(1.8節)。
+  // 窓枠・扉・梁・煙突などの小部品プールには遠距離 LOD の
+  // ディザ減衰を付ける(PHASE 7 commit 22。contracts/pipeline.md)
   const trim = buildPoolMesh(
     pools.boxes,
     unitBoxGeometry(),
     "building-trim",
     true,
     1,
+    model.ground.size,
   );
   if (trim) out.push(trim);
   const openings = buildPoolMesh(
@@ -1470,6 +1514,7 @@ export function buildBuildings(
     "building-openings",
     false,
     1,
+    model.ground.size,
   );
   if (openings) out.push(openings);
   const piles = buildPoolMesh(
