@@ -38,7 +38,8 @@ export function computeDerived(seed: string, params: Params): Derived {
   return {
     // --- World Scale 駆動 ---
     worldSize,
-    entryPointCount: clamp(Math.round(2 + 2 * scale + entryJitter), 2, 4),
+    // Phase B(2026-07-12): 2〜4 から 2〜5 へ拡張(進入点数の World Scale 連動強化)
+    entryPointCount: clamp(Math.round(2 + 2.8 * scale + entryJitter), 2, 5),
     roadBudget: worldSize * (2.2 + 1.8 * scale),
     marginWidth: 18 + 30 * scale,
     parcelCountMax: Math.round(60 + 200 * scale),

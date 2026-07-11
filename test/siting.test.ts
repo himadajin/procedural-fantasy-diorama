@@ -46,14 +46,14 @@ describe("siting: 決定性", () => {
 });
 
 describe("siting: 進入点", () => {
-  it("derived.entryPointCount 点(2〜4)が外縁上の陸に置かれ、id は生成順で安定", () => {
+  it("derived.entryPointCount 点(2〜5)が外縁上の陸に置かれ、id は生成順で安定", () => {
     for (const seed of SEEDS) {
       for (const worldScale of [0, 50, 100]) {
         const model = build(seed, { worldScale, water: 70 });
         const entries = model.network.entryPoints;
         expect(entries.length).toBe(model.meta.derived.entryPointCount);
         expect(entries.length).toBeGreaterThanOrEqual(2);
-        expect(entries.length).toBeLessThanOrEqual(4);
+        expect(entries.length).toBeLessThanOrEqual(5);
         const radius = createBoundaryRadius(model.ground.boundary);
         const field = createWaterField(model.ground.boundary, [
           ...model.water.lakes,

@@ -39,9 +39,13 @@ import { FLOOR_HEIGHT, runBuildings } from "../src/pipeline/buildings";
  * 水辺要素が同一箱庭に共存する代表 seed を固定する。
  * タスク A3(湖・池の独立配置モデル導入)で水系生成が変わったため、
  * 新モデルで再スキャンして選び直した(4種以上・水路裏口の向き契約を
- * 満たす代表 3 種であることを確認済み)
+ * 満たす代表 3 種であることを確認済み)。
+ * タスク B2(進入点数のスケール連動)で harbor-1・test1 の進入点数が
+ * 3→4 に変わり道路網以降の生成が変化して 4 種共存の閾値を割ったため、
+ * 再スキャンして harbor-2・lakeside-2 に差し替えた(2026-07-12。
+ * mistvale-7 は引き続き満たすことを確認済み)
  */
-const REP_SEEDS = ["mistvale-7", "harbor-1", "test1"];
+const REP_SEEDS = ["mistvale-7", "harbor-2", "lakeside-2"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
   const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });

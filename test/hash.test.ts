@@ -164,12 +164,35 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    6a40e14c → 6a40e14c(不変)
   //   seed-b {}                    3e3e2341 → 37b960fd
   //   seed-b {water:70}            7849a971 → 992ee82a
+  //
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B2 で更新。意図した変更:
+  // derive.ts の entryPointCount を `clamp(round(2 + 2×scale + entryJitter), 2, 4)`
+  // から `clamp(round(2 + 2.8×scale + entryJitter), 2, 5)` へ変更した(進入点数を
+  // World Scale に強く連動させ、大きい箱庭の幹線骨格を増やす。3.2節(7)・
+  // worldmodel-core.md「Derived」)。entryJitter・pondJitter の消費数・消費順は
+  // 不変(rng 消費に影響する変更ではなく、丸め対象の式のみを変えたため)。
+  // worldScale=0 は新旧どちらの式でも entryPointCount=2 に丸まるため不変。
+  // worldScale=50(全パラメータ既定)は 3+jitter → 3.4+jitter へ丸め閾値が動くため、
+  // entryJitter が閾値をまたぐ seed のみ変わる(everdusk-101 は 3→4 へ変化、
+  // seed-a・seed-b は元々 3 のまま変化なし=不変)。worldScale=100 は
+  // 旧式が常に 4 に飽和していたのに対し新式は 4.8+jitter で 5 まで届くため、
+  // everdusk-101 は 4→5 へ変化した。進入点数が変わった組は道路網(段5)以降
+  // (密度・結界・広場・区画・建物・植生等)の生成結果も連鎖して変わる。
+  // 新旧対応(A7 → B2):
+  //   everdusk-101 {}              b4a46541 → 019930b4
+  //   everdusk-101 {water:0}       16eb82ac → 70b7bd86
+  //   everdusk-101 {water:95}      0d7a81c7 → 6b7825a1
+  //   everdusk-101 {worldScale:0}  c1754828 → c1754828(不変)
+  //   everdusk-101 {worldScale:100} 2ebaf32f → 079c7947
+  //   seed-a {}                    6a40e14c → 6a40e14c(不変)
+  //   seed-b {}                    37b960fd → 37b960fd(不変)
+  //   seed-b {water:70}            992ee82a → 992ee82a(不変)
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "b4a46541"],
-    ["everdusk-101", { water: 0 }, "16eb82ac"],
-    ["everdusk-101", { water: 95 }, "0d7a81c7"],
+    ["everdusk-101", {}, "019930b4"],
+    ["everdusk-101", { water: 0 }, "70b7bd86"],
+    ["everdusk-101", { water: 95 }, "6b7825a1"],
     ["everdusk-101", { worldScale: 0 }, "c1754828"],
-    ["everdusk-101", { worldScale: 100 }, "2ebaf32f"],
+    ["everdusk-101", { worldScale: 100 }, "079c7947"],
     ["seed-a", {}, "6a40e14c"],
     ["seed-b", {}, "37b960fd"],
     ["seed-b", { water: 70 }, "992ee82a"],
