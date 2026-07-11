@@ -494,10 +494,13 @@ export function runNetwork(model: WorldModel): void {
   for (const c of entryCells) {
     if (!reached.has(nodeId(c))) assertionViolations++;
   }
-  // 2) 道路は湖・池を渡らない(全 edge の path 標本で waterSdf ≥ 0 を確認)
+  // 2) 道路は湖・池を渡らない(全 edge の path 標本で waterSdf ≥ -1.5 を確認。
+  //    経路探索グリッドの量子化と平滑化による岸際のかすりは横断と見なさず
+  //    許容する。閾値は contracts/network-plaza.md「道路(段5)は湖・池を
+  //    渡らない」・test/network.test.ts と揃える)
   for (const edge of edges) {
     for (const p of edge.path) {
-      if (field.waterSdf(p.x, p.z) < 0) assertionViolations++;
+      if (field.waterSdf(p.x, p.z) < -1.5) assertionViolations++;
     }
   }
   if (assertionViolations > 0) {
