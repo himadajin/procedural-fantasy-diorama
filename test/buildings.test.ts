@@ -63,12 +63,11 @@ function cached(seed: string, over: Partial<Params> = {}): WorldModel {
   return model;
 }
 
-function riverLakeSdf(model: WorldModel): (x: number, z: number) => number {
-  return createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  ).waterSdf;
+function waterBodySdf(model: WorldModel): (x: number, z: number) => number {
+  return createWaterField(model.ground.boundary, [
+    ...model.water.lakes,
+    ...model.water.ponds,
+  ]).waterSdf;
 }
 
 describe("buildings: 決定性(contracts/buildings.md Building 節)", () => {
@@ -181,7 +180,7 @@ describe("buildings: 接地(浮き・埋まりゼロと杭の水面下到達)", 
   it("水上張り出し(overWater)の建物は杭/石基礎が y=-1.6 に到達する", () => {
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
-      const sdf = riverLakeSdf(model);
+      const sdf = waterBodySdf(model);
       for (const b of model.buildings) {
         if (!b.foundation.overWater) continue;
         expect(["piles", "stonebase"]).toContain(b.foundation.kind);
@@ -202,10 +201,10 @@ describe("buildings: 接地(浮き・埋まりゼロと杭の水面下到達)", 
     expect(overWater).toBeGreaterThan(0);
   });
 
-  it("overWater でない建物は footprint が水域(河川・湖・水路)に重ならない", () => {
+  it("overWater でない建物は footprint が水域(湖・池・水路)に重ならない", () => {
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
-      const sdf = riverLakeSdf(model);
+      const sdf = waterBodySdf(model);
       for (const b of model.buildings) {
         for (const v of b.footprint) {
           if (!b.foundation.overWater) {

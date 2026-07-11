@@ -55,11 +55,10 @@ describe("siting: 進入点", () => {
         expect(entries.length).toBeGreaterThanOrEqual(2);
         expect(entries.length).toBeLessThanOrEqual(4);
         const radius = createBoundaryRadius(model.ground.boundary);
-        const field = createWaterField(
-          model.ground.boundary,
-          model.water.rivers,
-          model.water.lakes,
-        );
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
         entries.forEach((e, i) => {
           expect(e.id).toBe(`entry/${i}`);
           // 外縁上(星形半径関数との差がほぼ 0)
@@ -105,11 +104,10 @@ describe("siting: 主中心と占有範囲", () => {
     for (const seed of SEEDS) {
       for (const water of [0, 50, 95]) {
         const model = build(seed, { water });
-        const field = createWaterField(
-          model.ground.boundary,
-          model.water.rivers,
-          model.water.lakes,
-        );
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
         const c = model.centerPlan.position;
         expect(field.waterSdf(c.x, c.z), `seed=${seed} water=${water}`).toBeGreaterThan(0);
         expect(model.centerPlan.footprint.length).toBe(4);

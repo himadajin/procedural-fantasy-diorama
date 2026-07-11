@@ -1,28 +1,27 @@
 /**
- * 段3「水系」: 主河川・湖・岸線・湿地/砂洲・外周の閉じ方を確定する。
+ * 段3「水系」: 湖・池・岸線・湿地/砂洲・外周の閉じ方を確定する。
  * データの正は docs/internal/contracts/ground-water.md(Water 節)、
  * 設計は implementation-spec 1.3節・1.6節・PHASE 2。
  *
- * - 主河川: derived.riverCount 本(0〜2)。外縁の外側の一点から箱庭を横断して
- *   別点へ抜けるスプライン。低周波ノイズで有機的に蛇行させる
- *   (乱数は makeRng(seed, "water/river/<i>") のサブストリーム。
- *   蛇行の形は格子ノイズで作り、点数の増減が乱数消費に波及しない)
- * - 湖: derived.lakeChance / lakeArea 駆動。川があれば経路上に置き、
- *   スプラインが湖を貫通することで流入・流出接続を持つ
+ * - 湖: derived.lakeChance で存否を決め、0〜1個。位置候補(角度 θ・境界半径比
+ *   r ∈ [0.15, 0.55])を固定数(6組)先に引き切り、境界クリアランス
+ *   (湖半径 × 0.25 + 8 を目安)を満たす最初の候補を採用する
+ *   (乱数は makeRng(seed, "water/lake") のサブストリーム。全候補が不適なら湖なし)
+ * - 池: derived.pondCount 個(0〜4)。各池は makeRng(seed, "water/pond/<i>")
+ *   から湖と同様に位置候補を6組引き、(a) 境界クリアランス、(b) 既存水域
+ *   (湖・先行して確定した池)との最小間隔(半径和 × 1.6 を目安)を満たす
+ *   最初の候補を採用する。満たせない池は棄却し、その分だけ本数が減る
+ * - 湖・池は同じ幾何(星形ブロブ `lakePolygon`)を流用するが、生成意図と
+ *   サマリー表示を保つため配列を分けて持つ(contracts/ground-water.md)
  * - 水域合計面積は ground 面積 × derived.waterAreaCap を上限にクリップ
- *   (超過時は湖面積・川幅を縮小する決定論的な反復。乱数は消費しない)
+ *   (超過時は確定済みの湖・池の半径を一括スケールして縮小する決定論的な
+ *   反復。乱数は消費しない)
  * - 湿地・砂洲を岸辺周辺の zoneMask チャネルへ書き込む(commit 7 で予約済み)
  * - edgeStyle: 選択確率を Water Presence に連動させ、Water 15 未満は "fog" 固定
  * - Water 0(水域なし)でも乾いた土地として破綻しない
  */
-import { makeRng } from "../rng";
-import type {
-  Polygon,
-  ShoreLoop,
-  Spline,
-  Vec2,
-  WorldModel,
-} from "../model/worldmodel";
+import { makeRng, type Rng } from "../rng";
+import type { Polygon, ShoreLoop, Vec2, WorldModel } from "../model/worldmodel";
 import { zoneCellIndex } from "../model/zonemask";
 import {
   GRID_SPAN_RATIO,
@@ -46,111 +45,108 @@ function smoothstep(edge0: number, edge1: number, v: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/** 河口を境界の外へ張り出させる量(境界半径比)。切れ目を霧・外縁水面の中へ隠す */
-const MOUTH_OVERHANG = 1.18;
-/** 蛇行の振幅(ワールド一辺比)。低周波ノイズで有機的に曲げる */
-const MEANDER_RATIO = 0.1;
-/** 川スプラインの隣接点間隔(川幅比)。契約の「隣接間隔 ≤ 川幅×1.5」を満たす */
-const RIVER_SAMPLE_RATIO = 0.7;
 /** 面積クリップの最大反復(決定論的。乱数は消費しない) */
 const AREA_CLIP_ITERATIONS = 6;
-/** クリップ後も残す川幅の下限(見た目の破綻防止。面積は湖の縮小が受け持つ) */
-const RIVER_WIDTH_FLOOR = 3;
+/** 位置候補の本数(湖・池とも同じ)。全候補が不適なら棄却する */
+const CANDIDATE_COUNT = 6;
+/** 位置候補の境界半径比の範囲(contracts/ground-water.md Water 節) */
+const RAD_FRAC_MIN = 0.15;
+const RAD_FRAC_MAX = 0.55;
+/**
+ * 境界クリアランス(目安: 半径 × 0.25 + 8。contracts/ground-water.md Water 節)。
+ * 星形ブロブは調和波の合成次第で基準半径の最大 1.4 倍前後まで膨らみうるため、
+ * 中心から境界までの距離だけで判定すると縁が境界の外へはみ出す候補を
+ * 誤って採択しうる(実装中に発見)。そのため実際の判定はポリゴンの全頂点
+ * (縁そのもの)の境界クリアランスで行い、この係数は頂点ごとの最小マージン
+ * (目安の "+8" 相当)として使う
+ */
+const BOUNDARY_EDGE_MARGIN = 8;
+/** 池と既存水域の最小間隔の係数(目安: 半径和 × 1.6) */
+const POND_SEPARATION_RATIO = 1.6;
 
-/** 河川の生成パラメータ(乱数消費はここで完結し、再サンプルでは消費しない) */
-interface RiverParams {
-  theta0: number;
-  spread: number;
-  meander: number;
+/** 位置候補(角度・境界半径比) */
+interface Candidate {
+  angle: number;
+  radFrac: number;
+}
+
+/** 星形ブロブの調和波(既存 lakePolygon の形状パラメータ) */
+interface Harmonic {
+  k: number;
+  amp: number;
   phase: number;
 }
 
-/** 消費順・消費数固定: 1河川 = 4値 */
-function drawRiverParams(seed: string, index: number): RiverParams {
-  const rng = makeRng(seed, `water/river/${index}`);
-  return {
-    theta0: rng.range(0, Math.PI * 2),
-    spread: rng.range(-0.55, 0.55),
-    meander: rng.range(0.6, 1.0),
-    phase: rng.range(0, 64),
-  };
-}
-
-/**
- * 河川スプラインの点列を作る(純関数)。
- * 外縁の外側の一点から反対側の外側へ抜ける弦を、弦と直交する方向に
- * 低周波ノイズでずらして蛇行させる。両端は境界の外に固定する。
- */
-function riverPath(
-  seed: string,
-  index: number,
-  params: RiverParams,
-  size: number,
-  radius: (theta: number) => number,
-  width: number,
-): Vec2[] {
-  const theta1 = params.theta0 + Math.PI + params.spread;
-  const r0 = radius(params.theta0) * MOUTH_OVERHANG;
-  const r1 = radius(theta1) * MOUTH_OVERHANG;
-  const start = { x: Math.cos(params.theta0) * r0, z: Math.sin(params.theta0) * r0 };
-  const end = { x: Math.cos(theta1) * r1, z: Math.sin(theta1) * r1 };
-  const dx = end.x - start.x;
-  const dz = end.z - start.z;
-  const length = Math.hypot(dx, dz);
-  const perp = { x: -dz / length, z: dx / length };
-  const count = clamp(Math.ceil(length / (width * RIVER_SAMPLE_RATIO)), 40, 220);
-  const amp = size * MEANDER_RATIO * params.meander;
-  const nSeed = noiseSeed(seed, `water/river/${index}`);
-
-  const points: Vec2[] = [];
-  for (let i = 0; i <= count; i++) {
-    const t = i / count;
-    // 端(河口)は境界の外に固定するため、蛇行を sin 包絡で0に落とす
-    const envelope = Math.sin(Math.PI * t);
-    const noise = fbm2D(nSeed, t * 3 + params.phase, 0, 3);
-    const offset = (noise * 2 - 1) * amp * envelope;
-    points.push({
-      x: start.x + dx * t + perp.x * offset,
-      z: start.z + dz * t + perp.z * offset,
-    });
-  }
-  return points;
-}
-
-/** 湖の生成パラメータ(消費順・消費数固定: 12値) */
+/** 湖の生成パラメータ(消費順・消費数固定: roll(1) + 候補6組(12) + 調和波4組(8) = 21値) */
 interface LakeParams {
   roll: number;
-  tAlong: number;
-  angle: number;
-  radFrac: number;
-  harmonics: { k: number; amp: number; phase: number }[];
+  candidates: Candidate[];
+  harmonics: Harmonic[];
 }
 
-function drawLakeParams(seed: string): LakeParams {
-  const rng = makeRng(seed, "water/lake");
-  const roll = rng.next();
-  const tAlong = rng.range(0.3, 0.7);
-  const angle = rng.range(0, Math.PI * 2);
-  const radFrac = rng.range(0.15, 0.45);
-  const harmonics = [2, 3, 4, 5].map((k) => ({
+/** 池の生成パラメータ(消費順・消費数固定: 候補6組(12) + 調和波4組(8) = 20値) */
+interface PondParams {
+  candidates: Candidate[];
+  harmonics: Harmonic[];
+}
+
+function drawCandidates(rng: Rng): Candidate[] {
+  const candidates: Candidate[] = [];
+  for (let i = 0; i < CANDIDATE_COUNT; i++) {
+    candidates.push({
+      angle: rng.range(0, Math.PI * 2),
+      radFrac: rng.range(RAD_FRAC_MIN, RAD_FRAC_MAX),
+    });
+  }
+  return candidates;
+}
+
+function drawHarmonics(rng: Rng): Harmonic[] {
+  return [2, 3, 4, 5].map((k) => ({
     k,
     amp: (0.3 / k) * rng.range(0.4, 1.0),
     phase: rng.range(0, Math.PI * 2),
   }));
-  return { roll, tAlong, angle, radFrac, harmonics };
+}
+
+/** 湖の生成パラメータを引く(乱数消費は入力に依らず固定) */
+function drawLakeParams(seed: string): LakeParams {
+  const rng = makeRng(seed, "water/lake");
+  const roll = rng.next();
+  const candidates = drawCandidates(rng);
+  const harmonics = drawHarmonics(rng);
+  return { roll, candidates, harmonics };
 }
 
 /**
- * 湖ポリゴンを作る(純関数)。境界と同じ調和波の星形ブロブで、
+ * i 番目の池の生成パラメータを引く(乱数消費は入力に依らず固定)。
+ * 呼び出しは derived.pondCount 個ぶんのみ行う(旧・水系生成の「本数個ぶんだけ
+ * 消費」と同型の消費スタイル。pondCount は seed+params の純関数のため
+ * 決定性は保たれる)。
+ */
+function drawPondParams(seed: string, index: number): PondParams {
+  const rng = makeRng(seed, `water/pond/${index}`);
+  const candidates = drawCandidates(rng);
+  const harmonics = drawHarmonics(rng);
+  return { candidates, harmonics };
+}
+
+/**
+ * 星形ブロブポリゴンを作る(純関数)。湖・池が共有する幾何
+ * (contracts/ground-water.md「湖と池は同じ幾何を流用」)。
  * 偏角を減少方向に回して時計回り(Polygon 規約)にする。
  */
-function lakePolygon(center: Vec2, baseRadius: number, params: LakeParams): Polygon {
+function lakePolygon(
+  center: Vec2,
+  baseRadius: number,
+  harmonics: Harmonic[],
+): Polygon {
   const count = 40;
   const points: Polygon = [];
   for (let i = 0; i < count; i++) {
     const theta = -(i / count) * Math.PI * 2;
     let r = 1;
-    for (const h of params.harmonics) r += h.amp * Math.cos(h.k * theta + h.phase);
+    for (const h of harmonics) r += h.amp * Math.cos(h.k * theta + h.phase);
     points.push({
       x: center.x + baseRadius * r * Math.cos(theta),
       z: center.z + baseRadius * r * Math.sin(theta),
@@ -159,34 +155,85 @@ function lakePolygon(center: Vec2, baseRadius: number, params: LakeParams): Poly
   return points;
 }
 
-/** 湖の中心を決める。川があれば経路上(流入・流出)、なければ境界内の一点 */
-function lakeCenter(
-  params: LakeParams,
-  rivers: Spline[],
+/** 候補(角度・境界半径比)から中心座標を作る */
+function candidateCenter(
+  radius: (theta: number) => number,
+  candidate: Candidate,
+): Vec2 {
+  const r = candidate.radFrac * radius(candidate.angle);
+  return { x: Math.cos(candidate.angle) * r, z: Math.sin(candidate.angle) * r };
+}
+
+/**
+ * ポリゴンの全頂点が境界クリアランス(margin)を保って境界の内側にあるか
+ * (縁=頂点ごとの判定。星形ブロブは調和波次第で基準半径を大きく超えて
+ * 膨らむ方向がありうるため、中心からの距離ではなく実際の頂点で判定する)
+ */
+function polygonWithinBoundary(
+  radius: (theta: number) => number,
+  polygon: Polygon,
+  margin: number,
+): boolean {
+  for (const v of polygon) {
+    const dist = Math.hypot(v.x, v.z);
+    if (radius(Math.atan2(v.z, v.x)) - dist < margin) return false;
+  }
+  return true;
+}
+
+/** 確定済みの水域(湖・先行する池)。池の最小間隔判定に使う */
+interface PlacedBody {
+  center: Vec2;
+  radius: number;
+}
+
+/**
+ * 湖の位置を決める。6候補を順に試し、実際の湖ポリゴン(調和波込み)の
+ * 全頂点が境界クリアランス(目安 8)を満たす最初の候補を採用する。
+ * 全候補不適なら null(湖なし。contracts/ground-water.md Water 節)。
+ */
+function placeLake(
   radius: (theta: number) => number,
   lakeRadius: number,
-): Vec2 {
-  let center: Vec2;
-  const first = rivers[0];
-  if (first && first.points.length > 0) {
-    const idx = Math.round(params.tAlong * (first.points.length - 1));
-    center = first.points[idx] ?? { x: 0, z: 0 };
-  } else {
-    const r = params.radFrac * radius(params.angle);
-    center = {
-      x: Math.cos(params.angle) * r,
-      z: Math.sin(params.angle) * r,
-    };
+  params: LakeParams,
+  hasLake: boolean,
+): Vec2 | null {
+  if (!hasLake) return null;
+  for (const candidate of params.candidates) {
+    const center = candidateCenter(radius, candidate);
+    const poly = lakePolygon(center, lakeRadius, params.harmonics);
+    if (polygonWithinBoundary(radius, poly, BOUNDARY_EDGE_MARGIN)) return center;
   }
-  // 湖が境界の外へ大きくはみ出さないよう中心を原点側へ引き込む(決定論的)
-  for (let i = 0; i < 8; i++) {
-    const dist = Math.hypot(center.x, center.z);
-    if (dist < 1e-6) break;
-    const room = radius(Math.atan2(center.z, center.x)) - dist;
-    if (room >= lakeRadius * 0.7) break;
-    center = { x: center.x * 0.88, z: center.z * 0.88 };
+  return null; // 全候補が境界クリアランスを満たさない: 湖なし
+}
+
+/**
+ * 池の位置を決める。6候補を順に試し、(a) 実際の池ポリゴンの全頂点が
+ * 境界クリアランス(目安 8)を満たす、(b) 中心が既存水域(湖・先行する池)
+ * との最小間隔(半径和 × 1.6)を満たす、の両方を満たす最初の候補を採用する。
+ * 満たせない場合は null(その池は棄却。contracts/ground-water.md Water 節)。
+ */
+function placePond(
+  radius: (theta: number) => number,
+  pondRadius: number,
+  params: PondParams,
+  existing: PlacedBody[],
+): Vec2 | null {
+  for (const candidate of params.candidates) {
+    const center = candidateCenter(radius, candidate);
+    let ok = true;
+    for (const body of existing) {
+      const dist = Math.hypot(center.x - body.center.x, center.z - body.center.z);
+      if (dist < (pondRadius + body.radius) * POND_SEPARATION_RATIO) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+    const poly = lakePolygon(center, pondRadius, params.harmonics);
+    if (polygonWithinBoundary(radius, poly, BOUNDARY_EDGE_MARGIN)) return center;
   }
-  return center;
+  return null;
 }
 
 /**
@@ -330,51 +377,58 @@ export function runWater(model: WorldModel): void {
   const rng = makeRng(seed, "water");
   const edgeRoll = rng.next();
 
-  // 河川・湖のパラメータを先に確定する(乱数消費はここで完結)
-  const riverParams: RiverParams[] = [];
-  for (let i = 0; i < derived.riverCount; i++) {
-    riverParams.push(drawRiverParams(seed, i));
-  }
+  // 湖・池のパラメータと配置を先に確定する(乱数消費はここで完結。
+  // 面積クリップは半径の一括スケールのみで、配置(中心座標)は変えない)
   const lakeParams = drawLakeParams(seed);
   const hasLake = derived.lakeChance > 0 && lakeParams.roll < derived.lakeChance;
 
   const groundArea = polygonArea(boundary);
   const capArea = groundArea * derived.waterAreaCap;
+  const lakeRadius0 = Math.sqrt((derived.lakeArea * groundArea) / Math.PI);
+  const pondRadius0 = Math.sqrt((derived.pondArea * groundArea) / Math.PI);
 
-  // 幅・湖半径のスケールを縮めながら waterAreaCap 以下へクリップする(決定論的)
-  let widthScale = 1;
-  let lakeScale = 1;
-  let rivers: Spline[] = [];
-  let lakes: Polygon[] = [];
-  let field: WaterField = createWaterField(boundary, [], []);
-  for (let iter = 0; iter < AREA_CLIP_ITERATIONS; iter++) {
-    const width = Math.max(RIVER_WIDTH_FLOOR, derived.riverWidth * widthScale);
-    rivers = riverParams.map((p, i) => ({
-      points: riverPath(seed, i, p, size, radius, width),
-      width,
-    }));
-    lakes = [];
-    if (hasLake) {
-      const lakeRadius =
-        Math.sqrt((derived.lakeArea * groundArea) / Math.PI) * lakeScale;
-      const center = lakeCenter(lakeParams, rivers, radius, lakeRadius);
-      lakes.push(lakePolygon(center, lakeRadius, lakeParams));
+  const lakeCenter = placeLake(radius, lakeRadius0, lakeParams, hasLake);
+
+  const placedBodies: PlacedBody[] = [];
+  if (lakeCenter) placedBodies.push({ center: lakeCenter, radius: lakeRadius0 });
+
+  const acceptedPonds: { center: Vec2; params: PondParams }[] = [];
+  for (let i = 0; i < derived.pondCount; i++) {
+    const pondParams = drawPondParams(seed, i);
+    const center = placePond(radius, pondRadius0, pondParams, placedBodies);
+    if (center) {
+      acceptedPonds.push({ center, params: pondParams });
+      placedBodies.push({ center, radius: pondRadius0 });
     }
-    field = createWaterField(boundary, rivers, lakes);
-    if (rivers.length === 0 && lakes.length === 0) break;
-    const area = estimateWaterArea(field, size);
-    if (area <= capArea) break;
-    const s = Math.sqrt(capArea / area);
-    widthScale *= s;
-    lakeScale *= s;
   }
 
-  model.water.rivers = rivers;
+  // 面積クリップ: 湖・池の半径を一括スケールして waterAreaCap 以下へ縮小する
+  // (既存の AREA_CLIP_ITERATIONS の反復縮小を読み替えて維持。乱数非消費)
+  let scale = 1;
+  let lakes: Polygon[] = [];
+  let ponds: Polygon[] = [];
+  let field: WaterField = createWaterField(boundary, []);
+  for (let iter = 0; iter < AREA_CLIP_ITERATIONS; iter++) {
+    lakes = lakeCenter
+      ? [lakePolygon(lakeCenter, lakeRadius0 * scale, lakeParams.harmonics)]
+      : [];
+    ponds = acceptedPonds.map(({ center, params }) =>
+      lakePolygon(center, pondRadius0 * scale, params.harmonics),
+    );
+    const bodies = [...lakes, ...ponds];
+    field = createWaterField(boundary, bodies);
+    if (bodies.length === 0) break;
+    const area = estimateWaterArea(field, size);
+    if (area <= capArea) break;
+    scale *= Math.sqrt(capArea / area);
+  }
+
   model.water.lakes = lakes;
+  model.water.ponds = ponds;
   model.water.shoreline = extractShoreline(field, size);
 
   // 湿地・砂洲(水域があるときのみ。Water 0 では zoneMask は下地のまま)
-  if (rivers.length > 0 || lakes.length > 0) {
+  if (lakes.length > 0 || ponds.length > 0) {
     writeShoreZones(model, field);
   }
 
@@ -383,34 +437,27 @@ export function runWater(model: WorldModel): void {
     params.water < 15 ? 0 : clamp((params.water - 15) / 85, 0, 1) * 0.85;
   model.ground.edgeStyle = edgeRoll < waterEdgeChance ? "water" : "fog";
 
-  // サマリー(段13 の担当だが、中間PHASEでは部分的に埋める)
-  model.summary.waterOverview.rivers = rivers.length;
+  // サマリー(段15 の担当だが、中間PHASEでは部分的に埋める)
   model.summary.waterOverview.lakes = lakes.length;
+  model.summary.waterOverview.ponds = ponds.length;
 
   // パイプライン内アサーション: 違反は throw せず件数を console に出す
   // (implementation-spec 1.10節)
   let violations = 0;
-  if (rivers.length > 0 || lakes.length > 0) {
+  if (lakes.length > 1) violations++;
+  if (ponds.length > 4) violations++;
+  const bodies = [...lakes, ...ponds];
+  if (bodies.length > 0) {
     const area = estimateWaterArea(field, size);
     if (area > capArea * 1.02) violations++;
   }
-  for (const river of rivers) {
-    const head = river.points[0];
-    const tail = river.points[river.points.length - 1];
-    if (!head || !tail) {
-      violations++;
-      continue;
-    }
-    // 両端は境界の外(契約: 外縁の外側から外側へ抜ける)
-    if (field.boundarySdf(head.x, head.z) > 0) violations++;
-    if (field.boundarySdf(tail.x, tail.z) > 0) violations++;
-    for (let i = 0; i + 1 < river.points.length; i++) {
-      const a = river.points[i];
-      const b = river.points[i + 1];
-      if (!a || !b) continue;
-      if (Math.hypot(b.x - a.x, b.z - a.z) > river.width * 1.5) violations++;
+  for (const body of bodies) {
+    for (const v of body) {
+      if (field.boundarySdf(v.x, v.z) < 0) violations++;
     }
   }
+  // 水が完全に消える入力(pondCount=0 かつ湖なし)では edgeStyle は "fog"
+  if (bodies.length === 0 && model.ground.edgeStyle !== "fog") violations++;
   if (violations > 0) {
     console.warn(`water: パイプライン内アサーション違反 ${violations} 件`);
   }

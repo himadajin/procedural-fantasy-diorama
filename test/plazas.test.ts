@@ -27,13 +27,12 @@ async function buildFresh(seed: string, over: Partial<Params> = {}): Promise<Wor
   return runPipeline(seed, { ...DEFAULT_PARAMS, ...over });
 }
 
-/** 河川・湖・水路を合成した水域 sdf(正=陸側) */
+/** 湖・池・水路を合成した水域 sdf(正=陸側) */
 function combinedWaterSdf(model: WorldModel): (x: number, z: number) => number {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, [
+    ...model.water.lakes,
+    ...model.water.ponds,
+  ]);
   return (x, z) => {
     let d = field.waterSdf(x, z);
     for (const canal of model.water.canals) {

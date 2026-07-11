@@ -68,7 +68,7 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //     「岸線ループ(model.water.shoreline.loops)沿いの等間隔点(法線の
   //     逆方向へ 1.5 押し込み、waterSdf < 0 を満たす点のみ採用)」へ
   //     一般化した。アンカー候補の弧長間隔 CANAL_ANCHOR_SPACING = 40
-  //     (旧・川沿い間隔 max(12, river.width×2.5) の上限側と同程度)。
+  //     (旧・水域沿い間隔の実寸レンジ 12.5〜40 の上限側と同程度)。
   //     アンカー候補の「数」は乱数消費数に影響しない(planCanal は
   //     anchors.length を用いて `Math.floor(pick × n)` で固定個の乱数値を
   //     インデックス化するのみで、消費数自体は試行ごとに固定のため)。
@@ -76,7 +76,7 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   // それに連鎖する後段(区画・建物・植生等)の生成結果が変わり、
   // water:0(水域なし。橋岸移設もアンカー生成も対象外)を除く 7 組の
   // ハッシュが変わる。water:0 は不変(eed82045 のまま)。
-  // 新旧対応(commit 21 → 本 commit):
+  // 新旧対応(commit 21 → A2):
   //   everdusk-101 {}              1125a04d → 1f4feffc
   //   everdusk-101 {water:0}       eed82045 → eed82045(不変)
   //   everdusk-101 {water:95}      f7773829 → 8b2d7238
@@ -85,15 +85,34 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    9913230d → 2e3997c5
   //   seed-b {}                    a7018aa7 → b23fd78c
   //   seed-b {water:70}            8765d9eb → c08c38d7
+  //
+  // 計画書 2026-07-11-worldgen-rework-water.md タスク A3 で更新。意図した変更:
+  // 川をスキーマごと削除し、湖(0〜1)+池(0〜4)の独立配置モデルへ全面置換した
+  // (Water の該当フィールドを削除して ponds を追加、Derived の川本数・川幅の
+  // 該当フィールドを削除して pondCount/pondArea/canalWidth を追加、
+  // 道路(段5)は湖・池を渡らず BridgeSite を抽出しない設計へ変更 等。
+  // 詳細は 3.2節・contracts/ground-water.md)。water:0 を含む全 8 組が変わる
+  // (Water インターフェースのフィールド名自体が変わった=water:0 でも
+  // 「水なし」の内部表現(空配列のフィールド名)が変わり、waterOverview の
+  // キー名も変わるため)。
+  // 新旧対応(A2 → 本 commit):
+  //   everdusk-101 {}              1f4feffc → 69da6671
+  //   everdusk-101 {water:0}       eed82045 → 16eb82ac
+  //   everdusk-101 {water:95}      8b2d7238 → a9c68291
+  //   everdusk-101 {worldScale:0}  30905ae4 → 71827f89
+  //   everdusk-101 {worldScale:100} 2c74088a → 3958b5ca
+  //   seed-a {}                    2e3997c5 → 6a40e14c
+  //   seed-b {}                    b23fd78c → a9d7a39d
+  //   seed-b {water:70}            c08c38d7 → 98f0350c
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "1f4feffc"],
-    ["everdusk-101", { water: 0 }, "eed82045"],
-    ["everdusk-101", { water: 95 }, "8b2d7238"],
-    ["everdusk-101", { worldScale: 0 }, "30905ae4"],
-    ["everdusk-101", { worldScale: 100 }, "2c74088a"],
-    ["seed-a", {}, "2e3997c5"],
-    ["seed-b", {}, "b23fd78c"],
-    ["seed-b", { water: 70 }, "c08c38d7"],
+    ["everdusk-101", {}, "69da6671"],
+    ["everdusk-101", { water: 0 }, "16eb82ac"],
+    ["everdusk-101", { water: 95 }, "a9c68291"],
+    ["everdusk-101", { worldScale: 0 }, "71827f89"],
+    ["everdusk-101", { worldScale: 100 }, "3958b5ca"],
+    ["seed-a", {}, "6a40e14c"],
+    ["seed-b", {}, "a9d7a39d"],
+    ["seed-b", { water: 70 }, "98f0350c"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

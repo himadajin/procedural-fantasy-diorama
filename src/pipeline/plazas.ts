@@ -19,6 +19,7 @@ import {
   distToPolyline,
   pointInPolygon,
   polygonSignedDistance,
+  waterBodies,
 } from "../model/waterfield";
 
 function clamp(v: number, min: number, max: number): number {
@@ -48,13 +49,9 @@ const AXIS_HEIGHT_FACTOR = {
   rustic: 0.7,
 } as const;
 
-/** 河川・湖・水路を合成した水域 sdf(正=陸側) */
+/** 湖・池・水路を合成した水域 sdf(正=陸側) */
 function combinedWaterSdf(model: WorldModel): (x: number, z: number) => number {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const canals = model.water.canals;
   if (canals.length === 0) return field.waterSdf;
   return (x, z) => {

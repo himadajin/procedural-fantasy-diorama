@@ -11,7 +11,7 @@
  *   (外へ向かって植生が増える勾配。implementation-spec 7章)
  * - World Scale が森リング厚(marginWidth)を、Water が岸辺植生
  *   (shoreVegetation)を駆動する(implementation-spec 1.6節)
- * - 建物・道路・広場・水面(河川・湖)・水路バッファとの衝突はハード除外
+ * - 建物・道路・広場・水面(湖・池)・水路バッファとの衝突はハード除外
  * - 上限(性能配慮): 木 2000 / 低木 1200 / 草むら 320。超過時は
  *   間引きキー昇順の決定論的な間引き(乱数を追加消費しない)
  */
@@ -22,6 +22,7 @@ import {
   distToPolyline,
   pointInPolygon,
   polygonSignedDistance,
+  waterBodies,
 } from "../model/waterfield";
 import { sampleFieldGrid } from "../model/fieldgrid";
 import { sampleZoneMask, ZONE_KINDS } from "../model/zonemask";
@@ -122,11 +123,7 @@ interface VegContext {
 }
 
 function buildContext(model: WorldModel): VegContext {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const segments: Segment[] = [];
   let segReach = 0;
   for (const edge of model.network.edges) {

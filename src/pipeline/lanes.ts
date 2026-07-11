@@ -10,7 +10,7 @@
  *   採択は laneAmount 駆動(clamp(1.15 × laneAmount, 0, 0.95))
  * - 岸沿い道: 各水路の towpathSide 側、護岸縁石の外(中心線から
  *   幅/2 + 1.35)。採択は clamp(0.3 + 0.9 × laneAmount, 0, 0.98)
- * - 小道は水域(河川・湖・水路)を渡らず、結界環も横切らない
+ * - 小道は水域(湖・池・水路)を渡らず、結界環も横切らない
  *   (衝突制約でトリム・分断する設計判断。bridges / gates は段8 のまま)
  * - 乱数は要素ごとの独立サブストリーム "lanes/back/<roadEdgeId>/<L|R>" /
  *   "lanes/towpath/<canalId>" のみ・候補ごとに固定消費
@@ -24,6 +24,7 @@ import {
   createWaterField,
   distToPolyline,
   polygonSignedDistance,
+  waterBodies,
 } from "../model/waterfield";
 import {
   chaikin,
@@ -90,11 +91,7 @@ interface LaneContext {
 }
 
 function buildLaneContext(model: WorldModel): LaneContext {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const boundaryRadius = createBoundaryRadius(model.ground.boundary);
   const ring = model.wards.ringPath;
   let ringBand: LaneContext["ringBand"] = null;
@@ -126,7 +123,7 @@ function laneSampleValid(ctx: LaneContext, p: Vec2): boolean {
   const { model } = ctx;
   // 境界
   if (ctx.boundaryInside(p.x, p.z) < BOUNDARY_CLEAR) return false;
-  // 河川・湖(小道は水域を渡らない)
+  // 湖・池(小道は水域を渡らない)
   if (ctx.waterSdf(p.x, p.z) < half + WATER_CLEAR) return false;
   // 水路(岸沿い道の点は押し出しで 幅/2 + 1.35 に置かれるため自水路も
   // この制約を満たす。ヘアピン等で押し出しが収束しない点はここでトリムされる)

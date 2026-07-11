@@ -116,14 +116,13 @@ describe("段14 植生: 衝突なし(contracts の散布保証)", () => {
   for (const [seed, over] of CASES) {
     it(`${seed} ${JSON.stringify(over)}: 水面・道路・建物・広場・水路と衝突しない`, () => {
       const model = cached(seed, over);
-      const field = createWaterField(
-        model.ground.boundary,
-        model.water.rivers,
-        model.water.lakes,
-      );
+      const field = createWaterField(model.ground.boundary, [
+        ...model.water.lakes,
+        ...model.water.ponds,
+      ]);
       let violations = 0;
       for (const p of allPoints(model)) {
-        // 水面(河川・湖)に沈まない
+        // 水面(湖・池)に沈まない
         if (field.waterSdf(p.x, p.z) < 0) violations++;
         // 境界の内側
         if (field.boundarySdf(p.x, p.z) < 0) violations++;
@@ -154,11 +153,10 @@ describe("段14 植生: 衝突なし(contracts の散布保証)", () => {
 
   it("草むらの多角形は時計回りで、点は水面・建物に重ならない", () => {
     const model = cached("everdusk-101");
-    const field = createWaterField(
-      model.ground.boundary,
-      model.water.rivers,
-      model.water.lakes,
-    );
+    const field = createWaterField(model.ground.boundary, [
+      ...model.water.lakes,
+      ...model.water.ponds,
+    ]);
     for (const patch of model.vegetation.grassPatches) {
       expect(patch.polygon.length).toBeGreaterThanOrEqual(3);
       // 時計回り(shoelace 符号負。Polygon 規約)
@@ -201,11 +199,10 @@ describe("段14 植生: 散布マスクの勾配(implementation-spec 7章)", () 
   it("森リング(外縁余白)が存在し、外縁草地より明確に密", () => {
     const model = cached("everdusk-101");
     const { marginWidth } = model.meta.derived;
-    const field = createWaterField(
-      model.ground.boundary,
-      model.water.rivers,
-      model.water.lakes,
-    );
+    const field = createWaterField(model.ground.boundary, [
+      ...model.water.lakes,
+      ...model.water.ponds,
+    ]);
     let ringTrees = 0;
     let meadowTrees = 0;
     for (const t of model.vegetation.trees) {
@@ -223,11 +220,10 @@ describe("段14 植生: 散布マスクの勾配(implementation-spec 7章)", () 
     const small = cached("everdusk-101", { worldScale: 0 });
     const large = cached("everdusk-101", { worldScale: 100 });
     const count = (model: WorldModel): number => {
-      const field = createWaterField(
-        model.ground.boundary,
-        model.water.rivers,
-        model.water.lakes,
-      );
+      const field = createWaterField(model.ground.boundary, [
+        ...model.water.lakes,
+        ...model.water.ponds,
+      ]);
       let n = 0;
       for (const t of model.vegetation.trees) {
         if (
@@ -249,11 +245,10 @@ describe("段14 植生: 散布マスクの勾配(implementation-spec 7章)", () 
     const dry = cached("everdusk-101", { water: 30 });
     const wet = cached("everdusk-101", { water: 90 });
     const shoreShrubs = (model: WorldModel): number => {
-      const field = createWaterField(
-        model.ground.boundary,
-        model.water.rivers,
-        model.water.lakes,
-      );
+      const field = createWaterField(model.ground.boundary, [
+        ...model.water.lakes,
+        ...model.water.ponds,
+      ]);
       let n = 0;
       for (const s of model.vegetation.shrubs) {
         if (field.waterSdf(s.position.x, s.position.z) < 7) n++;

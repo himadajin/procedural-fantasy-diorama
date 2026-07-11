@@ -13,7 +13,7 @@
  * - 向きは接道正面を初期値に、広場に面する場合は footprint の 4 軸のうち
  *   広場方向に最も近い軸へスナップ(広場 > 道路 > 水面の優先)。最後に
  *   ±数度の揺らぎ(tidiness 高で減。乱数は "building/<id>" サブストリーム)
- * - 水辺建築は背面の水面(河川・湖)へ張り出し、杭または石基礎で
+ * - 水辺建築は背面の水面(湖・池)へ張り出し、杭または石基礎で
  *   水面下 y=-1.6(岸スカート下端)まで到達する(機械判定可能な契約)
  *
  * PHASE 4a commit 13 の追加分:
@@ -1349,7 +1349,7 @@ function expandWaterfrontParts(
     for (const t of [ta, (ta + tb) / 2, tb]) {
       const lp = face.local(t, depth);
       const p = toWorld(lp.u, lp.v);
-      if (ctx.riverLakeSdf(p.x, p.z) < 0) n++;
+      if (ctx.waterBodySdf(p.x, p.z) < 0) n++;
     }
     return n >= 2;
   };
@@ -1814,7 +1814,7 @@ export function runBuildings(model: WorldModel): void {
     const uDir = { x: tx * cosJ - tz * sinJ, z: tx * sinJ + tz * cosJ };
     const originRot = rotate(origin);
 
-    // --- 水上張り出し(waterside × 河川・湖) ---
+    // --- 水上張り出し(waterside × 湖・池) ---
     // 背面・左右の3辺の中点から水面を探索し、最も近い水面へ向けて
     // その辺を延長する(正面=接道側は張り出さない)。
     let overWater = false;
@@ -1839,7 +1839,7 @@ export function runBuildings(model: WorldModel): void {
         ];
         for (const s of starts) {
           for (let g = 0.5; g <= OVERHANG_SEARCH + 1e-9; g += 0.5) {
-            if (ctx.riverLakeSdf(s.x + side.d.x * g, s.z + side.d.z * g) < 0) {
+            if (ctx.waterBodySdf(s.x + side.d.x * g, s.z + side.d.z * g) < 0) {
               if (!best || g < best.gap) best = { ...side, gap: g };
               break;
             }
@@ -1881,7 +1881,7 @@ export function runBuildings(model: WorldModel): void {
     }
     const footprint = ensureClockwise(verts);
     for (const v of footprint) {
-      if (ctx.riverLakeSdf(v.x, v.z) < 0) overWater = true;
+      if (ctx.waterBodySdf(v.x, v.z) < 0) overWater = true;
     }
 
     // --- 階数(Settlement / Prosperity / 役割) ---
@@ -2038,7 +2038,7 @@ export function runBuildings(model: WorldModel): void {
     // (2) 接地契約: overWater ⇔ 頂点の水上、杭・基礎の水面下到達
     let vertOverWater = false;
     for (const v of b.footprint) {
-      if (ctx.riverLakeSdf(v.x, v.z) < 0) vertOverWater = true;
+      if (ctx.waterBodySdf(v.x, v.z) < 0) vertOverWater = true;
       if (ctx.canalSdf(v.x, v.z) < 0) violations++; // 水路上は常に禁止
     }
     if (vertOverWater !== b.foundation.overWater) violations++;

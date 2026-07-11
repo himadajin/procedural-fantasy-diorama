@@ -20,6 +20,7 @@ import {
   createBoundaryRadius,
   createWaterField,
   pointInPolygon,
+  waterBodies,
   type WaterField,
 } from "../model/waterfield";
 import { noiseSeed, valueNoise2D } from "./noise";
@@ -169,11 +170,7 @@ function squareFootprint(center: Vec2, side: number): Polygon {
 /** パイプライン段の実体: centerPlan.position/footprint/axes と進入点を埋める */
 export function runSiting(model: WorldModel): void {
   const { seed, params, derived } = model.meta;
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
 
   const entryPoints = placeEntryPoints(model, field);
   model.network.entryPoints = entryPoints;

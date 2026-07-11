@@ -36,10 +36,12 @@ import { FLOOR_HEIGHT, runBuildings } from "../src/pipeline/buildings";
  * 完了条件(implementation-spec 7章)の代表 seed。
  * 橋詰め建築・水路沿いの家並みの有無は段11「区画」の採択結果
  * (PHASE 4a 確定。本PHASEで変更しない)に依存するため、Water 90 で
- * 水辺要素が同一箱庭に共存する代表 seed を固定する(seed スキャンで
- * 25 seed 中 17 が 4種以上。ここではその代表 3 種を機械検証する)。
+ * 水辺要素が同一箱庭に共存する代表 seed を固定する。
+ * タスク A3(湖・池の独立配置モデル導入)で水系生成が変わったため、
+ * 新モデルで再スキャンして選び直した(4種以上・水路裏口の向き契約を
+ * 満たす代表 3 種であることを確認済み)
  */
-const REP_SEEDS = ["seed-b", "everdusk-103", "harbor-1"];
+const REP_SEEDS = ["mistvale-7", "harbor-1", "test1"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
   const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
@@ -102,12 +104,11 @@ function partCorners(part: Part): { x: number; z: number }[] {
   return out;
 }
 
-function riverLakeSdf(model: WorldModel): (x: number, z: number) => number {
-  return createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  ).waterSdf;
+function waterBodySdf(model: WorldModel): (x: number, z: number) => number {
+  return createWaterField(model.ground.boundary, [
+    ...model.water.lakes,
+    ...model.water.ponds,
+  ]).waterSdf;
 }
 
 /** 水辺拡張の語彙(契約「PHASE 6 commit 19 の追加語彙」) */
@@ -155,7 +156,7 @@ describe("waterfront: 部品の契約(語彙・水上到達・取り付き)", ()
     let deckCount = 0;
     for (const seed of REP_SEEDS) {
       const model = cached(seed, { water: 90 });
-      const sdf = riverLakeSdf(model);
+      const sdf = waterBodySdf(model);
       for (const b of general(model)) {
         const decks = b.parts.filter((p) => p.type === "deck");
         if (decks.length === 0) continue;
@@ -397,21 +398,21 @@ describe("waterfront: 完了条件(implementation-spec 7章 PHASE 6)", () => {
     for (const seed of REP_SEEDS) {
       const model = cached(seed, { water: 90 });
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
-      let riverside = 0;
+      let waterfrontHouses = 0;
       let decks = 0;
       let bridgeheads = 0;
       let canalside = 0;
       let piles = 0;
       for (const b of general(model)) {
         const parcel = b.parcelId ? parcelById.get(b.parcelId) : undefined;
-        if (b.role === "waterside" && parcel?.waterside) riverside++;
+        if (b.role === "waterside" && parcel?.waterside) waterfrontHouses++;
         if (b.role === "bridgehead") bridgeheads++;
         if (parcel?.canalside) canalside++;
         if (b.foundation.kind === "piles") piles++;
         decks += b.parts.filter((p) => p.type === "deck").length;
       }
       const kinds = [
-        riverside > 0, // 川沿いの家
+        waterfrontHouses > 0, // 湖・池沿いの家
         decks > 0, // 張り出しデッキ
         bridgeheads > 0, // 橋詰め建築
         canalside >= 2, // 水路沿いの家並み

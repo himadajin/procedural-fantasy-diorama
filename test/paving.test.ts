@@ -43,11 +43,10 @@ function build(seed: string, over: Partial<Params> = {}): WorldModel {
 }
 
 function field(model: WorldModel): WaterField {
-  return createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  return createWaterField(model.ground.boundary, [
+    ...model.water.lakes,
+    ...model.water.ponds,
+  ]);
 }
 
 function pavedAt(mask: ZoneMask, x: number, z: number): number {

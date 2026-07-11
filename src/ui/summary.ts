@@ -128,7 +128,7 @@ export function renderSummary(
   // 水辺の概要
   const w = s.waterOverview;
   container.appendChild(
-    row("水辺", `川 ${w.rivers} / 湖 ${w.lakes} / 水路 ${w.canals} / 橋 ${w.bridges}`),
+    row("水辺", `湖 ${w.lakes} / 池 ${w.ponds} / 水路 ${w.canals} / 橋 ${w.bridges}`),
   );
 
   // 結界構造

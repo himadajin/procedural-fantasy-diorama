@@ -10,7 +10,7 @@
  *   → 中心まわりの偏角リサンプル+循環平滑化(平滑性)
  *   → 星形化(自己交差の除去)
  *   → footprint / 境界マージンへの半径クランプ
- *   → 水域(河川・湖・水路)の径方向回避。回避不能な区間は "overwater"
+ *   → 水域(湖・池・水路)の径方向回避。回避不能な区間は "overwater"
  *   失敗時は等値線レベルを引き上げ(=囲い半径を縮小して)リトライする。
  *   リトライ回数も乱数ストリーム "wards/ring" から消費して決定性を保つ。
  *   全リトライ失敗時は境界と footprint に収まる円環へフォールバックする。
@@ -25,6 +25,7 @@ import {
   pointInPolygon,
   polygonArea,
   polygonSignedDistance,
+  waterBodies,
 } from "../model/waterfield";
 import { sampleFieldGrid } from "../model/fieldgrid";
 import {
@@ -65,13 +66,9 @@ const LAMP_SPACING = 13;
 /** BridgeSite 再抽出の標本間隔(段5・段6と同じ) */
 const BRIDGE_SAMPLE_STEP = 2;
 
-/** 河川・湖・水路を合成した水域 sdf(正=陸側) */
+/** 湖・池・水路を合成した水域 sdf(正=陸側) */
 function combinedWaterSdf(model: WorldModel): (x: number, z: number) => number {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const canals = model.water.canals;
   if (canals.length === 0) return field.waterSdf;
   return (x, z) => {
@@ -817,7 +814,10 @@ function planFloaters(
 
 /**
  * BridgeSite を全道路 edge について再抽出する(結界門スナップ後の正)。
- * 河川・湖・水路を合成した水域で標本化し、over は中点で最も深い水域要素。
+ * 湖・池・水路を合成した水域で標本化し、over は中点で最も深い水域要素
+ * (道路は湖・池を渡らないため実務上 over は "canal" になる想定だが、
+ * スキーマ・判定ロジックは "lake" / "pond" も許容する。contracts/ground-water.md
+ * 「bridges の性質」)。
  */
 function reextractBridges(
   model: WorldModel,
@@ -828,20 +828,20 @@ function reextractBridges(
   for (const edge of model.network.edges) {
     for (const crossing of waterCrossings(edge.path, waterSdf, BRIDGE_SAMPLE_STEP)) {
       const p = crossing.position;
-      let over: BridgeSite["over"] = "river";
+      let over: BridgeSite["over"] = "canal";
       let best = Infinity;
-      for (const river of model.water.rivers) {
-        const d = distToPolyline(p.x, p.z, river.points) - river.width / 2;
-        if (d < best) {
-          best = d;
-          over = "river";
-        }
-      }
       for (const lake of model.water.lakes) {
         const d = polygonSignedDistance(p.x, p.z, lake);
         if (d < best) {
           best = d;
           over = "lake";
+        }
+      }
+      for (const pond of model.water.ponds) {
+        const d = polygonSignedDistance(p.x, p.z, pond);
+        if (d < best) {
+          best = d;
+          over = "pond";
         }
       }
       for (const canal of model.water.canals) {
