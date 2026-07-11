@@ -32,7 +32,7 @@ const SLIDERS: SliderDef[] = [
   {
     key: "water",
     name: "Water Presence / 水辺の強さ",
-    description: "川、湖、街を通る水路、橋、岸辺、水辺の建築に影響する。",
+    description: "湖や池、街を通る水路、橋、岸辺、水辺の建築に影響する。",
   },
   {
     key: "arcana",
