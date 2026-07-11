@@ -14,5 +14,5 @@
 
 - `2026-07-06-initial-implementation.md` — アプリを23commitで実装した初期実装計画(凍結)。
 - `2026-07-07-verification-record.md` — PHASE 7 の総合検証記録(凍結)。
-- `2026-07-11-worldgen-rework-water.md` — **進行中(凍結対象外)**。
-  ワールド生成刷新のロードマップと Phase A(水系)の実行計画。完了後に凍結。
+- `2026-07-11-worldgen-rework-water.md` — ワールド生成刷新のロードマップと
+  Phase A(水系)の実行計画・実施記録(2026-07-12 受け入れ済み・凍結)。
