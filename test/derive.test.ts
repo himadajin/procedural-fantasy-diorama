@@ -121,14 +121,39 @@ describe("computeDerived: 境界値", () => {
     }
   });
 
-  it("entryPointCount は 2〜4 の整数", () => {
+  it("entryPointCount は 2〜5 の整数(Phase B: 2 + 2.8×scale + jitter)", () => {
     for (const seed of SEEDS) {
       for (let scale = 0; scale <= 100; scale += 5) {
         const d = computeDerived(seed, withParams({ worldScale: scale }));
         expect(Number.isInteger(d.entryPointCount)).toBe(true);
         expect(d.entryPointCount).toBeGreaterThanOrEqual(2);
-        expect(d.entryPointCount).toBeLessThanOrEqual(4);
+        expect(d.entryPointCount).toBeLessThanOrEqual(5);
       }
+    }
+  });
+
+  it("entryPointCount は worldScale に対して単調非減少(seed 揺らぎの範囲内)", () => {
+    // entryJitter ∈ [-0.35, 0.35] は固定なので、scale の係数 2.8 に対して
+    // 揺らぎ 1 個ぶん(0.7)未満の刻みでは逆転しうる。5刻みなら
+    // Δ(2.8×scale) = 0.14 で揺らぎ幅より小さいため、代わりに粗い刻み(25)で
+    // 単調性を機械検証する(揺らぎの影響を刻み幅で確実に上回らせる)。
+    for (const seed of SEEDS) {
+      let prev = -Infinity;
+      for (const scale of [0, 25, 50, 75, 100]) {
+        const d = computeDerived(seed, withParams({ worldScale: scale }));
+        expect(d.entryPointCount).toBeGreaterThanOrEqual(prev);
+        prev = d.entryPointCount;
+      }
+    }
+  });
+
+  it("scale=0 では entryPointCount は 2 近傍(揺らぎ込みで 2)、scale=100 では 4〜5", () => {
+    for (const seed of SEEDS) {
+      const low = computeDerived(seed, withParams({ worldScale: 0 }));
+      expect(low.entryPointCount).toBe(2);
+      const high = computeDerived(seed, withParams({ worldScale: 100 }));
+      expect(high.entryPointCount).toBeGreaterThanOrEqual(4);
+      expect(high.entryPointCount).toBeLessThanOrEqual(5);
     }
   });
 
