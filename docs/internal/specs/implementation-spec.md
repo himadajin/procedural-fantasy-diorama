@@ -172,7 +172,8 @@ Water Presence (水辺の強さ):
   1個あたりの面積(pondArea)。水域の合計面積は箱庭面積の35%を上限とし、
   導出設定でクリップする(Phase A。`../plans/2026-07-11-worldgen-rework-water.md`。
   旧仕様の主河川の本数・川幅は廃止した)
-- 水路の生成量(主駆動。発火条件は canalScore = Water×(0.5+0.5×Settlement) ≥ 0.35。
+- 水路の生成量と幅(canalWidth)(主駆動。発火条件は
+  canalScore = Water×(0.5+0.5×Settlement) ≥ 0.35。
   水域(湖または池)が存在することが前提)
 - 湿地マスク・砂洲の広さ
 - 水辺建築・橋詰め建築・杭基礎の採択確率

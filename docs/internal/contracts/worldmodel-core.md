@@ -117,6 +117,9 @@ interface Derived {
   lakeArea: number;          // 湖の目標面積(箱庭面積比)。0.05〜0.21。= 0.05 + 0.16×water
   waterAreaCap: number;      // 水域合計面積の上限(箱庭面積比)。0.35 固定
   canalScore: number;        // 水路発火スコア = Water×(0.5+0.5×Settlement)。0〜1。0.35 以上で発火
+  canalWidth: number;        // 水路の幅。= clamp(1.75 + 3.85×water, 2.2, 5)。
+                            // 旧仕様(河川の最終幅 × 0.35)と全パラメータ 50 で等価。
+                            // 面積クリップとは連動しない
   marshAmount: number;       // 湿地マスクの広さ。0〜1
   sandbarAmount: number;     // 砂洲の広さ。0〜1
   watersideRate: number;     // 水辺建築・橋詰め建築・杭基礎の採択確率。0〜1
