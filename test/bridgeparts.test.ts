@@ -43,13 +43,17 @@ describe("bridgeparts: 決定性(表示写像)", () => {
   it("同一 seed + params で展開結果が完全一致する(乱数ストリーム非消費)", async () => {
     // water=70 では代表 seed のうち一部が「水路はあるが道路との交差が0」
     // (橋なし)になりうる(湖・池の独立配置で水路の経路が変わったため)。
-    // water=95 は水路本数が増え、両 seed で安定して橋が生じることを確認済み
+    // water=95 はタスク A4(陸上率0.95・水域横断禁止の強化)以降、everdusk-101
+    // の巨大な湖では水路が全棄却され canals=0(橋なし)になりうる
+    // (水域横断を防ぐための正当な棄却であり破綻ではない。
+    // contracts/ground-water.md「水路の性質」)。water=90 は両 seed で
+    // 安定して橋が生じることを確認済み
     for (const seed of SEEDS) {
       const a = expandBridgeParts(
-        await runPipeline(seed, { ...DEFAULT_PARAMS, water: 95 }),
+        await runPipeline(seed, { ...DEFAULT_PARAMS, water: 90 }),
       );
       const b = expandBridgeParts(
-        await runPipeline(seed, { ...DEFAULT_PARAMS, water: 95 }),
+        await runPipeline(seed, { ...DEFAULT_PARAMS, water: 90 }),
       );
       expect(a).toEqual(b);
       expect(a.bridges.length).toBeGreaterThan(0);
