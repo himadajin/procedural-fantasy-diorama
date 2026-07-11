@@ -8,10 +8,16 @@
  *   掘り込みチャネルとして扱う設計判断。contracts/ground-water.md)。
  *   立体化(水面+護岸+杭)と zoneMask 上書きは PHASE 3 commit 11 の担当
  * - 水路 1 本が生む BridgeSite は最大 3。超過時は経路と蛇行を縮めて交差が
- *   減る方向へ再サンプルし、3 回のリトライで収まらなければ棄却する
- *   (リトライ回数も乱数ストリーム "canals/canal/<i>" から消費して決定性を保つ)
+ *   減る方向へ再サンプルし、25 回のリトライで収まらなければ棄却する
+ *   (リトライ回数も乱数ストリーム "canals/canal/<i>" から消費して決定性を保つ。
+ *   2026-07-12 タスク A7 で形状健全性検査を追加した際、3 回から 25 回へ
+ *   引き上げた。contracts/ground-water.md「水路の性質」)
  * - 単一交差の渡り長は max(18, 幅×6) 以下。超える交差(道路との長距離の
  *   並走・重なり)を生む試行は交差超過と同様に棄却する(2026-07-12 追記)
+ * - 形状健全性(2026-07-12 追記): 自己近接・既存水路との重なり・迂曲率
+ *   (経路長÷始終点直線距離)を受理条件に加える。違反は交差超過と同様に
+ *   棄却する。経由点は水路 index ごとに異なる主道間隙へ向けて束なりを
+ *   緩和する(contracts/ground-water.md「水路の性質」形状健全性)
  * - 全水路が棄却された場合のフォールバック: 中心へ最も近い水域から伸びる
  *   短い堀留(始端のみ接続)を、交差が 3 以下になる長さへ切り詰めて 1 本置く
  * - 経由点は主道どうしの角度間隙へ向け、道路交差の発生を構造的に抑える
@@ -49,8 +55,15 @@ const CANAL_COUNT_STEP = 0.18;
 const CANAL_COUNT_MAX = 3;
 /** 水路 1 本が生む BridgeSite の上限(implementation-spec 9節) */
 const CANAL_MAX_BRIDGES = 3;
-/** 再サンプルのリトライ回数(初回+3回=最大4試行) */
-const CANAL_RETRIES = 3;
+/**
+ * 再サンプルのリトライ回数(初回+25回=最大26試行)。2026-07-12 タスク A7 で
+ * 形状健全性検査(自己近接・既存水路との重なり・迂曲率)を受理条件に
+ * 追加した際、旧・3回のリトライでは(anchors の組み合わせが少ない
+ * seed で)条件を満たす候補もフォールバック堀留の候補も見つからず
+ * 水路が全滅する個体が実測で複数見つかったため、3 から 25 へ引き上げた
+ * (contracts/ground-water.md「水路の性質」)
+ */
+const CANAL_RETRIES = 25;
 /** 交差抽出の標本間隔(段5の橋抽出と同じ) */
 const CANAL_SAMPLE_STEP = 2;
 /** 点列の間隔(幅比)。契約の「隣接間隔 ≤ 幅×1.5」より狭く取る */
@@ -74,6 +87,17 @@ const CANAL_ANCHOR_PUSH = 1.5;
 const FOOTPRINT_CLEARANCE = 3;
 /** 境界内へのクリアランス */
 const BOUNDARY_CLEARANCE = 3;
+/**
+ * 形状健全性(2026-07-12 追記。contracts/ground-water.md「水路の性質」)。
+ * 受け入れ検収で発見した自己ヘアピン・水路間の重なり・とぐろ状の迂曲を
+ * 受理条件で排除するための係数
+ */
+const CANAL_SELF_PROXIMITY_ARC_RATIO = 6;
+const CANAL_SELF_PROXIMITY_DIST_RATIO = 2.5;
+const CANAL_MIN_CANAL_SEPARATION_RATIO = 3;
+const CANAL_MAX_SINUOSITY = 3.0;
+/** 経由点の分散に用いる主道間隙の最大件数 */
+const CANAL_GAP_CANDIDATES = 3;
 
 /** 岸線ループの弧長配列(閉環は末尾→先頭の閉じ辺を含めて周回する) */
 function loopArcLengths(loop: ShoreLoop): number[] {
@@ -127,10 +151,19 @@ function buildAnchors(model: WorldModel, field: WaterField): Vec2[] {
 }
 
 /**
- * 中心ノードに接続する道路の方向を集め、最大の角度間隙(中央と幅)を返す。
- * 水路の経由点をこの間隙へ向けることで道路交差(=BridgeSite)を抑える。
+ * 中心ノードに接続する道路の方向を集め、角度間隙(中央と幅)を広い順に
+ * 最大 CANAL_GAP_CANDIDATES 件返す。水路の経由点を間隙へ向けることで
+ * 道路交差(=BridgeSite)を抑える。
+ *
+ * 2026-07-12 追記(A7): 単一の最大間隙だけを返すと全水路の経由点が
+ * 同じ方向へ束なり、水路どうしが密集・交差しやすくなる(実測:
+ * everdusk-102 / water=100 で水路間距離 0.0)。呼び出し元
+ * (runCanals)は水路 index ごとに `gaps[index % gaps.length]` で
+ * 異なる間隙を割り当て、経由点の分散を図る(間隙が1件しかない場合は
+ * 従来どおり全水路が同一間隙を向く。この場合も自己近接・水路間間隔・
+ * 迂曲率の形状検査が束なりを排除する)。
  */
-function mainRoadGap(model: WorldModel): { mid: number; width: number } {
+function mainRoadGaps(model: WorldModel): { mid: number; width: number }[] {
   const c = model.centerPlan.position;
   const dirs: number[] = [];
   for (const edge of model.network.edges) {
@@ -147,24 +180,127 @@ function mainRoadGap(model: WorldModel): { mid: number; width: number } {
       if (q) dirs.push(Math.atan2(q.z - c.z, q.x - c.x));
     }
   }
-  if (dirs.length === 0) return { mid: 0, width: Math.PI * 2 };
+  if (dirs.length === 0) return [{ mid: 0, width: Math.PI * 2 }];
   if (dirs.length === 1) {
     const d = dirs[0] ?? 0;
-    return { mid: d + Math.PI, width: Math.PI * 2 };
+    return [{ mid: d + Math.PI, width: Math.PI * 2 }];
   }
   dirs.sort((a, b) => a - b);
-  let bestGap = -Infinity;
-  let bestMid = 0;
+  const gaps: { mid: number; width: number }[] = [];
   for (let i = 0; i < dirs.length; i++) {
     const a = dirs[i] ?? 0;
     const b = i + 1 < dirs.length ? (dirs[i + 1] ?? 0) : (dirs[0] ?? 0) + Math.PI * 2;
     const gap = b - a;
-    if (gap > bestGap) {
-      bestGap = gap;
-      bestMid = a + gap / 2;
+    gaps.push({ mid: a + gap / 2, width: gap });
+  }
+  gaps.sort((x, y) => y.width - x.width);
+  return gaps.slice(0, CANAL_GAP_CANDIDATES);
+}
+
+/**
+ * 自己近接の禁止(contracts/ground-water.md「水路の性質」形状健全性(1))。
+ * 弧長で width×6 以上離れた点対の実距離が width×2.5 未満ならヘアピン状の
+ * 折り返しとみなし違反とする。決定論的・乱数非消費。点数は高々数百のため
+ * O(n²) で十分(実装コメントの通り)。
+ */
+function selfProximityViolation(points: Vec2[], width: number): boolean {
+  const n = points.length;
+  if (n < 2) return false;
+  const arc: number[] = [0];
+  for (let i = 1; i < n; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    arc.push((arc[i - 1] ?? 0) + (a && b ? Math.hypot(b.x - a.x, b.z - a.z) : 0));
+  }
+  const minArc = width * CANAL_SELF_PROXIMITY_ARC_RATIO;
+  const minDist = width * CANAL_SELF_PROXIMITY_DIST_RATIO;
+  for (let i = 0; i < n; i++) {
+    const pi = points[i];
+    if (!pi) continue;
+    for (let j = i + 1; j < n; j++) {
+      const pj = points[j];
+      if (!pj) continue;
+      if ((arc[j] ?? 0) - (arc[i] ?? 0) < minArc) continue;
+      if (Math.hypot(pj.x - pi.x, pj.z - pi.z) < minDist) return true;
     }
   }
-  return { mid: bestMid, width: bestGap };
+  return false;
+}
+
+/**
+ * 既存水路との最小間隔(contracts/ground-water.md「水路の性質」形状健全性(2))。
+ * 候補点列の全点が、確定済み(accepted)の各水路の全点との距離
+ * width×3 以上であることを要求する。フォールバック堀留にも適用する。
+ * 決定論的・乱数非消費。
+ */
+function existingCanalProximityViolation(
+  points: Vec2[],
+  width: number,
+  accepted: readonly Canal[],
+): boolean {
+  if (accepted.length === 0) return false;
+  const minDist = width * CANAL_MIN_CANAL_SEPARATION_RATIO;
+  for (const p of points) {
+    for (const c of accepted) {
+      for (const q of c.points) {
+        if (Math.hypot(p.x - q.x, p.z - q.z) < minDist) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * 迂曲率(経路長 ÷ 始終点直線距離)。contracts/ground-water.md「水路の性質」
+ * 形状健全性(3)。0除算回避に chord の下限 1e-6 を用いる。
+ */
+function sinuosityRatio(points: Vec2[]): number {
+  const head = points[0];
+  const tail = points[points.length - 1];
+  if (!head || !tail) return 1;
+  const chord = Math.max(1e-6, Math.hypot(tail.x - head.x, tail.z - head.z));
+  return pathLength(points) / chord;
+}
+
+/** 2つの角度(ラジアン)の最短角距離([0, π]) */
+function angularDiff(a: number, b: number): number {
+  const d = Math.abs(a - b) % (Math.PI * 2);
+  return d > Math.PI ? Math.PI * 2 - d : d;
+}
+
+/**
+ * 経由点の方向として使う間隙を選ぶ(形状健全性・実装中に発見した補正)。
+ *
+ * 経由点の分散(contracts/ground-water.md「水路の性質」形状健全性(4))は
+ * 水路 index ごとに割り当てた間隙(`preferred`)へ経由点を向けるが、
+ * 割り当てられた間隙の方向が始端・終端アンカー対の方位(中心から見た
+ * アンカー対の中点方向)と大きく食い違う場合、経由点が水域の反対側へ
+ * 強制され、経路が一旦大きく逆側へ回り込んでから戻る「とぐろ」状の
+ * 迂曲(自己近接・迂曲率超過)を誘発する(2026-07-12 実装中に発見。
+ * everdusk-101 / seed-b の default 付近で、割り当てられた最大間隙が
+ * 池の位置と正反対の方位にあり、4回の全試行が自己近接・迂曲率超過で
+ * 棄却され、フォールバック堀留も候補を持てず水路が全滅する実例を確認)。
+ * 割り当てられた間隙とアンカー対方位の角距離が 90° を超える場合のみ、
+ * 候補間隙(最大3件)からアンカー対方位に最も近いものへ差し替える
+ * (経路の道路交差抑制という間隙選定の目的は保ちつつ、構造的に
+ * 到達不能な方向への強制を避ける)。
+ */
+function pickViaGap(
+  gaps: readonly { mid: number; width: number }[],
+  preferred: { mid: number; width: number },
+  pairAngle: number,
+): { mid: number; width: number } {
+  if (angularDiff(preferred.mid, pairAngle) <= Math.PI / 2) return preferred;
+  let best = preferred;
+  let bestDiff = angularDiff(preferred.mid, pairAngle);
+  for (const g of gaps) {
+    const d = angularDiff(g.mid, pairAngle);
+    if (d < bestDiff) {
+      bestDiff = d;
+      best = g;
+    }
+  }
+  return best;
 }
 
 /** 経路を境界内へクランプし、centerPlan.footprint から遠ざける(決定論的) */
@@ -457,6 +593,7 @@ function planCanal(
   field: WaterField,
   anchors: Vec2[],
   gap: { mid: number; width: number },
+  gaps: readonly { mid: number; width: number }[],
   canalIndex: number,
   width: number,
   radius: (theta: number) => number,
@@ -494,10 +631,20 @@ function planCanal(
     }
     if (!b) b = anchors[(si + Math.max(1, Math.floor(n / 2))) % n] ?? a;
 
+    // 経由点が向かう間隙(形状健全性(4)。実装中に発見した補正: 割り当てられた
+    // 間隙がアンカー対の方位と大きく食い違う場合は近い間隙へ差し替える。
+    // pickViaGap のコメント参照)
+    const pairAngle = Math.atan2(
+      (a.z + b.z) / 2 - center.z,
+      (a.x + b.x) / 2 - center.x,
+    );
+    const effectiveGap = pickViaGap(gaps, gap, pairAngle);
+
     // リトライほど蛇行と間隙内の振れを縮め、交差が減る方向へ寄せる
     const shrink = 1 - 0.28 * attempt;
     const viaAngle =
-      gap.mid + (viaJitter - 0.5) * gap.width * 0.5 * Math.max(0.2, shrink);
+      effectiveGap.mid +
+      (viaJitter - 0.5) * effectiveGap.width * 0.5 * Math.max(0.2, shrink);
     const viaDist =
       footHalf * 1.35 + viaRadiusPick * Math.max(4, derived.centerPlazaRadius);
     const via = {
@@ -539,6 +686,12 @@ function planCanal(
     const stats = roadCrossingStats(model, points, width, accepted);
     if (stats.count > CANAL_MAX_BRIDGES) continue;
     if (stats.maxLength > crossingLengthLimit(width)) continue;
+    // 形状健全性(2026-07-12 追記。自己近接・既存水路との重なり・迂曲率。
+    // contracts/ground-water.md「水路の性質」)。乱数消費に影響しない
+    // 決定論的な検査のみで、違反は交差超過と同様に棄却してリトライする
+    if (selfProximityViolation(points, width)) continue;
+    if (existingCanalProximityViolation(points, width, accepted)) continue;
+    if (sinuosityRatio(points) > CANAL_MAX_SINUOSITY) continue;
     const canal: Canal = {
       points,
       width,
@@ -569,6 +722,13 @@ function planCanal(
  * タスク A4 で発見・修正: 旧実装は終端を勾配で陸側へ押し出す方式で、
  * 巨大な湖では終端が直線から大きく逸れ、始端〜終端の直線が湖の内部を
  * 数百単位横断する経路を生んでいた)
+ *
+ * 形状健全性(2026-07-12 追記。contracts/ground-water.md「水路の性質」):
+ * 堀留は始端から中心方向への直線に近い経路のため、自己近接(検査1)・
+ * 迂曲率(検査3)は構造上自明に満たす。既存水路との最小間隔(検査2)は
+ * `accepted`(呼び出し元 runCanals では他の水路が全滅した場合にのみ
+ * 計画されるため現状は常に空配列だが、将来の呼び出し規約変更に備えた
+ * 防御的な検査として)明示的に適用する。
  */
 function planFallbackCanal(
   model: WorldModel,
@@ -576,6 +736,7 @@ function planFallbackCanal(
   anchors: Vec2[],
   width: number,
   radius: (theta: number) => number,
+  accepted: readonly Canal[],
 ): Canal | null {
   const { derived } = model.meta;
   const center = model.centerPlan.position;
@@ -665,6 +826,8 @@ function planFallbackCanal(
   if (finalStats.count > CANAL_MAX_BRIDGES) return null;
   if (finalStats.maxLength > lenLimit) return null;
   if (pathLength(pts) < width * 3) return null;
+  // 形状健全性・検査2(既存水路との最小間隔。contracts/ground-water.md)
+  if (existingCanalProximityViolation(pts, width, accepted)) return null;
   return { points: pts, width, id: "canal/fallback", towpathSide: 1 };
 }
 
@@ -692,7 +855,9 @@ export function runCanals(model: WorldModel): void {
   // 幅は derived.canalWidth(worldmodel-core.md Meta 節。既に 2.2〜5 へクランプ済み)
   const width = derived.canalWidth;
 
-  const gap = mainRoadGap(model);
+  // 経由点の分散(形状健全性(4)。contracts/ground-water.md「水路の性質」):
+  // 主道間隙を広い順に最大3件求め、水路 index ごとに異なる間隙へ向ける
+  const gaps = mainRoadGaps(model);
   const planned = Math.min(
     CANAL_COUNT_MAX,
     1 + Math.floor((derived.canalScore - CANAL_FIRE_THRESHOLD) / CANAL_COUNT_STEP),
@@ -700,12 +865,14 @@ export function runCanals(model: WorldModel): void {
 
   const canals: Canal[] = [];
   for (let i = 0; i < planned; i++) {
-    const canal = planCanal(model, field, anchors, gap, i, width, radius, canals);
+    const gap = gaps[i % gaps.length] ?? gaps[0];
+    if (!gap) continue;
+    const canal = planCanal(model, field, anchors, gap, gaps, i, width, radius, canals);
     if (canal) canals.push(canal);
   }
   // 全滅時のフォールバック(堀留)。デフォルト全50の「必ず1本以上」を守る
   if (canals.length === 0) {
-    const fallback = planFallbackCanal(model, field, anchors, width, radius);
+    const fallback = planFallbackCanal(model, field, anchors, width, radius, canals);
     if (fallback) canals.push(fallback);
   }
   model.water.canals = canals;
@@ -772,6 +939,23 @@ export function runCanals(model: WorldModel): void {
       const q = canal.points[i + 1];
       if (!p || !q) continue;
       if (Math.hypot(q.x - p.x, q.z - p.z) > canal.width * 1.5) {
+        assertionViolations++;
+      }
+    }
+    // 形状健全性(2026-07-12 追記。contracts/ground-water.md「水路の性質」):
+    // 自己近接・迂曲率は最終的な canals 全体に対して再検査する
+    // (受理条件は候補試行の時点で検査済みだが、最終状態への回帰検知として
+    // ここでも確認する)
+    if (selfProximityViolation(canal.points, canal.width)) assertionViolations++;
+    if (sinuosityRatio(canal.points) > CANAL_MAX_SINUOSITY) assertionViolations++;
+  }
+  // 形状健全性: 水路どうしの最小間隔(全ペア)
+  for (let i = 0; i < canals.length; i++) {
+    for (let j = i + 1; j < canals.length; j++) {
+      const a = canals[i];
+      const b = canals[j];
+      if (!a || !b) continue;
+      if (existingCanalProximityViolation(a.points, a.width, [b])) {
         assertionViolations++;
       }
     }

@@ -71,12 +71,21 @@ describe("canals: 発火条件と接続(contracts/ground-water.md Water 節)", (
     // (水域横断禁止を優先した結果であり破綻ではない。本数の単調性は
     // canalScore からの計画本数についてのもので、棄却後の実本数を
     // 常に保証するものではない。contracts/ground-water.md「水路の性質」)。
-    // ここでは棄却が起きない中庸な組で単調性を検証する
+    // ここでは棄却が起きない中庸な組で単調性を検証する。
+    //
+    // タスク A7(形状健全性)で「既存水路との最小間隔 width×3」を受理条件に
+    // 追加した結果、SEEDS の代表個体はいずれも湖・池が1個(単一の水域)しか
+    // 生成されないため、canalScore が高く計画本数(planned)が2〜3でも、
+    // 単一の水域の岸線だけから互いに width×3 以上離れた複数の水路を
+    // 同時に成立させられる余地がないことが多く、実本数は1本にとどまる
+    // ことが多い(実測: water=70/settlement=70・water=95/settlement=95〜
+    // water=100 のいずれの組でも SEEDS 全体で2本以上になる組が見つから
+    // なかった)。よって「本数が2本以上になる」という強い主張は撤回し、
+    // 単調性(高いほうが低いほう以上)のみを検証する
     for (const seed of SEEDS) {
       const low = build(seed).water.canals.length;
       const high = build(seed, { water: 70, settlement: 70 }).water.canals.length;
       expect(high).toBeGreaterThanOrEqual(low);
-      expect(high).toBeGreaterThanOrEqual(2);
     }
   });
 
@@ -268,6 +277,91 @@ describe("canals: BridgeSite の追加(1本あたり最大3)", () => {
             bridge.length,
             `${seed} ${JSON.stringify(over)} の ${bridge.id} の渡り長が上限を超えている`,
           ).toBeLessThanOrEqual(limit);
+        }
+      }
+    }
+  });
+});
+
+describe("canals: 形状健全性(自己近接・水路間重なり・迂曲率。" +
+  "contracts/ground-water.md「水路の性質」形状健全性。計画書タスク A7)", () => {
+  // SEEDS(seed-a / seed-b / everdusk-101)に加え、受け入れ検収で形状破綻が
+  // 実測された everdusk-102 / harbor-1 を対象に含める
+  const SHAPE_SEEDS = [...SEEDS, "everdusk-102", "harbor-1"];
+
+  /** 弧長 width×6 以上離れた点対に限定した自己最近接距離 */
+  function selfProximityMinDistance(
+    points: { x: number; z: number }[],
+    width: number,
+  ): number {
+    const arc: number[] = [0];
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1]!;
+      const b = points[i]!;
+      arc.push((arc[i - 1] ?? 0) + Math.hypot(b.x - a.x, b.z - a.z));
+    }
+    const minArc = width * 6;
+    let min = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      for (let j = i + 1; j < points.length; j++) {
+        if ((arc[j] ?? 0) - (arc[i] ?? 0) < minArc) continue;
+        min = Math.min(min, Math.hypot(points[j]!.x - points[i]!.x, points[j]!.z - points[i]!.z));
+      }
+    }
+    return min;
+  }
+
+  function sinuosity(points: { x: number; z: number }[]): number {
+    const head = points[0];
+    const tail = points[points.length - 1];
+    if (!head || !tail) return 1;
+    const chord = Math.max(1e-6, Math.hypot(tail.x - head.x, tail.z - head.z));
+    return pathLength(points) / chord;
+  }
+
+  function minDistanceBetween(
+    a: { x: number; z: number }[],
+    b: { x: number; z: number }[],
+  ): number {
+    let min = Infinity;
+    for (const p of a) {
+      for (const q of b) {
+        min = Math.min(min, Math.hypot(p.x - q.x, p.z - q.z));
+      }
+    }
+    return min;
+  }
+
+  it("自己近接なし・水路間距離 ≥ width×3・迂曲率 ≤ 3.0" +
+    "(フォールバック堀留は水路間距離のみを検証。self-intersection・とぐろの根絶)", () => {
+    for (const seed of SHAPE_SEEDS) {
+      for (const water of [50, 70, 100]) {
+        const model = build(seed, { water });
+        const canals = model.water.canals;
+        for (const canal of canals) {
+          if (canal.id === "canal/fallback") {
+            // フォールバック堀留は始端から中心方向への直線に近く、自己近接・
+            // 迂曲率は構造上自明に満たす(contracts/ground-water.md「水路の性質」)
+            continue;
+          }
+          expect(
+            selfProximityMinDistance(canal.points, canal.width),
+            `${seed} water=${water} の ${canal.id} が自己近接している`,
+          ).toBeGreaterThanOrEqual(canal.width * 2.5);
+          expect(
+            sinuosity(canal.points),
+            `${seed} water=${water} の ${canal.id} の迂曲率が上限を超えている`,
+          ).toBeLessThanOrEqual(3.0);
+        }
+        for (let i = 0; i < canals.length; i++) {
+          for (let j = i + 1; j < canals.length; j++) {
+            const a = canals[i]!;
+            const b = canals[j]!;
+            expect(
+              minDistanceBetween(a.points, b.points),
+              `${seed} water=${water} の ${a.id} と ${b.id} が近接・重なりしている`,
+            ).toBeGreaterThanOrEqual(Math.max(a.width, b.width) * 3);
+          }
         }
       }
     }
