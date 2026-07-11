@@ -140,15 +140,39 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   // 棄却は上限を超える並走交差を生む個体でのみ発生する(harbor-1 / water=100
   // で実測。渡り長 134.6 → 全交差が上限以下)。本表の 8 組では棄却が
   // 発生せず、再生成の結果 8 組すべてのハッシュが不変だった(値の更新なし)。
+  //
+  // 計画書 2026-07-11-worldgen-rework-water.md タスク A7 で更新。意図した変更:
+  // 水路の形状健全性(自己近接・既存水路との重なり・迂曲率)を受理条件に
+  // 追加し、経由点を水路 index ごとに異なる主道間隙へ向けて分散させた
+  // (mainRoadGaps。3.2節(6)「形状健全性」)。あわせて、この検査を追加した
+  // 結果リトライ回数 3 では健全な候補(またはフォールバック堀留の候補)が
+  // 見つからず水路が全滅する個体が複数見つかったため、リトライ回数を
+  // 3 から 25 へ引き上げた(contracts/ground-water.md「水路の性質」)。
+  // これらはいずれも水路の経路(および経由点が向かう間隙)を変えるため、
+  // 後段(区画・建物・植生等)の生成結果も変わり、water:0(水域なし。水路
+  // 生成の対象外)を除く 7 組のハッシュが変わる。water:0 は不変(16eb82ac
+  // のまま)。seed-a {} は水路が単一水域からの1本のみで、割り当てられた
+  // 間隙・形状検査のいずれにも抵触しない経路がそのまま採用されたため、
+  // 結果としてハッシュも不変だった(69da6671 ではなく元々 6a40e14c であり、
+  // A2 以降 6a40e14c のまま変化していない)。
+  // 新旧対応(A6 → A7):
+  //   everdusk-101 {}              69da6671 → b4a46541
+  //   everdusk-101 {water:0}       16eb82ac → 16eb82ac(不変)
+  //   everdusk-101 {water:95}      8d0d2687 → 0d7a81c7
+  //   everdusk-101 {worldScale:0}  3dd658a9 → c1754828
+  //   everdusk-101 {worldScale:100} 3958b5ca → 2ebaf32f
+  //   seed-a {}                    6a40e14c → 6a40e14c(不変)
+  //   seed-b {}                    3e3e2341 → 37b960fd
+  //   seed-b {water:70}            7849a971 → 992ee82a
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "69da6671"],
+    ["everdusk-101", {}, "b4a46541"],
     ["everdusk-101", { water: 0 }, "16eb82ac"],
-    ["everdusk-101", { water: 95 }, "8d0d2687"],
-    ["everdusk-101", { worldScale: 0 }, "3dd658a9"],
-    ["everdusk-101", { worldScale: 100 }, "3958b5ca"],
+    ["everdusk-101", { water: 95 }, "0d7a81c7"],
+    ["everdusk-101", { worldScale: 0 }, "c1754828"],
+    ["everdusk-101", { worldScale: 100 }, "2ebaf32f"],
     ["seed-a", {}, "6a40e14c"],
-    ["seed-b", {}, "3e3e2341"],
-    ["seed-b", { water: 70 }, "7849a971"],
+    ["seed-b", {}, "37b960fd"],
+    ["seed-b", { water: 70 }, "992ee82a"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
