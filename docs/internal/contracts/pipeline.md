@@ -67,11 +67,11 @@ interface Rng {
 | 2 | 地面 | pipeline/ground | meta | ground(zoneMask下地) |
 | 3 | 水系 | pipeline/water | meta, ground | water.lakes/ponds/shoreline、ground.edgeStyle、zoneMask(湿地・砂洲) |
 | 4 | 立地評価 | pipeline/siting | meta, ground, water | centerPlan.position/footprint/axes、network.entryPoints |
-| 5 | 道路網 | pipeline/network | 〜centerPlan | network.nodes/edges |
+| 5 | 道路網 | pipeline/network | 〜centerPlan | network.nodes/edges(class は main/connector に加え street。Phase B。後半サブフェーズ `pipeline/streets.ts` が発芽・成長させ追記する) |
 | 6 | 水路 | pipeline/canals | 〜network | water.canals、water.bridges(追加) |
-| 7 | 一次密度場 | pipeline/density | 〜canals | density.primary |
+| 7 | 一次密度場 | pipeline/density | 〜canals | density.primary、zoning(市街度。Phase B) |
 | 8 | 結界計画 | pipeline/wards | 〜density.primary | wards 一式、water.bridges(再抽出) |
-| 9 | 広場 | pipeline/plazas | 〜wards | plazas、centerPlan.facing/heightHint |
+| 9 | 広場 | pipeline/plazas | 〜wards | plazas、centerPlan.facing/heightHint、network.nodes/edges(中心前広場の接続路を street として追記のみ。Phase B) |
 | 10 | 舗装 | pipeline/paving | 〜plazas(network / water.canals / plazas) | ground.zoneMask(舗装チャネル上書き) |
 | 11 | 区画 | pipeline/parcels | 〜舗装 | density.final、parcels |
 | 12 | 建物 | pipeline/buildings | 〜parcels | buildings(骨格+部品リスト。中心建築を含む)、plazas(中庭 "courtyard" の追記) |
@@ -90,6 +90,12 @@ interface Rng {
   岸線に影響させない(同節の設計判断)。zoneMask への舗装上書きは
   段5/6/9 の各段では行わず、段10「舗装」へ集約する
   (ground-water.md ZoneMask 節)。段10 は乱数サブストリームを消費しない。
+- **Phase B 註記**: 段9「広場」は中心前広場確定後に接続路(class
+  `"street"`)を `network` へ追記する(network-plaza.md Plaza 節「中心前
+  広場の接続路」)。したがって段10「舗装」・段11「区画」・段13「小道」は
+  段9 より後に走るため、読む `network.edges` にはこの接続路を**含んだ**
+  状態が渡る(段9 より前の段5/6/7/8 は含まない状態のまま。実装はタスク
+  B4 で追いつく)。
 - 段13「小道」(PHASE 4b)は段12「建物」の後に走る専用段とし、
   裏手の小道(区画の列の奥)と水路沿いの岸沿い道(towpathSide 側)を
   lane class の edge として network へ**追記のみ**で加える

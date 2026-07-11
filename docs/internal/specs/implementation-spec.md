@@ -149,7 +149,8 @@ WorldModel {
 
 World Scale (敷地規模):
 - ワールド一辺の実寸(例: 240〜560単位)
-- 進入点(外縁の道の入り口。結界門とは別概念)の数(2〜4)
+- 進入点(外縁の道の入り口。結界門とは別概念)の数(2〜5。Phase B で
+  2〜4 から拡張。`../plans/2026-07-12-worldgen-rework-roads.md`)
 - 道路網の総延長予算、区画数の上限
 - 外縁の余白幅(森・草地帯の厚み)
 
@@ -157,6 +158,8 @@ Settlement Pressure (居住圧力):
 - 密度場の中心ピーク値と減衰距離(高いほど中心が密で外縁まで広がる)
 - 区画の採択確率と区画サイズ(高いほど小さく密)
 - 小道(建物間を結ぶ細い道)の生成量
+- 二次街路(建物群の内部を区切る有機成長の路地。street)の総量
+  (streetBudget)。Phase B(`../plans/2026-07-12-worldgen-rework-roads.md`)
 - 建物の平均階数への弱い正の寄与
 - 水路の本数への弱い正の寄与(主駆動は Water Presence。街が育つほど水路が増える)
 
@@ -308,6 +311,14 @@ Node上のVitestでそのままテストできる。
 > Phase A で廃止されたことにより現行仕様と乖離しているが、
 > 2026-07-06〜07 の初期実装当時の記録として意図的に残す。
 > 現行の水系仕様は `../contracts/ground-water.md` を正とする。
+
+> **Phase B 註記**(`../plans/2026-07-12-worldgen-rework-roads.md`、
+> 2026-07-12): 上記 1.6節の World Scale 駆動(進入点 2〜5)・
+> Settlement Pressure 駆動(streetBudget)は Phase B の決定であり、
+> 実装はタスク B2(進入点)・B3(streetBudget)で追いつく。それまで
+> コードは旧仕様(進入点 2〜4、streetBudget なし)のまま動作する。
+> 現行の道路・広場・ゾーニング仕様は `../contracts/network-plaza.md` を
+> 正とする。
 
 ---
 
