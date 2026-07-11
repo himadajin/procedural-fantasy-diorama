@@ -58,7 +58,7 @@ function modelWithAxes(
       angle: 0,
       width: 3,
       length: 5,
-      over: "river",
+      over: "canal",
       roadClass: "main",
     });
   }
@@ -99,11 +99,11 @@ describe("段15 サマリー: WorldModel 実態との一致(contracts/vegetation
       }
     });
 
-    it(`${name}: waterOverview が rivers/lakes/canals/bridges の実数と一致`, async () => {
+    it(`${name}: waterOverview が lakes/ponds/canals/bridges の実数と一致`, async () => {
       const m = await runPipeline("everdusk-101", params);
       expect(m.summary.waterOverview).toEqual({
-        rivers: m.water.rivers.length,
         lakes: m.water.lakes.length,
+        ponds: m.water.ponds.length,
         canals: m.water.canals.length,
         bridges: m.water.bridges.length,
       });

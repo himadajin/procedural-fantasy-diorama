@@ -1,5 +1,5 @@
 /**
- * 段6「水路」: canalScore 発火で川・湖から分岐して中心域を通る水路を計画し、
+ * 段6「水路」: canalScore 発火で湖・池から分岐して中心域を通る水路を計画し、
  * 道路との交差区間を BridgeSite として仮追加する。
  * データの正は docs/internal/contracts/ground-water.md(Water 節)、
  * 設計は implementation-spec 1.3節(段6)・PHASE 3・9節(リスクと対策)。
@@ -13,8 +13,8 @@
  * - 全水路が棄却された場合のフォールバック: 中心へ最も近い水域から伸びる
  *   短い堀留(始端のみ接続)を、交差が 3 以下になる長さへ切り詰めて 1 本置く
  * - 経由点は主道どうしの角度間隙へ向け、道路交差の発生を構造的に抑える
- * - 始端・終端の接続部を除き、中間点は既存水域(川・湖)の外へ押し出す
- *   (川筋の中を走る水路は「街の水路」として現れないため。
+ * - 始端・終端の接続部を除き、中間点は既存水域(湖・池)の外へ押し出す
+ *   (水域の中を走る水路は「街の水路」として現れないため。
  *   contracts/ground-water.md Water 節)
  */
 import { makeRng } from "../rng";
@@ -25,6 +25,7 @@ import {
   distToPolyline,
   fieldGradient,
   polygonSignedDistance,
+  waterBodies,
   type WaterField,
 } from "../model/waterfield";
 import { fbm2D, noiseSeed } from "./noise";
@@ -37,10 +38,6 @@ import {
   resamplePath,
   waterCrossings,
 } from "../model/geometry";
-
-function clamp(v: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, v));
-}
 
 /** 発火条件(implementation-spec 1.6節) */
 const CANAL_FIRE_THRESHOLD = 0.35;
@@ -56,17 +53,13 @@ const CANAL_RETRIES = 3;
 const CANAL_SAMPLE_STEP = 2;
 /** 点列の間隔(幅比)。契約の「隣接間隔 ≤ 幅×1.5」より狭く取る */
 const CANAL_SPACING_RATIO = 1.2;
-/** 幅: 川幅に対する比率と実寸クランプ(川より細い) */
-const CANAL_WIDTH_RATIO = 0.35;
-const CANAL_WIDTH_MIN = 2.2;
-const CANAL_WIDTH_MAX = 5;
-/** 蛇行の振幅(実寸)。川(worldSize 比)より控えめ */
+/** 蛇行の振幅(実寸)。worldSize 比ではなく実寸の控えめな値 */
 const CANAL_MEANDER_AMP = 7;
 /** 始端・終端アンカーの最小距離 */
 const ANCHOR_MIN_SEPARATION = 30;
 /**
- * アンカー候補の弧長間隔(岸線ループ沿い)。旧・川沿い等間隔点の間隔
- * (max(12, river.width×2.5) = 12.5〜40 実寸)の上限側と同程度に取る。
+ * アンカー候補の弧長間隔(岸線ループ沿い)。廃止済みの旧・水域沿い等間隔点の
+ * 間隔(実寸 12.5〜40)の上限側と同程度に取る。
  * 間隔を狭くすると、蛇行(meander)が強い水路で近接しすぎたアンカー対が
  * 選ばれやすくなり、水路が鋭く折り返す形状(ヘアピン)を誘発して
  * 岸沿い道(towpath)の左右判定が局所的に破綻しうる(実装中に検証済み)ため、
@@ -96,8 +89,8 @@ function loopArcLengths(loop: ShoreLoop): number[] {
 }
 
 /**
- * 岸線ループ(湖・池の shoreline.loops。過渡期は川岸も含む)沿いの
- * 等間隔点を分岐候補にする(contracts/ground-water.md Water 節)。
+ * 岸線ループ(湖・池の shoreline.loops)沿いの等間隔点を分岐候補にする
+ * (contracts/ground-water.md Water 節)。
  * 各岸線点を法線(水域→陸向き)の逆方向(水側)へ CANAL_ANCHOR_PUSH だけ
  * 押し込み、waterSdf < 0(既存水域内)を満たす点だけを採用する。
  * 決定論的な弧長走査のみで乱数は消費しない。
@@ -111,7 +104,7 @@ function buildAnchors(model: WorldModel, field: WaterField): Vec2[] {
     const arc = loopArcLengths(loop);
     const total = arc[arc.length - 1] ?? 0;
     if (total <= 0) continue;
-    // 開いた岸線(川岸)は境界と交わる両端を避ける。閉じた岸線(湖・池)は全周を使う
+    // 開いた岸線は境界と交わる両端を避ける。閉じた岸線(湖・池。通常はこちら)は全周を使う
     const start = loop.closed ? 0 : CANAL_ANCHOR_SPACING;
     const end = loop.closed ? total : total - CANAL_ANCHOR_SPACING;
     if (end <= start) continue;
@@ -212,13 +205,15 @@ function enforceCorridor(
 }
 
 /**
- * 経路の中間点を既存水域(川・湖)の外へ押し出す
+ * 経路の中間点を既存水域(湖・池)の外へ押し出す
  * (contracts/ground-water.md Water 節。目安は「中心線の waterSdf ≥ 幅/2 + 1」)。
  *
  * - 始端・終端の接続窓(弧長 width×2+4)は水域接続のため押し出さない
  * - 深い点(waterSdf < −(幅/2+6))は水域横断・湖内の接続部とみなし保持する
+ *   (この例外はタスク A4 で撤廃予定。contracts/ground-water.md「水路の性質」
+ *   Phase A 註記)
  * - 水中の連続区間ごとに平均勾配で「どちらの岸へ出すか」を1回だけ決め、
- *   区間内の全点を同じ側へ押す(点ごとの最近岸に任せると川筋を挟んで
+ *   区間内の全点を同じ側へ押す(点ごとの最近岸に任せると水域を挟んで
  *   互い違いの岸へ跳ねてジグザグになるため)。決定論的で乱数を消費しない
  */
 function enforceLand(points: Vec2[], field: WaterField, width: number): void {
@@ -624,17 +619,13 @@ export function runCanals(model: WorldModel): void {
 
   const fired = derived.canalScore >= CANAL_FIRE_THRESHOLD;
   const hasWater =
-    model.water.rivers.length > 0 || model.water.lakes.length > 0;
+    model.water.lakes.length > 0 || model.water.ponds.length > 0;
   if (!fired || !hasWater) {
     model.summary.waterOverview.canals = 0;
     return;
   }
 
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const radius = createBoundaryRadius(model.ground.boundary);
   const anchors = buildAnchors(model, field);
   if (anchors.length === 0) {
@@ -642,20 +633,8 @@ export function runCanals(model: WorldModel): void {
     return;
   }
 
-  // 幅は川より細い(契約: 最終河川幅×0.35 基準、最小河川幅×0.8 上限)
-  let minRiverWidth = Infinity;
-  for (const river of model.water.rivers) {
-    minRiverWidth = Math.min(minRiverWidth, river.width);
-  }
-  let width = clamp(
-    CANAL_WIDTH_RATIO *
-      (Number.isFinite(minRiverWidth) ? minRiverWidth : derived.riverWidth),
-    CANAL_WIDTH_MIN,
-    CANAL_WIDTH_MAX,
-  );
-  if (Number.isFinite(minRiverWidth)) {
-    width = Math.min(width, minRiverWidth * 0.8);
-  }
+  // 幅は derived.canalWidth(worldmodel-core.md Meta 節。既に 2.2〜5 へクランプ済み)
+  const width = derived.canalWidth;
 
   const gap = mainRoadGap(model);
   const planned = Math.min(
@@ -724,10 +703,7 @@ export function runCanals(model: WorldModel): void {
     ) {
       assertionViolations++;
     }
-    // 境界内・間隔・幅
-    if (canal.width >= (Number.isFinite(minRiverWidth) ? minRiverWidth : Infinity)) {
-      assertionViolations++;
-    }
+    // 境界内・間隔
     for (let i = 1; i + 1 < canal.points.length; i++) {
       const p = canal.points[i];
       if (!p) continue;

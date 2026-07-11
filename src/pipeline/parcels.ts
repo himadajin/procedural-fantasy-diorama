@@ -19,6 +19,7 @@ import {
   createWaterField,
   distToPolyline,
   polygonSignedDistance,
+  waterBodies,
 } from "../model/waterfield";
 import {
   createFieldGrid,
@@ -221,8 +222,8 @@ function newlyOccupiedShorePoints(
 
 /** 衝突検査に使う周辺環境(段11・段12で共有する形) */
 export interface SiteContext {
-  /** 河川・湖の waterSdf(正=陸側) */
-  riverLakeSdf: (x: number, z: number) => number;
+  /** 湖・池の waterSdf(正=陸側) */
+  waterBodySdf: (x: number, z: number) => number;
   /** 水路の sdf(中心線距離 − 幅/2。水路が無ければ +∞) */
   canalSdf: (x: number, z: number) => number;
   /** 境界の内側距離 */
@@ -231,15 +232,11 @@ export interface SiteContext {
 
 /** モデルから衝突検査の環境を作る(段12「建物」も同じ判定を使う) */
 export function createSiteContext(model: WorldModel): SiteContext {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const boundaryRadius = createBoundaryRadius(model.ground.boundary);
   const canals = model.water.canals;
   return {
-    riverLakeSdf: field.waterSdf,
+    waterBodySdf: field.waterSdf,
     canalSdf:
       canals.length === 0
         ? () => Infinity
@@ -298,9 +295,9 @@ function rejectByCollision(
   for (const p of rect.probes) {
     if (ctx.boundaryInside(p.x, p.z) < BOUNDARY_MARGIN) return true;
   }
-  // (2) 水面 = 河川・湖+水路
+  // (2) 水面 = 湖・池+水路
   for (const p of rect.probes) {
-    if (ctx.riverLakeSdf(p.x, p.z) < WATER_CLEAR) return true;
+    if (ctx.waterBodySdf(p.x, p.z) < WATER_CLEAR) return true;
     if (ctx.canalSdf(p.x, p.z) < WATER_CLEAR) return true;
   }
   // (1) 広場ポリゴン
@@ -444,13 +441,13 @@ export function runParcels(model: WorldModel): void {
         if (!rect) continue;
 
         // 水辺判定(契約: プローブの最小距離 < 4.5)
-        let minRiverLake = Infinity;
+        let minWaterBody = Infinity;
         let minCanal = Infinity;
         for (const p of rect.probes) {
-          minRiverLake = Math.min(minRiverLake, ctx.riverLakeSdf(p.x, p.z));
+          minWaterBody = Math.min(minWaterBody, ctx.waterBodySdf(p.x, p.z));
           minCanal = Math.min(minCanal, ctx.canalSdf(p.x, p.z));
         }
-        const waterside = minRiverLake < NEAR_WATER;
+        const waterside = minWaterBody < NEAR_WATER;
         const canalside = minCanal < NEAR_WATER;
 
         // 採択確率: parcelRate × 密度係数。水辺は watersideRate で押し上げ
