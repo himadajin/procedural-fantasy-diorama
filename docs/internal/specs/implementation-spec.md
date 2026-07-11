@@ -86,11 +86,11 @@ ESLint の import 制約で機械化する。
 
 1. 導出設定: 6パラメータ(0-100)を内部変数群へマッピング
 2. 地面: ワールド実寸、有機的な外縁形状、材質ゾーンの下地
-3. 水系: 河川・湖の平面計画、水面データ(水路は大域計画の段で確定)
+3. 水系: 湖・池の平面計画、水面データ(水路は大域計画の段で確定)
 4. 立地評価: 主中心の位置決定、中心建築の予定地・占有範囲、
    外縁の進入点の決定(正面方向と高さ目安は広場確定後に決める)
 5. 道路網: コストベース経路探索、橋の確定、幹線の自己組織化
-6. 水路: 川・湖から分岐して中心域を通る水路チャネルの計画、橋の追加
+6. 水路: 湖・池から分岐して中心域を通る水路チャネルの計画、橋の追加
 7. 一次密度場: 中心からの距離、道路近接、Settlement Pressure から構成
    (結界に依存しない)
 8. 結界計画: 結界環・魔導塔・結界門・聖域・魔法灯・浮遊要素の計画
@@ -121,7 +121,7 @@ ESLint の import 制約で機械化する。
 WorldModel {
   meta: { seed, params, derived }        // 導出設定
   ground: { size, boundary: Polygon, zoneMask }  // 平坦。boundaryは有機的な外縁形状
-  water: { rivers: Spline[], lakes: Polygon[], canals: Spline[],
+  water: { lakes: Polygon[], ponds: Polygon[], canals: Spline[],
            bridges: BridgeSite[], shoreline }
   density: { primary, final }            // 一次=中心距離+道路近接+Settlement、最終=一次+結界内ブースト
   network: { nodes[], edges[] }          // 道路グラフ。edgeは種別(主道/接続路/小道)と幅を持つ
@@ -168,9 +168,12 @@ Prosperity (繁栄度):
 - 建物の傾き・沈み込みノイズの逆数(高いほど整然)
 
 Water Presence (水辺の強さ):
-- 主河川の本数(0〜2)と川幅、湖の生成確率と面積。
-  水域の合計面積は箱庭面積の35%を上限とし、導出設定でクリップする
-- 水路の生成量(主駆動。発火条件は canalScore = Water×(0.5+0.5×Settlement) ≥ 0.35)
+- 湖の生成確率(lakeChance)と面積(lakeArea)、池の数(pondCount。0〜4)と
+  1個あたりの面積(pondArea)。水域の合計面積は箱庭面積の35%を上限とし、
+  導出設定でクリップする(Phase A。`../plans/2026-07-11-worldgen-rework-water.md`。
+  旧仕様の主河川の本数・川幅は廃止した)
+- 水路の生成量(主駆動。発火条件は canalScore = Water×(0.5+0.5×Settlement) ≥ 0.35。
+  水域(湖または池)が存在することが前提)
 - 湿地マスク・砂洲の広さ
 - 水辺建築・橋詰め建築・杭基礎の採択確率
 - 岸辺植生の密度
@@ -200,7 +203,7 @@ Monumentality (中心建築の格):
 
 - 魔導軸 = Monumentality × Arcana → 大魔導塔・魔導城・結界紋様・発光開口・浮遊要素
 - 権威軸 = Monumentality × Prosperity → 大聖堂風・宮殿風(尖塔、大屋根、整列窓)
-- 水辺軸 = Monumentality × Water × 水辺近接度 → 湖畔の館・川沿いの塔・水路上の要素
+- 水辺軸 = Monumentality × Water × 水辺近接度 → 湖畔の館・水辺の塔・水路上の要素
 - 素朴軸 = (1 - Monumentality) × (1 - Settlement) → 大農家・宿場・物見塔
 
 例: 魔導軸が最大で権威軸が2位なら「装飾的な窓と大屋根を持つ魔導城」になる。
@@ -293,6 +296,17 @@ Node上のVitestでそのままテストできる。
   「複雑度」「ハッシュ」行へ統合し、開発用オーバーレイは既定非表示・
   URL パラメータ `?debug=1` でのみ表示する。
   詳細は `../contracts/pipeline.md`「描画プリセット・LOD・デバッグ表示」)。
+
+> **Phase A 註記**(`../plans/2026-07-11-worldgen-rework-water.md`、
+> 2026-07-11): 上記 1.3節・1.5節・1.6節・1.7節は Phase A の内容に合わせて
+> 川(rivers)への言及を書き換え済み。一方、以下の PHASE N 章(初期実装
+> 当時の歴史的記述)にある「川」「河川」への言及は書き換えず保持する:
+> 3章「PHASE 2: 地面と水系」、4章「PHASE 3: 大域計画」、
+> 7章「PHASE 6: 水辺建築の仕上げと植生」、
+> 8章「PHASE 7: サマリー・パフォーマンス・総合検証」。これらは川が
+> Phase A で廃止されたことにより現行仕様と乖離しているが、
+> 2026-07-06〜07 の初期実装当時の記録として意図的に残す。
+> 現行の水系仕様は `../contracts/ground-water.md` を正とする。
 
 ---
 
