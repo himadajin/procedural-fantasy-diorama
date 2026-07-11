@@ -122,7 +122,7 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   // 水路・橋の経路が変わるため後段(区画・建物・植生等)の生成結果も変わり、
   // water:0(水域なし。水路生成の対象外)を除く 7 組のハッシュが変わる。
   // water:0 は不変(16eb82ac のまま)。
-  // 新旧対応(A3 → 本 commit):
+  // 新旧対応(A3 → A4):
   //   everdusk-101 {}              69da6671 → 69da6671(不変)
   //   everdusk-101 {water:0}       16eb82ac → 16eb82ac(不変)
   //   everdusk-101 {water:95}      a9c68291 → 8d0d2687
@@ -131,6 +131,15 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    6a40e14c → 6a40e14c(不変)
   //   seed-b {}                    a9d7a39d → 3e3e2341
   //   seed-b {water:70}            98f0350c → 7849a971
+  //
+  // 計画書 2026-07-11-worldgen-rework-water.md タスク A4 差し戻し対応で確認
+  // (2026-07-12)。意図した変更: 水路×道路の単一交差の渡り長上限
+  // max(18, canalWidth×6) を追加した(道路と水路の長距離並走が 1 つの
+  // 巨大な橋になる破綻の対策。渡り長は確定済み水路とのコリドー合成水域で
+  // 判定する。contracts/ground-water.md「水路の性質」)。乱数消費規約は不変で、
+  // 棄却は上限を超える並走交差を生む個体でのみ発生する(harbor-1 / water=100
+  // で実測。渡り長 134.6 → 全交差が上限以下)。本表の 8 組では棄却が
+  // 発生せず、再生成の結果 8 組すべてのハッシュが不変だった(値の更新なし)。
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
     ["everdusk-101", {}, "69da6671"],
     ["everdusk-101", { water: 0 }, "16eb82ac"],

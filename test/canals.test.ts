@@ -252,4 +252,24 @@ describe("canals: BridgeSite の追加(1本あたり最大3)", () => {
       }
     }
   });
+
+  it("水路由来の各 BridgeSite の渡り長は max(18, canalWidth×6) 以下" +
+    "(並走橋の禁止。contracts/ground-water.md「水路の性質」。2026-07-12 追記)", () => {
+    // 個数上限(3)だけでは、道路と水路が長距離で並走・重なりして 1 つの
+    // 巨大な「橋」になる破綻(harbor-1 / water=100 で渡り長 134.6 を実測)を
+    // 防げないため、段6 時点の bridges(over: "canal")で単一交差の渡り長を検証する
+    for (const seed of [...SEEDS, "harbor-1"]) {
+      for (const over of [{ water: 50 }, { water: 70 }, { water: 100 }]) {
+        const model = build(seed, over);
+        const limit = Math.max(18, model.meta.derived.canalWidth * 6);
+        for (const bridge of model.water.bridges) {
+          if (bridge.over !== "canal") continue;
+          expect(
+            bridge.length,
+            `${seed} ${JSON.stringify(over)} の ${bridge.id} の渡り長が上限を超えている`,
+          ).toBeLessThanOrEqual(limit);
+        }
+      }
+    }
+  });
 });
