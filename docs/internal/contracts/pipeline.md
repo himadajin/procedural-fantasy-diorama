@@ -65,9 +65,9 @@ interface Rng {
 |---|---|---|---|---|
 | 1 | 導出設定 | pipeline/derive | seed, params | meta.derived |
 | 2 | 地面 | pipeline/ground | meta | ground(zoneMask下地) |
-| 3 | 水系 | pipeline/water | meta, ground | water.rivers/lakes/shoreline、ground.edgeStyle、zoneMask(湿地・砂洲) |
+| 3 | 水系 | pipeline/water | meta, ground | water.lakes/ponds/shoreline、ground.edgeStyle、zoneMask(湿地・砂洲) |
 | 4 | 立地評価 | pipeline/siting | meta, ground, water | centerPlan.position/footprint/axes、network.entryPoints |
-| 5 | 道路網 | pipeline/network | 〜centerPlan | network.nodes/edges、water.bridges |
+| 5 | 道路網 | pipeline/network | 〜centerPlan | network.nodes/edges |
 | 6 | 水路 | pipeline/canals | 〜network | water.canals、water.bridges(追加) |
 | 7 | 一次密度場 | pipeline/density | 〜canals | density.primary |
 | 8 | 結界計画 | pipeline/wards | 〜density.primary | wards 一式、water.bridges(再抽出) |
@@ -85,7 +85,7 @@ interface Rng {
 - 各段の表示名(「水系を計画中…」等)は Generating インジケーターに
   そのまま使う(art-direction 9.5節)。
 - 段6「水路」の BridgeSite 追加は仮のもので、段8「結界計画」が結界門
-  スナップ後に全道路 edge を河川・湖・水路の合成水域で標本化し直して
+  スナップ後に全道路 edge を湖・池・水路の合成水域で標本化し直して
   bridges 全体を置き換える(ground-water.md Water 節)。水路は waterfield・
   岸線に影響させない(同節の設計判断)。zoneMask への舗装上書きは
   段5/6/9 の各段では行わず、段10「舗装」へ集約する

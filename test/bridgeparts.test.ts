@@ -41,6 +41,14 @@ const WATERY: Partial<Params>[] = [{ water: 70 }, { water: 95 }];
 
 describe("bridgeparts: 決定性(表示写像)", () => {
   it("同一 seed + params で展開結果が完全一致する(乱数ストリーム非消費)", async () => {
+    // water=95 はタスク A4(陸上率0.95・水域横断禁止の強化)以降、everdusk-101
+    // の巨大な湖では水路が全棄却され canals=0(橋なし)になりうる
+    // (水域横断を防ぐための正当な棄却であり破綻ではない。
+    // contracts/ground-water.md「水路の性質」)。water=90 はタスク A7
+    // (形状健全性検査の追加)以降、everdusk-101 で「水路はあるが道路との
+    // 交差が0」(橋なし)になることが判明したため water=70 に差し替えた。
+    // 両 seed とも water=70 では canals=1・bridges=1 で安定して橋が
+    // 生じることを確認済み(2026-07-12 タスク A7)
     for (const seed of SEEDS) {
       const a = expandBridgeParts(
         await runPipeline(seed, { ...DEFAULT_PARAMS, water: 70 }),
@@ -55,20 +63,19 @@ describe("bridgeparts: 決定性(表示写像)", () => {
 });
 
 describe("bridgeparts: 両岸接続(取り付き)", () => {
-  it("河川・湖の橋の取り付き端点は陸上かつ接道 edge.path 上、橋床天端は道路と同高", async () => {
+  it("湖・池の橋の取り付き端点は陸上かつ接道 edge.path 上、橋床天端は道路と同高", async () => {
     for (const seed of SEEDS) {
       for (const over of WATERY) {
         const model = await build(seed, over);
-        const field = createWaterField(
-          model.ground.boundary,
-          model.water.rivers,
-          model.water.lakes,
-        );
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
         const ex = expandBridgeParts(model);
-        const riverBridges = ex.bridges.filter(
+        const lakeBridges = ex.bridges.filter(
           (b) => b.kind === "stone-arch" || b.kind === "wood",
         );
-        for (const info of riverBridges) {
+        for (const info of lakeBridges) {
           const edge = model.network.edges.find((e) => e.id === info.edgeId);
           expect(edge, `${info.id} の接道 edge が無い`).toBeDefined();
           if (!edge) continue;
@@ -94,17 +101,18 @@ describe("bridgeparts: 両岸接続(取り付き)", () => {
     }
   });
 
-  it("河川・湖を渡る道路区間(リボンが岸で止める区間)はすべて橋を持つ", async () => {
+  it("湖・池を渡る道路区間(リボンが岸で止める区間)はすべて橋を持つ", async () => {
     for (const seed of SEEDS) {
       for (const over of WATERY) {
         const model = await build(seed, over);
         const ex = expandBridgeParts(model);
-        const riverSites = model.water.bridges.filter((b) => b.over !== "canal");
-        const riverBridges = ex.bridges.filter(
+        const lakeSites = model.water.bridges.filter((b) => b.over !== "canal");
+        const lakeBridges = ex.bridges.filter(
           (b) => b.kind === "stone-arch" || b.kind === "wood",
         );
-        // 段8の BridgeSite(河川・湖)と同数以上(標本化は同一 step の共有実装)
-        expect(riverBridges.length).toBeGreaterThanOrEqual(riverSites.length);
+        // 段8の BridgeSite(湖・池)と同数以上(標本化は同一 step の共有実装)。
+        // 道路は湖・池を渡らないため通常はいずれも0件になる
+        expect(lakeBridges.length).toBeGreaterThanOrEqual(lakeSites.length);
       }
     }
   });
@@ -123,7 +131,7 @@ describe("bridgeparts: 両岸接続(取り付き)", () => {
 });
 
 describe("bridgeparts: 水面との整合", () => {
-  it("桁・橋床の下端は水面より上(河川・湖 -0.6 / 水路 +0.04)", async () => {
+  it("桁・橋床の下端は水面より上(湖・池 -0.6 / 水路 +0.04)", async () => {
     for (const seed of SEEDS) {
       for (const over of WATERY) {
         const ex = expandBridgeParts(await build(seed, over));

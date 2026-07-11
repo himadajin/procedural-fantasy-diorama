@@ -171,15 +171,14 @@ describe("lanes: Settlement 20/55/90 で小道量が単調に変わる", () => {
 });
 
 describe("lanes: 衝突制約(contracts Network 節「小道の性質」)", () => {
-  it("小道は水域(河川・湖・水路)・建物・広場・境界外と衝突しない", () => {
+  it("小道は水域(湖・池・水路)・建物・広場・境界外と衝突しない", () => {
     for (const seed of SEEDS) {
       for (const over of [{}, { water: 70 }, { settlement: 90 }]) {
         const model = cached(seed, over);
-        const field = createWaterField(
-          model.ground.boundary,
-          model.water.rivers,
-          model.water.lakes,
-        );
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
         for (const lane of lanesOf(model)) {
           const total = pathLength(lane.path);
           for (let s = 0; s <= total; s += 1.5) {

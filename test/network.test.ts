@@ -14,8 +14,8 @@ import { runSiting } from "../src/pipeline/siting";
 import { runNetwork } from "../src/pipeline/network";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
-/** 川を持つ代表 seed(water=70。事前に確認済み) */
-const RIVER_SEEDS = ["seed-a", "seed-b", "seed-c"];
+/** 湖・池を持つ代表 seed(water=70。事前に確認済み) */
+const WATER_SEEDS = ["seed-a", "seed-b", "seed-c"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
   const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
@@ -163,16 +163,24 @@ describe("network: グラフの整合", () => {
   });
 });
 
-describe("network: 橋(BridgeSite)", () => {
-  it("水域を渡る edge は必ず対応する BridgeSite を持つ(代表 seed×params)", () => {
-    for (const seed of RIVER_SEEDS) {
+describe("network: 道路は湖・池を渡らない(段5は BridgeSite を作らない)", () => {
+  it("段5(runNetwork)実行後も water.bridges は空のまま", () => {
+    for (const seed of WATER_SEEDS) {
       for (const water of [50, 70, 95]) {
         const model = build(seed, { water });
-        const field = createWaterField(
-          model.ground.boundary,
-          model.water.rivers,
-          model.water.lakes,
-        );
+        expect(model.water.bridges).toEqual([]);
+      }
+    }
+  });
+
+  it("全 edge の path 標本で waterSdf ≥ 0(許容誤差付き。湖・池を渡らない)", () => {
+    for (const seed of WATER_SEEDS) {
+      for (const water of [50, 70, 95]) {
+        const model = build(seed, { water });
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
         for (const edge of model.network.edges) {
           const total = pathLength(edge.path);
           const count = Math.max(2, Math.ceil(total / 1.5));
@@ -193,50 +201,15 @@ describe("network: 橋(BridgeSite)", () => {
               }
               acc += seg;
             }
-            // 明確に水中の道路点は、いずれかの橋の渡り区間に覆われている
-            if (field.waterSdf(p.x, p.z) < -0.1) {
-              const covered = model.water.bridges.some(
-                (br) =>
-                  Math.hypot(br.position.x - p.x, br.position.z - p.z) <=
-                  br.length / 2 + 3,
-              );
-              expect(
-                covered,
-                `seed=${seed} water=${water} edge=${edge.id} の水中区間が橋に覆われていない`,
-              ).toBe(true);
-            }
+            // 経路探索グリッドの解像度+平滑化(Chaikin・Douglas-Peucker)ぶんの
+            // 標本誤差を許容する(事前調査で最大 -0.89 程度の食い込みを確認)
+            expect(
+              field.waterSdf(p.x, p.z),
+              `seed=${seed} water=${water} edge=${edge.id} が水域を渡っている`,
+            ).toBeGreaterThanOrEqual(-1.5);
           }
         }
       }
-    }
-  });
-
-  it("川を持つ世界では橋が1つ以上でき、属性が妥当", () => {
-    for (const seed of RIVER_SEEDS) {
-      const model = build(seed, { water: 70 });
-      expect(model.water.bridges.length).toBeGreaterThanOrEqual(1);
-      const field = createWaterField(
-        model.ground.boundary,
-        model.water.rivers,
-        model.water.lakes,
-      );
-      expect(new Set(model.water.bridges.map((b) => b.id)).size).toBe(
-        model.water.bridges.length,
-      );
-      for (const bridge of model.water.bridges) {
-        expect(["river", "lake"]).toContain(bridge.over);
-        expect(["main", "connector"]).toContain(bridge.roadClass);
-        expect(bridge.width).toBeGreaterThan(0);
-        expect(bridge.length).toBeGreaterThan(0);
-        expect(Number.isFinite(bridge.angle)).toBe(true);
-        // 渡り区間の中点は水中(標本化の線形補間ぶんの許容)
-        expect(
-          field.waterSdf(bridge.position.x, bridge.position.z),
-        ).toBeLessThan(0.5);
-      }
-      expect(model.summary.waterOverview.bridges).toBe(
-        model.water.bridges.length,
-      );
     }
   });
 

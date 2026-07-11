@@ -195,7 +195,10 @@ describe("center: 基本契約(contracts「中心建築」)", () => {
 
   it("中庭(kind courtyard)は中心建築の footprint と重ならない", () => {
     let courtyards = 0;
-    for (const seed of SEEDS) {
+    // SEEDS に加え、水系刷新(Phase A)後も中庭が確実に現れる代表 seed を補う
+    // (中庭の出現は centerPlan.position 経由で水域配置の影響を受けるため、
+    // 特定 seed×combo では偶然出現しないことがある。事前に確認済み)
+    for (const seed of [...SEEDS, "seed-c", "harbor-1"]) {
       for (const over of [{}, ARCANE, AUTHORITY, WATERSIDE, RUSTIC]) {
         const model = cached(seed, over);
         const b = center(model);

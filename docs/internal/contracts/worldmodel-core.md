@@ -34,7 +34,7 @@ WorldModel は生成パイプラインの出力であり、メッシュビルダ
 ```ts
 type Vec2 = { x: number; z: number };          // xz平面上の点
 type Polygon = Vec2[];                          // 閉多面形。時計回り。自己交差なし
-type Spline = { points: Vec2[]; width: number } // 中心線+幅(川・水路・道路リボンの元)
+type Spline = { points: Vec2[]; width: number } // 中心線+幅(水路・道路リボンの元)
 ```
 
 ## WorldModel
@@ -72,10 +72,18 @@ interface Params {
 
 `Derived` は implementation-spec 1.6節の全マッピングを表す。
 各フィールドは駆動パラメータに対して単調な写像とし、seed 揺らぎは
-`entryPointCount`・`riverCount` の丸め閾値にのみ使う
-(`makeRng(seed, "derive")`。消費数・消費順は入力に依らず固定)。
+`entryPointCount`・`pondCount` の丸め閾値にのみ使う
+(`makeRng(seed, "derive")`。消費数 2(entryJitter・pondJitter)・
+消費順は入力に依らず固定)。
 後続PHASEが消費する値も含め、導出は PHASE 2 で完成させる。
 draw call 予算等の描画側の規律は導出設定ではなく描画側の定数とする。
+
+> **Phase A 註記**(`plans/2026-07-11-worldgen-rework-water.md`): 下記の
+> Water Presence 駆動群(旧 `riverCount` / `riverWidth` → `pondCount` /
+> `pondArea` の追加、`lakeChance` / `lakeArea` の数式改訂)は Phase A の
+> 決定であり、実装はタスク A3 で追いつく。それまでコードは旧仕様
+> (`riverCount` / `riverWidth` と旧数式、seed 揺らぎ名 `riverJitter`)の
+> まま動作する(`riverJitter` は `pondJitter` に読み替える)。
 
 ```ts
 interface Derived {
@@ -102,12 +110,16 @@ interface Derived {
   tidiness: number;          // 整い(建物の傾き・沈み込みノイズの逆数)。0〜1
 
   // --- Water Presence 駆動 ---
-  riverCount: number;        // 主河川の本数。0〜2(整数。閾値に seed 揺らぎ。Water 0 で必ず 0)
-  riverWidth: number;        // 川幅。5〜16(本数 0 でも連続値として保持し、閾値付近の連続変化に使う)
-  lakeChance: number;        // 湖の生成確率。0〜1(Water 0 で 0)
-  lakeArea: number;          // 湖の目標面積(箱庭面積比)。0.04〜0.18
+  pondCount: number;         // 池の数。0〜4(整数。閾値に seed 揺らぎ。Water 0 で必ず 0)
+                            // = clamp(round(3.4×water − 0.25 + pondJitter), 0, 4)
+  pondArea: number;          // 池1個あたりの目標面積(箱庭面積比)。= lakeArea × 0.18
+  lakeChance: number;        // 湖の生成確率。0〜1(Water 0 で 0)。= clamp(1.5×water − 0.2, 0, 1)
+  lakeArea: number;          // 湖の目標面積(箱庭面積比)。0.05〜0.21。= 0.05 + 0.16×water
   waterAreaCap: number;      // 水域合計面積の上限(箱庭面積比)。0.35 固定
   canalScore: number;        // 水路発火スコア = Water×(0.5+0.5×Settlement)。0〜1。0.35 以上で発火
+  canalWidth: number;        // 水路の幅。= clamp(1.75 + 3.85×water, 2.2, 5)。
+                            // 旧仕様(河川の最終幅 × 0.35)と全パラメータ 50 で等価。
+                            // 面積クリップとは連動しない
   marshAmount: number;       // 湿地マスクの広さ。0〜1
   sandbarAmount: number;     // 砂洲の広さ。0〜1
   watersideRate: number;     // 水辺建築・橋詰め建築・杭基礎の採択確率。0〜1

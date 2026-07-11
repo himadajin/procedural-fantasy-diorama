@@ -6,12 +6,12 @@
  * ここの同じ純関数を共有することで、絵とデータの岸線を一致させる。
  * three 非依存・乱数ストリーム非消費(順序非依存規約)。
  */
-import type { Polygon, Spline, Vec2 } from "./worldmodel";
+import type { Polygon, Vec2, Water } from "./worldmodel";
 
 /** マーチンググリッドの張り(ワールド一辺比)。境界(最大半径 0.5×size)より広く取る */
 export const GRID_SPAN_RATIO = 1.1;
 
-/** マーチンググリッドの一辺セル数。最小の川幅でも水面が途切れない解像度を保つ */
+/** マーチンググリッドの一辺セル数。最小の水路幅でも水面が途切れない解像度を保つ */
 export function gridCellCount(size: number): number {
   return Math.max(96, Math.min(224, Math.round(size / 2.5)));
 }
@@ -151,11 +151,18 @@ export interface WaterField {
   shoreDist(x: number, z: number): number;
 }
 
-/** 境界・河川・湖から水域/陸地のスカラー場を作る */
+/**
+ * 湖+池のポリゴン一覧(createWaterField の bodies 引数の元)。
+ * 呼び出し側での `[...water.lakes, ...water.ponds]` の重複記述を避ける便宜ヘルパー。
+ */
+export function waterBodies(water: Pick<Water, "lakes" | "ponds">): Polygon[] {
+  return [...water.lakes, ...water.ponds];
+}
+
+/** 境界・湖・池から水域/陸地のスカラー場を作る(contracts/ground-water.md Water 節) */
 export function createWaterField(
   boundary: Polygon,
-  rivers: Spline[],
-  lakes: Polygon[],
+  bodies: Polygon[],
 ): WaterField {
   const radius = createBoundaryRadius(boundary);
   let far = 1;
@@ -163,11 +170,8 @@ export function createWaterField(
 
   const waterSdf = (x: number, z: number): number => {
     let d = far;
-    for (const river of rivers) {
-      d = Math.min(d, distToPolyline(x, z, river.points) - river.width / 2);
-    }
-    for (const lake of lakes) {
-      d = Math.min(d, polygonSignedDistance(x, z, lake));
+    for (const body of bodies) {
+      d = Math.min(d, polygonSignedDistance(x, z, body));
     }
     return d;
   };

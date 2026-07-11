@@ -30,7 +30,7 @@ export interface Vec2 {
 /** 閉多角形。時計回り。自己交差なし */
 export type Polygon = Vec2[];
 
-/** 中心線+幅(川・水路・道路リボンの元) */
+/** 中心線+幅(水路・道路リボンの元) */
 export interface Spline {
   points: Vec2[];
   width: number;
@@ -59,7 +59,7 @@ export const DEFAULT_PARAMS: Params = {
  * パラメータ→内部変数(implementation-spec 1.6節)。
  * フィールドの正は contracts/worldmodel-core.md(Meta 節)。
  * 各フィールドは駆動パラメータに対して単調な写像とし、seed 揺らぎは
- * entryPointCount・riverCount の丸め閾値にのみ使う(pipeline/derive.ts)。
+ * entryPointCount・pondCount の丸め閾値にのみ使う(pipeline/derive.ts)。
  */
 export interface Derived {
   // --- World Scale 駆動 ---
@@ -101,18 +101,20 @@ export interface Derived {
   tidiness: number;
 
   // --- Water Presence 駆動 ---
-  /** 主河川の本数。0〜2(整数。閾値に seed 揺らぎ。Water 0 で必ず 0) */
-  riverCount: number;
-  /** 川幅。5〜16(本数 0 でも連続値として保持し、閾値付近の連続変化に使う) */
-  riverWidth: number;
+  /** 池の数。0〜4(整数。閾値に seed 揺らぎ。Water 0 で必ず 0) */
+  pondCount: number;
+  /** 池1個あたりの目標面積(箱庭面積比)。= lakeArea × 0.18 */
+  pondArea: number;
   /** 湖の生成確率。0〜1(Water 0 で 0) */
   lakeChance: number;
-  /** 湖の目標面積(箱庭面積比)。0.04〜0.18 */
+  /** 湖の目標面積(箱庭面積比)。0.05〜0.21 */
   lakeArea: number;
   /** 水域合計面積の上限(箱庭面積比)。0.35 固定 */
   waterAreaCap: number;
   /** 水路発火スコア = Water×(0.5+0.5×Settlement)。0.35 以上で発火 */
   canalScore: number;
+  /** 水路の幅。= clamp(1.75 + 3.85×water, 2.2, 5)。面積クリップとは連動しない */
+  canalWidth: number;
   /** 湿地マスクの広さ。0〜1 */
   marshAmount: number;
   /** 砂洲の広さ。0〜1 */
@@ -178,12 +180,13 @@ export function createEmptyDerived(): Derived {
     roadGrade: 0,
     detailAmount: 0,
     tidiness: 0,
-    riverCount: 0,
-    riverWidth: 0,
+    pondCount: 0,
+    pondArea: 0,
     lakeChance: 0,
     lakeArea: 0,
     waterAreaCap: 0,
     canalScore: 0,
+    canalWidth: 0,
     marshAmount: 0,
     sandbarAmount: 0,
     watersideRate: 0,
@@ -233,7 +236,8 @@ export interface Canal extends Spline {
 export interface ShoreLoop {
   /** "shore/<n>"。抽出順で安定 */
   id: string;
-  /** true=閉環(湖岸・中州)。false=外縁で切れる開いた岸線(川岸) */
+  /** true=閉環(湖岸・池岸・中州)。false=開いた岸線(境界そのものが水域境界を
+   *  兼ねる場合。Phase A の湖・池は境界と独立した閉領域のため通常は true のみ) */
   closed: boolean;
   /** 岸線の点列(水際 y=0 のライン。隣接間隔はセル寸程度) */
   points: Vec2[];
@@ -271,13 +275,15 @@ export interface BridgeSite {
   angle: number;
   width: number;
   length: number;
-  over: "river" | "lake" | "canal";
+  over: "lake" | "pond" | "canal";
   roadClass: RoadClass;
 }
 
 export interface Water {
-  rivers: Spline[];
+  /** 湖(0〜1個)。景観のアンカーとなる大水面 */
   lakes: Polygon[];
+  /** 池(0〜4個)。散点的な小水面 */
+  ponds: Polygon[];
   canals: Canal[];
   bridges: BridgeSite[];
   shoreline: Shoreline;
@@ -352,7 +358,7 @@ export interface Parcel {
   frontEdge: [Vec2, Vec2];
   /** 正面方位(xz 偏角。敷地から接道 edge の中心線へ向かう方向) */
   facing: number;
-  /** 河川・湖の岸沿い(判定基準は contracts) */
+  /** 湖・池の岸沿い(判定基準は contracts) */
   waterside: boolean;
   /** 水路沿い(同) */
   canalside: boolean;
@@ -389,7 +395,7 @@ export interface Foundation {
   kind: "plinth" | "piles" | "stonebase";
   /** 基壇の立ち上がり高(y=0 から。Prosperity・役割駆動) */
   plinthHeight: number;
-  /** footprint が水面(河川・湖)上に張り出すか */
+  /** footprint が水面(湖・池)上に張り出すか */
   overWater: boolean;
   /** 基礎下端の y。陸上は 0、水上張り出しは -1.6(岸スカート下端) */
   bottomY: number;
@@ -443,7 +449,7 @@ export interface Summary {
   buildingCounts: Record<string, number>;
   /** 軸スコア+特徴から生成する短い日本語記述文(決定論的) */
   centerDescription: string;
-  waterOverview: { rivers: number; lakes: number; canals: number; bridges: number };
+  waterOverview: { lakes: number; ponds: number; canals: number; bridges: number };
   wardOverview: {
     level: number;
     ringLength: number;
@@ -482,8 +488,8 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
       zoneMask: createZoneMask(0, 0),
     },
     water: {
-      rivers: [],
       lakes: [],
+      ponds: [],
       canals: [],
       bridges: [],
       shoreline: { cellSize: 0, loops: [] },
@@ -514,7 +520,7 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
     summary: {
       buildingCounts: {},
       centerDescription: "",
-      waterOverview: { rivers: 0, lakes: 0, canals: 0, bridges: 0 },
+      waterOverview: { lakes: 0, ponds: 0, canals: 0, bridges: 0 },
       wardOverview: {
         level: 0,
         ringLength: 0,

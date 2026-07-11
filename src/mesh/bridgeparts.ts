@@ -10,7 +10,7 @@
  * テストが three を経由せず機械検証できる(contracts/pipeline.md)。
  *
  * - 乱数ストリームは消費しない。個体差・採択は位置ハッシュ由来
- * - 河川・湖の渡り区間の標本化は道路リボン(mesh/paving.ts)と同一の
+ * - 湖・池の渡り区間の標本化は道路リボン(mesh/paving.ts)と同一の
  *   waterCrossings(edge.path, field.waterSdf, ROAD_WATER_SAMPLE_STEP) を
  *   共用し、取り付きに隙間を出さない。道路リボンの基準高
  *   (roadBaseY)と水路上の持ち上げ(canalLiftAt)も本ファイルを正とする
@@ -23,7 +23,7 @@ import {
   WATER_SURFACE_Y,
 } from "../model/worldmodel";
 import { pathLength, pointAlong, waterCrossings } from "../model/geometry";
-import { createWaterField } from "../model/waterfield";
+import { createWaterField, waterBodies } from "../model/waterfield";
 
 /** 道路リボンの断面の基準値(mesh/paving.ts が共用する。正は本ファイル) */
 export const ROAD_SHOULDER_Y = 0.012;
@@ -347,8 +347,12 @@ function bridgeHut(
   );
 }
 
-/** 河川・湖の橋 1 基(渡り区間 1 つ)を展開する */
-function expandRiverBridge(
+/**
+ * 湖・池の橋 1 基(渡り区間 1 つ)を展開する。道路(段5)は湖・池を渡らない
+ * ため実際にはほぼ生じないが、waterCrossings による標本化は水域一般に
+ * 対応する(contracts/ground-water.md「bridges の性質」)。
+ */
+function expandLakeBridge(
   parts: Part[],
   model: WorldModel,
   edge: WorldModel["network"]["edges"][number],
@@ -590,12 +594,8 @@ export function expandBridgeParts(model: WorldModel): BridgeExpansion {
   const parts: Part[] = [];
   const bridges: BridgeBuildInfo[] = [];
 
-  // 河川・湖の橋: 道路リボンと同一の標本化で渡り区間を検出する
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  // 湖・池の橋: 道路リボンと同一の標本化で渡り区間を検出する
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   for (const edge of model.network.edges) {
     const total = pathLength(edge.path);
     if (total <= 0) continue;
@@ -607,7 +607,7 @@ export function expandBridgeParts(model: WorldModel): BridgeExpansion {
     for (const c of crossings) {
       if (c.length < 1.0) continue; // 標本化の際(きわ)のごく短い区間は橋にしない
       bridges.push(
-        expandRiverBridge(parts, model, edge, c.sStart, c.sEnd, total),
+        expandLakeBridge(parts, model, edge, c.sStart, c.sEnd, total),
       );
     }
   }

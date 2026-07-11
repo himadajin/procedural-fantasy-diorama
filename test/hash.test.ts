@@ -59,15 +59,120 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    413344bc → 9913230d
   //   seed-b {}                    360ce1b7 → a7018aa7
   //   seed-b {water:70}            37add040 → 8765d9eb
+  //
+  // 計画書 2026-07-11-worldgen-rework-water.md タスク A2 で更新。意図した変更:
+  // (1) siting.ts の placeEntryPoints から「主河川がある場合、進入点が
+  //     全て同じ岸に偏ったら1点を対岸へ移す」処理を削除した(乱数非消費の
+  //     処理のため、この変更自体はハッシュに影響しない)。
+  // (2) canals.ts の buildAnchors を「川沿いの等間隔点+湖の内側点」から
+  //     「岸線ループ(model.water.shoreline.loops)沿いの等間隔点(法線の
+  //     逆方向へ 1.5 押し込み、waterSdf < 0 を満たす点のみ採用)」へ
+  //     一般化した。アンカー候補の弧長間隔 CANAL_ANCHOR_SPACING = 40
+  //     (旧・水域沿い間隔の実寸レンジ 12.5〜40 の上限側と同程度)。
+  //     アンカー候補の「数」は乱数消費数に影響しない(planCanal は
+  //     anchors.length を用いて `Math.floor(pick × n)` で固定個の乱数値を
+  //     インデックス化するのみで、消費数自体は試行ごとに固定のため)。
+  // 上記いずれもアンカー・進入点の座標が変わるため、水路の経路・橋・
+  // それに連鎖する後段(区画・建物・植生等)の生成結果が変わり、
+  // water:0(水域なし。橋岸移設もアンカー生成も対象外)を除く 7 組の
+  // ハッシュが変わる。water:0 は不変(eed82045 のまま)。
+  // 新旧対応(commit 21 → A2):
+  //   everdusk-101 {}              1125a04d → 1f4feffc
+  //   everdusk-101 {water:0}       eed82045 → eed82045(不変)
+  //   everdusk-101 {water:95}      f7773829 → 8b2d7238
+  //   everdusk-101 {worldScale:0}  aff7f80d → 30905ae4
+  //   everdusk-101 {worldScale:100} 7bfd75e6 → 2c74088a
+  //   seed-a {}                    9913230d → 2e3997c5
+  //   seed-b {}                    a7018aa7 → b23fd78c
+  //   seed-b {water:70}            8765d9eb → c08c38d7
+  //
+  // 計画書 2026-07-11-worldgen-rework-water.md タスク A3 で更新。意図した変更:
+  // 川をスキーマごと削除し、湖(0〜1)+池(0〜4)の独立配置モデルへ全面置換した
+  // (Water の該当フィールドを削除して ponds を追加、Derived の川本数・川幅の
+  // 該当フィールドを削除して pondCount/pondArea/canalWidth を追加、
+  // 道路(段5)は湖・池を渡らず BridgeSite を抽出しない設計へ変更 等。
+  // 詳細は 3.2節・contracts/ground-water.md)。water:0 を含む全 8 組が変わる
+  // (Water インターフェースのフィールド名自体が変わった=water:0 でも
+  // 「水なし」の内部表現(空配列のフィールド名)が変わり、waterOverview の
+  // キー名も変わるため)。
+  // 新旧対応(A2 → A3):
+  //   everdusk-101 {}              1f4feffc → 69da6671
+  //   everdusk-101 {water:0}       eed82045 → 16eb82ac
+  //   everdusk-101 {water:95}      8b2d7238 → a9c68291
+  //   everdusk-101 {worldScale:0}  30905ae4 → 71827f89
+  //   everdusk-101 {worldScale:100} 2c74088a → 3958b5ca
+  //   seed-a {}                    2e3997c5 → 6a40e14c
+  //   seed-b {}                    b23fd78c → a9d7a39d
+  //   seed-b {water:70}            c08c38d7 → 98f0350c
+  //
+  // 計画書 2026-07-11-worldgen-rework-water.md タスク A4 で更新。意図した変更:
+  // canals.ts の水中区間の押し出し処理から「深い横断部
+  // (waterSdf < −(幅/2+6))は対象外」の例外を削除し、始端・終端の接続窓を
+  // 除くすべての水中区間を岸へ押し出すよう強化した。あわせて中間部の陸上率の
+  // 棄却閾値を 0.7 → 0.95 へ引き上げ、「全試行が閾値未満でも陸上率最大の
+  // 試行を受理する」救済を廃止した(棄却→全滅時はフォールバック堀留への
+  // 縮退の一本道に統一。contracts/ground-water.md「水路の性質」)。
+  // 実装中に発見した副次的な不具合の修正も含む: フォールバック堀留
+  // (`planFallbackCanal`)の終端選定が「中心方向へ一定距離進めた点を勾配で
+  // 陸側へ押し出す」方式だったため、巨大な湖では終端が直線から大きく逸れ、
+  // 始端〜終端の直線が湖の内部を数百単位横断する経路を生んでいた
+  // (2026-07-11 のブラウザ観察で確認済みの破綻と同種)。岸→中心方向への
+  // 直線を等間隔走査して「水中に留まる最後の地点」を探す方式へ置き換え、
+  // その水中区間が接続窓を超えるアンカーは採用しないよう修正した。
+  // 水路・橋の経路が変わるため後段(区画・建物・植生等)の生成結果も変わり、
+  // water:0(水域なし。水路生成の対象外)を除く 7 組のハッシュが変わる。
+  // water:0 は不変(16eb82ac のまま)。
+  // 新旧対応(A3 → A4):
+  //   everdusk-101 {}              69da6671 → 69da6671(不変)
+  //   everdusk-101 {water:0}       16eb82ac → 16eb82ac(不変)
+  //   everdusk-101 {water:95}      a9c68291 → 8d0d2687
+  //   everdusk-101 {worldScale:0}  71827f89 → 3dd658a9
+  //   everdusk-101 {worldScale:100} 3958b5ca → 3958b5ca(不変)
+  //   seed-a {}                    6a40e14c → 6a40e14c(不変)
+  //   seed-b {}                    a9d7a39d → 3e3e2341
+  //   seed-b {water:70}            98f0350c → 7849a971
+  //
+  // 計画書 2026-07-11-worldgen-rework-water.md タスク A4 差し戻し対応で確認
+  // (2026-07-12)。意図した変更: 水路×道路の単一交差の渡り長上限
+  // max(18, canalWidth×6) を追加した(道路と水路の長距離並走が 1 つの
+  // 巨大な橋になる破綻の対策。渡り長は確定済み水路とのコリドー合成水域で
+  // 判定する。contracts/ground-water.md「水路の性質」)。乱数消費規約は不変で、
+  // 棄却は上限を超える並走交差を生む個体でのみ発生する(harbor-1 / water=100
+  // で実測。渡り長 134.6 → 全交差が上限以下)。本表の 8 組では棄却が
+  // 発生せず、再生成の結果 8 組すべてのハッシュが不変だった(値の更新なし)。
+  //
+  // 計画書 2026-07-11-worldgen-rework-water.md タスク A7 で更新。意図した変更:
+  // 水路の形状健全性(自己近接・既存水路との重なり・迂曲率)を受理条件に
+  // 追加し、経由点を水路 index ごとに異なる主道間隙へ向けて分散させた
+  // (mainRoadGaps。3.2節(6)「形状健全性」)。あわせて、この検査を追加した
+  // 結果リトライ回数 3 では健全な候補(またはフォールバック堀留の候補)が
+  // 見つからず水路が全滅する個体が複数見つかったため、リトライ回数を
+  // 3 から 25 へ引き上げた(contracts/ground-water.md「水路の性質」)。
+  // これらはいずれも水路の経路(および経由点が向かう間隙)を変えるため、
+  // 後段(区画・建物・植生等)の生成結果も変わり、water:0(水域なし。水路
+  // 生成の対象外)を除く 7 組のハッシュが変わる。water:0 は不変(16eb82ac
+  // のまま)。seed-a {} は水路が単一水域からの1本のみで、割り当てられた
+  // 間隙・形状検査のいずれにも抵触しない経路がそのまま採用されたため、
+  // 結果としてハッシュも不変だった(69da6671 ではなく元々 6a40e14c であり、
+  // A2 以降 6a40e14c のまま変化していない)。
+  // 新旧対応(A6 → A7):
+  //   everdusk-101 {}              69da6671 → b4a46541
+  //   everdusk-101 {water:0}       16eb82ac → 16eb82ac(不変)
+  //   everdusk-101 {water:95}      8d0d2687 → 0d7a81c7
+  //   everdusk-101 {worldScale:0}  3dd658a9 → c1754828
+  //   everdusk-101 {worldScale:100} 3958b5ca → 2ebaf32f
+  //   seed-a {}                    6a40e14c → 6a40e14c(不変)
+  //   seed-b {}                    3e3e2341 → 37b960fd
+  //   seed-b {water:70}            7849a971 → 992ee82a
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "1125a04d"],
-    ["everdusk-101", { water: 0 }, "eed82045"],
-    ["everdusk-101", { water: 95 }, "f7773829"],
-    ["everdusk-101", { worldScale: 0 }, "aff7f80d"],
-    ["everdusk-101", { worldScale: 100 }, "7bfd75e6"],
-    ["seed-a", {}, "9913230d"],
-    ["seed-b", {}, "a7018aa7"],
-    ["seed-b", { water: 70 }, "8765d9eb"],
+    ["everdusk-101", {}, "b4a46541"],
+    ["everdusk-101", { water: 0 }, "16eb82ac"],
+    ["everdusk-101", { water: 95 }, "0d7a81c7"],
+    ["everdusk-101", { worldScale: 0 }, "c1754828"],
+    ["everdusk-101", { worldScale: 100 }, "2ebaf32f"],
+    ["seed-a", {}, "6a40e14c"],
+    ["seed-b", {}, "37b960fd"],
+    ["seed-b", { water: 70 }, "992ee82a"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

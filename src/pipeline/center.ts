@@ -294,7 +294,7 @@ export function expandCenterBuilding(
   const footprint = ensureClockwise(local.map(([u, v]) => toWorld(u, v)));
 
   // --- 接地(footprint が水面にかかる場合は接地契約に従う) ---
-  const overWater = footprint.some((p) => ctx.riverLakeSdf(p.x, p.z) < 0);
+  const overWater = footprint.some((p) => ctx.waterBodySdf(p.x, p.z) < 0);
   const bottomY = overWater ? SHORE_SKIRT_BOTTOM_Y : 0;
   const plinthH = rustic ? 0.3 : clamp(0.5 + 0.6 * mon, 0.5, 1.1);
 
@@ -610,13 +610,13 @@ export function expandCenterBuilding(
       });
     }
   } else if (dominant === "waterside") {
-    // 最も水面に近い背面隅の塔(湖畔の館・川沿いの塔)
+    // 最も水面に近い背面隅の塔(湖畔・池畔の館の塔)
     let bestDir = { x: 1, z: 0 };
     let bestSdf = Infinity;
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2;
       const dir = { x: Math.cos(a), z: Math.sin(a) };
-      const probe = ctx.riverLakeSdf(
+      const probe = ctx.waterBodySdf(
         plan.position.x + dir.x * side * 0.75,
         plan.position.z + dir.z * side * 0.75,
       );

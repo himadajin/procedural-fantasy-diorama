@@ -104,8 +104,8 @@ export function runSummary(model: WorldModel): void {
     buildingCounts,
     centerDescription: buildCenterDescription(model),
     waterOverview: {
-      rivers: model.water.rivers.length,
       lakes: model.water.lakes.length,
+      ponds: model.water.ponds.length,
       canals: model.water.canals.length,
       bridges: model.water.bridges.length,
     },

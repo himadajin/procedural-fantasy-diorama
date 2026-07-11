@@ -36,7 +36,7 @@ interface Vegetation {
      World Scale が marginWidth を介してリング厚を駆動する
   2. **外縁草地**(まばら): `boundarySdf < marginWidth × 2.2`。
      木 0.10 / 低木 0.07 / 草むら 0.06
-  3. **水辺低木・湿地植生**(加算層): 河川・湖の `waterSdf < 7`
+  3. **水辺低木・湿地植生**(加算層): 湖・池の `waterSdf < 7`
      (森リング外)。低木 += (0.6 + 0.35 × 湿地チャネル) ×
      `derived.shoreVegetation` × 岸近接(0.35〜1.0)、
      木 += 0.10 × shoreVegetation、草むら += 0.06 × shoreVegetation。
@@ -49,7 +49,7 @@ interface Vegetation {
   植生が増える勾配を作る)。最終密度場 `density.final` による市街地の
   抑制 × (1 − 0.8 × final)
 - **衝突除外(ハード。保証)**: trees / shrubs / grassPatches の候補点は
-  境界(内側 2.2 未満)、水面(河川・湖の waterSdf < 1.2)、水路
+  境界(内側 2.2 未満)、水面(湖・池の waterSdf < 1.2)、水路
   (中心線距離 − 幅/2 < 1.2)、道路(edge.path への距離 <
   edge.width/2 + 1.4)、広場(縁 + 1.0)、建物 footprint(縁 + 1.0)、
   `centerPlan.footprint`(+ 1.5)、結界環(ringPath への距離 < 2.2)、
@@ -95,7 +95,7 @@ WorldModel から機械的に算出し、生成物と乖離させない。
 interface Summary {
   buildingCounts: Record<string, number>;  // 役割別内訳(下記)
   centerDescription: string;               // 軸スコアから生成する短い記述文(下記)
-  waterOverview: { rivers: number; lakes: number; canals: number; bridges: number };
+  waterOverview: { lakes: number; ponds: number; canals: number; bridges: number };
   wardOverview: { level: number; ringLength: number; towers: number;
                   gates: number; shrines: number; floaters: number };
   scale: { worldSize: number; roadLength: number };
@@ -133,7 +133,7 @@ interface Summary {
     例「三基の魔導塔と結界環を持つ。」
   - 全体例:「水路の交わる魔法都市。三基の魔導塔と結界環を持つ。」
 - `waterOverview` / `wardOverview` / `scale`: 最終状態の WorldModel から
-  再算出する(rivers/lakes/canals は各配列長、bridges は
+  再算出する(lakes/ponds/canals は各配列長、bridges は
   `water.bridges.length`、ward 系は `wards` の各配列長と `ringPath` 周長、
   worldSize は `ground.size`、roadLength は `network.edges` の
   `path` 長の総和 = 小道込みの最終総延長)
