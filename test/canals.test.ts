@@ -128,6 +128,31 @@ describe("canals: 発火条件と接続(contracts/ground-water.md Water 節)", (
     }
   });
 
+  it("水路の始端は岸線ループ(shoreline.loops)近傍から取られる" +
+    "(アンカーの岸線一般化。contracts/ground-water.md Water 節)", () => {
+    // buildAnchors は湖の内側点(旧仕様)ではなく、岸線点を水側へ 1.5 前後
+    // 押し込んだ点をアンカーにする。始端はそのアンカーがほぼそのまま
+    // 使われるため、いずれかの岸線点から十分近い距離にあるはずである
+    // (旧・湖内側点は重心側へ25%寄せるため、実寸の湖では遠く離れうる)。
+    for (const seed of SEEDS) {
+      for (const over of [{}, { water: 70 }, { water: 95, settlement: 95 }]) {
+        const model = build(seed, over);
+        for (const canal of model.water.canals) {
+          if (canal.id === "canal/fallback") continue;
+          const head = canal.points[0];
+          if (!head) continue;
+          let minDist = Infinity;
+          for (const loop of model.water.shoreline.loops) {
+            for (const p of loop.points) {
+              minDist = Math.min(minDist, Math.hypot(p.x - head.x, p.z - head.z));
+            }
+          }
+          expect(minDist, `${canal.id} の始端が岸線近傍にない`).toBeLessThan(10);
+        }
+      }
+    }
+  });
+
   it("幅は川より細く、点列は連続(間隔 ≤ 幅×1.5)・境界内・id/towpathSide を持つ", () => {
     for (const seed of SEEDS) {
       const model = build(seed, { water: 70 });

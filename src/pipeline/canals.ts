@@ -18,7 +18,7 @@
  *   contracts/ground-water.md Water 節)
  */
 import { makeRng } from "../rng";
-import type { Canal, Vec2, WorldModel } from "../model/worldmodel";
+import type { Canal, ShoreLoop, Vec2, WorldModel } from "../model/worldmodel";
 import {
   createBoundaryRadius,
   createWaterField,
@@ -64,40 +64,68 @@ const CANAL_WIDTH_MAX = 5;
 const CANAL_MEANDER_AMP = 7;
 /** 始端・終端アンカーの最小距離 */
 const ANCHOR_MIN_SEPARATION = 30;
+/**
+ * アンカー候補の弧長間隔(岸線ループ沿い)。旧・川沿い等間隔点の間隔
+ * (max(12, river.width×2.5) = 12.5〜40 実寸)の上限側と同程度に取る。
+ * 間隔を狭くすると、蛇行(meander)が強い水路で近接しすぎたアンカー対が
+ * 選ばれやすくなり、水路が鋭く折り返す形状(ヘアピン)を誘発して
+ * 岸沿い道(towpath)の左右判定が局所的に破綻しうる(実装中に検証済み)ため、
+ * この上限側を採用してアンカー間隔を広めに保つ
+ */
+const CANAL_ANCHOR_SPACING = 40;
+/** 岸線点を法線の逆(水側)へ押し込む量。目安 1.5(contracts/ground-water.md) */
+const CANAL_ANCHOR_PUSH = 1.5;
 /** footprint からのクリアランス */
 const FOOTPRINT_CLEARANCE = 3;
 /** 境界内へのクリアランス */
 const BOUNDARY_CLEARANCE = 3;
 
-/** 既存水域(川・湖)上の分岐候補点を決定論的に列挙する */
+/** 岸線ループの弧長配列(閉環は末尾→先頭の閉じ辺を含めて周回する) */
+function loopArcLengths(loop: ShoreLoop): number[] {
+  const pts = loop.points;
+  const n = pts.length;
+  const segCount = loop.closed ? n : n - 1;
+  const arc: number[] = [0];
+  for (let i = 0; i < segCount; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    const d = a && b ? Math.hypot(b.x - a.x, b.z - a.z) : 0;
+    arc.push((arc[arc.length - 1] ?? 0) + d);
+  }
+  return arc;
+}
+
+/**
+ * 岸線ループ(湖・池の shoreline.loops。過渡期は川岸も含む)沿いの
+ * 等間隔点を分岐候補にする(contracts/ground-water.md Water 節)。
+ * 各岸線点を法線(水域→陸向き)の逆方向(水側)へ CANAL_ANCHOR_PUSH だけ
+ * 押し込み、waterSdf < 0(既存水域内)を満たす点だけを採用する。
+ * 決定論的な弧長走査のみで乱数は消費しない。
+ */
 function buildAnchors(model: WorldModel, field: WaterField): Vec2[] {
   const anchors: Vec2[] = [];
-  for (const river of model.water.rivers) {
-    const total = pathLength(river.points);
-    const step = Math.max(12, river.width * 2.5);
-    for (let s = step; s < total - step; s += step) {
-      const { p } = pointAlong(river.points, s);
-      if (field.boundarySdf(p.x, p.z) > river.width) anchors.push(p);
-    }
-  }
-  for (const lake of model.water.lakes) {
-    // 湖は縁の頂点を重心側へ寄せた内側点(確実に水中)
-    let cx = 0;
-    let cz = 0;
-    for (const v of lake) {
-      cx += v.x;
-      cz += v.z;
-    }
-    const n = Math.max(1, lake.length);
-    cx /= n;
-    cz /= n;
-    for (let i = 0; i < lake.length; i += 3) {
-      const v = lake[i];
-      if (!v) continue;
-      const p = { x: v.x * 0.75 + cx * 0.25, z: v.z * 0.75 + cz * 0.25 };
-      if (field.boundarySdf(p.x, p.z) > 4 && field.waterSdf(p.x, p.z) < 0) {
-        anchors.push(p);
-      }
+  for (const loop of model.water.shoreline.loops) {
+    const pts = loop.points;
+    const normals = loop.normals;
+    if (pts.length < 2) continue;
+    const arc = loopArcLengths(loop);
+    const total = arc[arc.length - 1] ?? 0;
+    if (total <= 0) continue;
+    // 開いた岸線(川岸)は境界と交わる両端を避ける。閉じた岸線(湖・池)は全周を使う
+    const start = loop.closed ? 0 : CANAL_ANCHOR_SPACING;
+    const end = loop.closed ? total : total - CANAL_ANCHOR_SPACING;
+    if (end <= start) continue;
+    let vi = 0;
+    for (let s = start; s < end; s += CANAL_ANCHOR_SPACING) {
+      while (vi + 1 < arc.length && (arc[vi + 1] ?? 0) < s) vi++;
+      const p = pts[vi];
+      const normal = normals[vi];
+      if (!p || !normal) continue;
+      const candidate = {
+        x: p.x - normal.x * CANAL_ANCHOR_PUSH,
+        z: p.z - normal.z * CANAL_ANCHOR_PUSH,
+      };
+      if (field.waterSdf(candidate.x, candidate.z) < 0) anchors.push(candidate);
     }
   }
   return anchors;

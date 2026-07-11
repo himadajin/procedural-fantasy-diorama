@@ -3,7 +3,6 @@ import {
   DEFAULT_PARAMS,
   createEmptyWorldModel,
   type Params,
-  type Vec2,
   type WorldModel,
 } from "../src/model/worldmodel";
 import {
@@ -12,14 +11,13 @@ import {
   pointInPolygon,
   polygonArea,
 } from "../src/model/waterfield";
+import { makeRng } from "../src/rng";
 import { runDerive } from "../src/pipeline/derive";
 import { runGround } from "../src/pipeline/ground";
 import { runWater } from "../src/pipeline/water";
 import { runSiting } from "../src/pipeline/siting";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
-/** 川を持つ代表 seed(water=70。事前に確認済み) */
-const RIVER_SEEDS = ["seed-a", "seed-b", "seed-c"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
   const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
@@ -77,22 +75,27 @@ describe("siting: 進入点", () => {
     }
   });
 
-  it("主河川があるとき進入点は両岸に分かれる(橋の必然性)", () => {
-    for (const seed of RIVER_SEEDS) {
-      const model = build(seed, { water: 70 });
-      const river = model.water.rivers[0];
-      if (!river) throw new Error(`seed=${seed} に川がない`);
-      const head = river.points[0];
-      const tail = river.points[river.points.length - 1];
-      if (!head || !tail) throw new Error("river endpoints missing");
-      const side = (p: Vec2): number =>
-        Math.sign(
-          (tail.x - head.x) * (p.z - head.z) - (tail.z - head.z) * (p.x - head.x),
-        );
-      const sides = new Set(
-        model.network.entryPoints.map((e) => side(e.position)).filter((s) => s !== 0),
-      );
-      expect(sides.size, `seed=${seed} 進入点が同じ岸に偏っている`).toBe(2);
+  it("進入点は基準角+等間隔+揺らぎのみで決まり、対岸への強制移設(後処理)を行わない" +
+    "(contracts/network-plaza.md Phase A 註記)", () => {
+    // water=0 では水域が存在せず nudgeToLand も発火しないため、
+    // 進入点は「基準角+等間隔+揺らぎ」の素の式と厳密に一致するはずである。
+    // もし対岸移設のような後処理が残っていれば、水域が無くても
+    // 少なくとも1点の角度がこの式からずれてこのテストが失敗する。
+    for (const seed of SEEDS) {
+      const model = build(seed, { water: 0 });
+      const n = model.meta.derived.entryPointCount;
+      const baseAngle = makeRng(seed, "siting/entry").range(0, Math.PI * 2);
+      const radius = createBoundaryRadius(model.ground.boundary);
+      model.network.entryPoints.forEach((e, i) => {
+        const jitter = makeRng(seed, `siting/entry/${i}`).range(-0.3, 0.3);
+        const theta = baseAngle + ((i + jitter) / n) * Math.PI * 2;
+        const expected = {
+          x: Math.cos(theta) * radius(theta),
+          z: Math.sin(theta) * radius(theta),
+        };
+        expect(e.position.x, `seed=${seed} entry/${i}`).toBeCloseTo(expected.x, 6);
+        expect(e.position.z, `seed=${seed} entry/${i}`).toBeCloseTo(expected.z, 6);
+      });
     }
   });
 });

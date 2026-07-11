@@ -8,8 +8,9 @@
  *   − 水中ペナルティ。Water項は平方根で飽和させ、Water の微小変化で
  *   主中心が跳ばないようにする。seed はタイブレーク(格子ハッシュノイズの
  *   微小加点)にのみ使う
- * - 進入点は外縁上に derived.entryPointCount 点(2〜4)。水域を避け、
- *   主河川がある場合は両岸に分かれるよう配置して橋の必然性を作る
+ * - 進入点は外縁上に derived.entryPointCount 点(2〜4)。水域を避けて配置する
+ *   (対岸への強制移設は行わない。contracts/network-plaza.md「道路網の性質」
+ *   Phase A 註記)
  * - centerPlan.facing / heightHint は段9「広場」(PHASE 3 commit 10)の担当。
  *   本段では 0 のまま
  */
@@ -39,21 +40,14 @@ const PROX_FALLOFF_RATIO = 0.09;
 const TIEBREAK_AMP = 1e-4;
 /** 4軸スコアの seed 揺らぎ(同点付近のタイブレーク用。1.7節) */
 const AXES_JITTER = 0.02;
-/** 進入点の角度探索の分割数(対岸への移設・水域回避の候補) */
+/** 進入点の角度探索の分割数(水域回避の候補) */
 const ENTRY_CANDIDATES = 96;
-
-function angularDistance(a: number, b: number): number {
-  let d = (a - b) % (Math.PI * 2);
-  if (d < -Math.PI) d += Math.PI * 2;
-  if (d > Math.PI) d -= Math.PI * 2;
-  return Math.abs(d);
-}
 
 /**
  * 進入点を外縁上に置く。基準角+等間隔+進入点ごとの揺らぎ
  * (乱数は安定ID `siting/entry/<i>` のサブストリーム)。
- * 水域(河口)を避け、主河川があるのに全点が同じ岸に偏ったら
- * 1点を対岸へ移す(決定論的な候補角探索。乱数は消費しない)。
+ * 水域(河口)を避ける(決定論的な候補角探索。乱数は消費しない)。
+ * 対岸への強制移設は行わない(contracts/network-plaza.md Phase A 註記)。
  */
 function placeEntryPoints(
   model: WorldModel,
@@ -87,39 +81,6 @@ function placeEntryPoints(
   for (let i = 0; i < n; i++) {
     const jitter = makeRng(seed, `siting/entry/${i}`).range(-0.3, 0.3);
     angles.push(nudgeToLand(baseAngle + ((i + jitter) / n) * Math.PI * 2));
-  }
-
-  // 主河川の弦に対する側(符号)で両岸を判定する
-  const river = model.water.rivers[0];
-  if (river && river.points.length >= 2 && n >= 2) {
-    const head = river.points[0];
-    const tail = river.points[river.points.length - 1];
-    if (head && tail) {
-      const side = (p: Vec2): number =>
-        Math.sign(
-          (tail.x - head.x) * (p.z - head.z) - (tail.z - head.z) * (p.x - head.x),
-        );
-      const sides = angles.map((t) => side(pointAt(t)));
-      const first = sides[0] ?? 0;
-      if (first !== 0 && sides.every((s) => s === first)) {
-        // 対岸の候補角から、残す進入点との角距離が最大の1点を選んで移す
-        let bestAngle: number | null = null;
-        let bestGap = -Infinity;
-        for (let k = 0; k < ENTRY_CANDIDATES; k++) {
-          const t = (k / ENTRY_CANDIDATES) * Math.PI * 2;
-          if (side(pointAt(t)) !== -first || !onLand(t)) continue;
-          let gap = Infinity;
-          for (let i = 0; i + 1 < n; i++) {
-            gap = Math.min(gap, angularDistance(t, angles[i] ?? 0));
-          }
-          if (gap > bestGap) {
-            bestGap = gap;
-            bestAngle = t;
-          }
-        }
-        if (bestAngle !== null) angles[n - 1] = bestAngle;
-      }
-    }
   }
 
   return angles.map((t, i) => ({ id: `entry/${i}`, position: pointAt(t) }));

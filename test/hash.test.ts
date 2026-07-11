@@ -59,15 +59,41 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    413344bc → 9913230d
   //   seed-b {}                    360ce1b7 → a7018aa7
   //   seed-b {water:70}            37add040 → 8765d9eb
+  //
+  // 計画書 2026-07-11-worldgen-rework-water.md タスク A2 で更新。意図した変更:
+  // (1) siting.ts の placeEntryPoints から「主河川がある場合、進入点が
+  //     全て同じ岸に偏ったら1点を対岸へ移す」処理を削除した(乱数非消費の
+  //     処理のため、この変更自体はハッシュに影響しない)。
+  // (2) canals.ts の buildAnchors を「川沿いの等間隔点+湖の内側点」から
+  //     「岸線ループ(model.water.shoreline.loops)沿いの等間隔点(法線の
+  //     逆方向へ 1.5 押し込み、waterSdf < 0 を満たす点のみ採用)」へ
+  //     一般化した。アンカー候補の弧長間隔 CANAL_ANCHOR_SPACING = 40
+  //     (旧・川沿い間隔 max(12, river.width×2.5) の上限側と同程度)。
+  //     アンカー候補の「数」は乱数消費数に影響しない(planCanal は
+  //     anchors.length を用いて `Math.floor(pick × n)` で固定個の乱数値を
+  //     インデックス化するのみで、消費数自体は試行ごとに固定のため)。
+  // 上記いずれもアンカー・進入点の座標が変わるため、水路の経路・橋・
+  // それに連鎖する後段(区画・建物・植生等)の生成結果が変わり、
+  // water:0(水域なし。橋岸移設もアンカー生成も対象外)を除く 7 組の
+  // ハッシュが変わる。water:0 は不変(eed82045 のまま)。
+  // 新旧対応(commit 21 → 本 commit):
+  //   everdusk-101 {}              1125a04d → 1f4feffc
+  //   everdusk-101 {water:0}       eed82045 → eed82045(不変)
+  //   everdusk-101 {water:95}      f7773829 → 8b2d7238
+  //   everdusk-101 {worldScale:0}  aff7f80d → 30905ae4
+  //   everdusk-101 {worldScale:100} 7bfd75e6 → 2c74088a
+  //   seed-a {}                    9913230d → 2e3997c5
+  //   seed-b {}                    a7018aa7 → b23fd78c
+  //   seed-b {water:70}            8765d9eb → c08c38d7
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "1125a04d"],
+    ["everdusk-101", {}, "1f4feffc"],
     ["everdusk-101", { water: 0 }, "eed82045"],
-    ["everdusk-101", { water: 95 }, "f7773829"],
-    ["everdusk-101", { worldScale: 0 }, "aff7f80d"],
-    ["everdusk-101", { worldScale: 100 }, "7bfd75e6"],
-    ["seed-a", {}, "9913230d"],
-    ["seed-b", {}, "a7018aa7"],
-    ["seed-b", { water: 70 }, "8765d9eb"],
+    ["everdusk-101", { water: 95 }, "8b2d7238"],
+    ["everdusk-101", { worldScale: 0 }, "30905ae4"],
+    ["everdusk-101", { worldScale: 100 }, "2c74088a"],
+    ["seed-a", {}, "2e3997c5"],
+    ["seed-b", {}, "b23fd78c"],
+    ["seed-b", { water: 70 }, "c08c38d7"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
