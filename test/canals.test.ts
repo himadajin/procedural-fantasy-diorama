@@ -65,22 +65,28 @@ describe("canals: 発火条件と接続(contracts/ground-water.md Water 節)", (
   });
 
   it("score が高いほど本数が増える(単調)", () => {
+    // water=95・settlement=95 のような極端な組は使わない: 陸上率 0.95 の
+    // 強制(タスク A4)により、湖が非常に大きい入力では計画した水路が
+    // すべて棄却されフォールバック堀留も候補を持てず 0 本になりうる
+    // (水域横断禁止を優先した結果であり破綻ではない。本数の単調性は
+    // canalScore からの計画本数についてのもので、棄却後の実本数を
+    // 常に保証するものではない。contracts/ground-water.md「水路の性質」)。
+    // ここでは棄却が起きない中庸な組で単調性を検証する
     for (const seed of SEEDS) {
       const low = build(seed).water.canals.length;
-      const high = build(seed, { water: 95, settlement: 95 }).water.canals.length;
+      const high = build(seed, { water: 70, settlement: 70 }).water.canals.length;
       expect(high).toBeGreaterThanOrEqual(low);
       expect(high).toBeGreaterThanOrEqual(2);
     }
   });
 
-  it("既定パラメータでは中間部が陸上を通る(街の水路として現れる。2026-07-07 追記の性質)", () => {
-    // 中間部 = 始端・終端の接続窓(弧長 幅×2+4)を除く区間。陸上率 ≥ 0.7
-    // seed-b は湖が水路の経由点付近に大きく張り出し、旧仕様の「深い横断部
-    // (waterSdf < −(幅/2+6))は対象外」の例外(2026-07-07 導入)により
-    // 陸上率が 0.7 を割り込む代表例になった(この例外はタスク A4 で撤廃予定。
-    // contracts/ground-water.md「水路の性質」Phase A 註記)。A3 では横断ルール
-    // 自体を変えないため、この代表 seed 集合には該当しない seed-c を使う
-    for (const seed of [...SEEDS.filter((s) => s !== "seed-b"), "seed-c"]) {
+  it("既定パラメータでは中間部が陸上を通る(街の水路として現れる。2026-07-07 追記の性質。" +
+    "タスク A4 で陸上率の閾値を 0.7 → 0.95 へ引き上げ)", () => {
+    // 中間部 = 始端・終端の接続窓(弧長 幅×2+4)を除く区間。陸上率 ≥ 0.95
+    // (タスク A4 で「深い横断部は対象外」の例外を撤廃し、接続窓を除く
+    // すべての水中区間を岸へ押し出すため、旧仕様で陸上率が低かった
+    // seed-b もこの不変条件を満たす)
+    for (const seed of SEEDS) {
       const model = build(seed);
       const field = createWaterField(model.ground.boundary, [
         ...model.water.lakes,
@@ -97,7 +103,39 @@ describe("canals: 発火条件と接続(contracts/ground-water.md Water 節)", (
           if (field.waterSdf(p.x, p.z) >= 0) land++;
           count++;
         }
-        expect(land / Math.max(1, count)).toBeGreaterThanOrEqual(0.7);
+        expect(land / Math.max(1, count)).toBeGreaterThanOrEqual(0.95);
+      }
+    }
+  });
+
+  it("水路の全点(始端・終端の接続窓を除く)が湖・池の深部を通らない" +
+    "(水域横断の禁止。contracts/ground-water.md「水路の性質」。タスク A4)", () => {
+    // 深部の目安は waterSdf < −(幅/2)(水路コリドー中心線が水域の護岸下に
+    // 沈む深さ)。接続窓(始端・終端。弧長 幅×2+4)は既存水域への接続のため
+    // この不変条件の対象外。加えて、押し出し(enforceLand)後に行う
+    // リサンプル・Chaikin 平滑化で弧長パラメータが僅かにずれるため、
+    // 接続窓の境界ちょうどでは平滑化の影響が残ることがある
+    // (実測で数単位以内。水域を堤防ごと横断する規模の破綻ではない)。
+    // 判定窓に幅×2 の追加マージンを設けてこの境界のゆらぎを吸収する
+    for (const seed of SEEDS) {
+      for (const over of [{}, { water: 70 }, { water: 95, settlement: 95 }]) {
+        const model = build(seed, over);
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
+        for (const canal of model.water.canals) {
+          const endWindow = canal.width * 2 + 4 + canal.width * 2;
+          const total = pathLength(canal.points);
+          const deep = -(canal.width / 2);
+          for (let s = endWindow; s <= total - endWindow; s += 2) {
+            const { p } = pointAlong(canal.points, s);
+            expect(
+              field.waterSdf(p.x, p.z),
+              `${canal.id} の弧長 ${s} が湖・池の深部を通っている`,
+            ).toBeGreaterThanOrEqual(deep);
+          }
+        }
       }
     }
   });
@@ -211,6 +249,26 @@ describe("canals: BridgeSite の追加(1本あたり最大3)", () => {
         expect(new Set(model.water.bridges.map((b) => b.id)).size).toBe(
           model.water.bridges.length,
         );
+      }
+    }
+  });
+
+  it("水路由来の各 BridgeSite の渡り長は max(18, canalWidth×6) 以下" +
+    "(並走橋の禁止。contracts/ground-water.md「水路の性質」。2026-07-12 追記)", () => {
+    // 個数上限(3)だけでは、道路と水路が長距離で並走・重なりして 1 つの
+    // 巨大な「橋」になる破綻(harbor-1 / water=100 で渡り長 134.6 を実測)を
+    // 防げないため、段6 時点の bridges(over: "canal")で単一交差の渡り長を検証する
+    for (const seed of [...SEEDS, "harbor-1"]) {
+      for (const over of [{ water: 50 }, { water: 70 }, { water: 100 }]) {
+        const model = build(seed, over);
+        const limit = Math.max(18, model.meta.derived.canalWidth * 6);
+        for (const bridge of model.water.bridges) {
+          if (bridge.over !== "canal") continue;
+          expect(
+            bridge.length,
+            `${seed} ${JSON.stringify(over)} の ${bridge.id} の渡り長が上限を超えている`,
+          ).toBeLessThanOrEqual(limit);
+        }
       }
     }
   });

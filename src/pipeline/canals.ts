@@ -10,6 +10,8 @@
  * - 水路 1 本が生む BridgeSite は最大 3。超過時は経路と蛇行を縮めて交差が
  *   減る方向へ再サンプルし、3 回のリトライで収まらなければ棄却する
  *   (リトライ回数も乱数ストリーム "canals/canal/<i>" から消費して決定性を保つ)
+ * - 単一交差の渡り長は max(18, 幅×6) 以下。超える交差(道路との長距離の
+ *   並走・重なり)を生む試行は交差超過と同様に棄却する(2026-07-12 追記)
  * - 全水路が棄却された場合のフォールバック: 中心へ最も近い水域から伸びる
  *   短い堀留(始端のみ接続)を、交差が 3 以下になる長さへ切り詰めて 1 本置く
  * - 経由点は主道どうしの角度間隙へ向け、道路交差の発生を構造的に抑える
@@ -209,16 +211,16 @@ function enforceCorridor(
  * (contracts/ground-water.md Water 節。目安は「中心線の waterSdf ≥ 幅/2 + 1」)。
  *
  * - 始端・終端の接続窓(弧長 width×2+4)は水域接続のため押し出さない
- * - 深い点(waterSdf < −(幅/2+6))は水域横断・湖内の接続部とみなし保持する
- *   (この例外はタスク A4 で撤廃予定。contracts/ground-water.md「水路の性質」
- *   Phase A 註記)
+ * - 接続窓を除く水中の点は、深さに関わらず**例外なく**岸へ押し出す
+ *   (2026-07-11 導入の「深い横断部(waterSdf < −(幅/2+6))は対象外」の例外は
+ *   タスク A4 で撤廃した。水域を横断する水路が堤防ごと湖を渡る破綻を防ぐため。
+ *   contracts/ground-water.md「水路の性質」)
  * - 水中の連続区間ごとに平均勾配で「どちらの岸へ出すか」を1回だけ決め、
  *   区間内の全点を同じ側へ押す(点ごとの最近岸に任せると水域を挟んで
  *   互い違いの岸へ跳ねてジグザグになるため)。決定論的で乱数を消費しない
  */
 function enforceLand(points: Vec2[], field: WaterField, width: number): void {
   const clear = width / 2 + 1;
-  const escapeDepth = -(width / 2 + 6);
   const endWindow = width * 2 + 4;
   const total = pathLength(points);
   if (total <= endWindow * 2) return;
@@ -240,7 +242,7 @@ function enforceLand(points: Vec2[], field: WaterField, width: number): void {
     const p = points[i];
     if (!p) return false;
     const d = field.waterSdf(p.x, p.z);
-    return d < clear && d > escapeDepth;
+    return d < clear;
   };
 
   let i = 0;
@@ -382,10 +384,12 @@ function midLandFraction(
 
 /**
  * 中間部の陸上率の下限(これ未満はリトライ)。全試行が満たさない場合は
- * 交差上限を満たす試行のうち陸上率最大のものを受理する(水域が広い設定で
- * 良路の全滅により本数の単調性を壊さないため。contracts/ground-water.md)
+ * 棄却する(2026-07-11 撤廃: 旧仕様にあった「陸上率最大の試行を受理する」
+ * 救済は行わない。全水路棄却時はフォールバックの堀留へ縮退する。
+ * contracts/ground-water.md「水路の性質」。閾値は旧仕様の 0.7 から
+ * タスク A4 で 0.95 へ引き上げた)
  */
-const CANAL_MIN_LAND_FRACTION = 0.7;
+const CANAL_MIN_LAND_FRACTION = 0.95;
 
 /** 水路コリドーの符号付き距離(負=水路内) */
 function canalSdf(points: Vec2[], width: number) {
@@ -393,18 +397,53 @@ function canalSdf(points: Vec2[], width: number) {
     distToPolyline(x, z, points) - width / 2;
 }
 
-/** この水路が全道路 edge に生む交差(=BridgeSite)数を数える */
-function countRoadCrossings(
+/**
+ * 水路×道路の単一交差(BridgeSite)の渡り長の上限
+ * (contracts/ground-water.md「水路の性質」。2026-07-12 追記の並走破綻対策:
+ * 個数上限 3 だけでは、道路と水路が長距離で並走・重なりして 1 つの巨大な
+ * 「橋」になる破綻(harbor-1 / water=100 で渡り長 134.6 を実測)を防げない)
+ */
+function crossingLengthLimit(width: number): number {
+  return Math.max(18, width * 6);
+}
+
+/**
+ * この水路が全道路 edge に生む交差(=BridgeSite)の数と最大渡り長。
+ *
+ * - 個数は候補水路単体のコリドーで数える(「水路 1 本あたり最大 3」の契約)
+ * - 渡り長は確定済みの他の水路(siblings)とコリドーを合成した水域で測る。
+ *   段8「結界計画」の再抽出は全水路を合成した水域で標本化するため、
+ *   隣接する水路コリドーが連結して 1 つの長い渡りになる場合を含めないと
+ *   最終的な BridgeSite の渡り長上限を保証できない(harbor-1 / water=100 で
+ *   単体 29.7+10.7 の交差が連結して渡り長 37 になる例を実測。
+ *   contracts/ground-water.md「水路の性質」)
+ */
+function roadCrossingStats(
   model: WorldModel,
   points: Vec2[],
   width: number,
-): number {
-  const sdf = canalSdf(points, width);
+  siblings: readonly Canal[],
+): { count: number; maxLength: number } {
+  const own = canalSdf(points, width);
+  const merged =
+    siblings.length === 0
+      ? own
+      : (x: number, z: number): number => {
+          let d = own(x, z);
+          for (const c of siblings) {
+            d = Math.min(d, distToPolyline(x, z, c.points) - c.width / 2);
+          }
+          return d;
+        };
   let count = 0;
+  let maxLength = 0;
   for (const edge of model.network.edges) {
-    count += waterCrossings(edge.path, sdf, CANAL_SAMPLE_STEP).length;
+    count += waterCrossings(edge.path, own, CANAL_SAMPLE_STEP).length;
+    for (const c of waterCrossings(edge.path, merged, CANAL_SAMPLE_STEP)) {
+      maxLength = Math.max(maxLength, c.length);
+    }
   }
-  return count;
+  return { count, maxLength };
 }
 
 /**
@@ -421,13 +460,12 @@ function planCanal(
   canalIndex: number,
   width: number,
   radius: (theta: number) => number,
+  accepted: readonly Canal[],
 ): Canal | null {
   const { seed, derived } = model.meta;
   const center = model.centerPlan.position;
   const footHalf = derived.centerFootprint / 2;
   const rng = makeRng(seed, `canals/canal/${canalIndex}`);
-  // 陸上率の下限を満たさないが交差上限は満たす試行のうちの最良(縮退受理用)
-  let bestFallback: { canal: Canal; landFraction: number } | null = null;
 
   for (let attempt = 0; attempt <= CANAL_RETRIES; attempt++) {
     // 消費数は試行ごとに固定(6値)
@@ -494,9 +532,13 @@ function planCanal(
       radius,
     );
     if (points.length < 2) continue;
-    // 受理条件: 交差上限と、中間部が陸上に出ていること(沈んだ水路は
-    // 「街の水路」として現れないため棄却してリトライ。contracts)
-    if (countRoadCrossings(model, points, width) > CANAL_MAX_BRIDGES) continue;
+    // 受理条件: 交差の個数上限・単一交差の渡り長上限(確定済み水路との
+    // コリドー合成水域で判定)と、中間部が陸上に出ていること(沈んだ水路は
+    // 「街の水路」として現れないため棄却してリトライ。
+    // contracts/ground-water.md「水路の性質」)
+    const stats = roadCrossingStats(model, points, width, accepted);
+    if (stats.count > CANAL_MAX_BRIDGES) continue;
+    if (stats.maxLength > crossingLengthLimit(width)) continue;
     const canal: Canal = {
       points,
       width,
@@ -505,12 +547,12 @@ function planCanal(
     };
     const landFraction = midLandFraction(points, field, width);
     if (landFraction >= CANAL_MIN_LAND_FRACTION) return canal;
-    if (!bestFallback || landFraction > bestFallback.landFraction) {
-      bestFallback = { canal, landFraction };
-    }
+    // 陸上率が閾値未満の試行は棄却してリトライする(2026-07-11 撤廃:
+    // 「陸上率最大の試行を受理する」救済は行わない。contracts/ground-water.md)
   }
-  // 全試行が陸上率を満たさない場合の縮退受理(本数の単調性を優先)
-  return bestFallback ? bestFallback.canal : null;
+  // 全試行が陸上率(または交差上限)を満たさない場合は棄却する。
+  // 呼び出し元(runCanals)は全水路棄却時にフォールバックの堀留へ縮退する
+  return null;
 }
 
 /**
@@ -518,6 +560,15 @@ function planCanal(
  * 終端は陸上へ押し出して「街区内で止まる」を保証し(見えない水中の堀留を
  * 作らない。contracts/ground-water.md)、終端が中心へ最も近くなるアンカーを
  * 決定論的に選ぶ。交差が上限以下になる弧長へ切り詰める(始端のみ水域接続)。
+ *
+ * アンカー(岸)から中心へ向かう直線を等間隔(CANAL_SAMPLE_STEP)で走査し、
+ * 「水中に留まる最後の地点」を探す(非凸な水域形状でも、途中の陸地に
+ * 惑わされず判定できる)。この水中区間が接続窓(弧長 幅×2+4)を超える
+ * アンカーは、水域(湖)を大きく突っ切ることになるため採用しない
+ * (水域横断の禁止。contracts/ground-water.md「水路の性質」。2026-07-11
+ * タスク A4 で発見・修正: 旧実装は終端を勾配で陸側へ押し出す方式で、
+ * 巨大な湖では終端が直線から大きく逸れ、始端〜終端の直線が湖の内部を
+ * 数百単位横断する経路を生んでいた)
  */
 function planFallbackCanal(
   model: WorldModel,
@@ -531,6 +582,7 @@ function planFallbackCanal(
   const footHalf = derived.centerFootprint / 2;
   const clear = width / 2 + 1;
   const minLen = Math.max(width * 3, 26);
+  const endWindow = width * 2 + 4;
 
   let best: { start: Vec2; end: Vec2; score: number } | null = null;
   for (const p of anchors) {
@@ -540,20 +592,15 @@ function planFallbackCanal(
     if (len < 1e-6) continue;
     const stop = len - (footHalf * 1.4 + FOOTPRINT_CLEARANCE);
     if (stop < minLen) continue;
-    const end = { x: p.x + (dx / len) * stop, z: p.z + (dz / len) * stop };
-    // 終端が水中なら陸側へ押し出す
-    for (let k = 0; k < 20; k++) {
-      const d = field.waterSdf(end.x, end.z);
-      if (d >= clear) break;
-      const g = fieldGradient(field.waterSdf, end.x, end.z);
-      const glen = Math.hypot(g.x, g.z);
-      const step = Math.min(2.5, clear - d + 0.3);
-      if (glen < 1e-6) end.x += step;
-      else {
-        end.x += (g.x / glen) * step;
-        end.z += (g.z / glen) * step;
-      }
+    // p → center 方向へ走査し、水中(waterSdf < clear)に留まる最後の弧長を探す
+    let lastWetT = -1;
+    for (let t = 0; t <= stop; t += CANAL_SAMPLE_STEP) {
+      const x = p.x + (dx / len) * t;
+      const z = p.z + (dz / len) * t;
+      if (field.waterSdf(x, z) < clear) lastWetT = t;
     }
+    if (lastWetT >= 0 && lastWetT + CANAL_SAMPLE_STEP > endWindow) continue;
+    const end = { x: p.x + (dx / len) * stop, z: p.z + (dz / len) * stop };
     if (field.waterSdf(end.x, end.z) < clear) continue;
     if (field.boundarySdf(end.x, end.z) < BOUNDARY_CLEARANCE) continue;
     const score = Math.hypot(end.x - center.x, end.z - center.z);
@@ -566,13 +613,18 @@ function planFallbackCanal(
   enforceCorridor(pts, model, radius, FOOTPRINT_CLEARANCE);
   pts = subdivideToSpacing(pts, width * 1.45);
 
-  // 4 つ目以降の交差の手前へ切り詰める
+  // 4 つ目以降の交差、または渡り長上限を超える交差の手前へ切り詰める
+  // (フォールバック堀留にも単一交差の渡り長上限を適用する。
+  // contracts/ground-water.md「水路の性質」。切り詰めで解消しなければ棄却)
+  const lenLimit = crossingLengthLimit(width);
   for (let guard = 0; guard < 6; guard++) {
-    const crossings = countRoadCrossings(model, pts, width);
-    if (crossings <= CANAL_MAX_BRIDGES) break;
+    const stats = roadCrossingStats(model, pts, width, []);
+    if (stats.count <= CANAL_MAX_BRIDGES && stats.maxLength <= lenLimit) break;
     // 交差位置を水路弧長に射影し、上限を超える最初の交差の手前で切る
     const sdf = canalSdf(pts, width);
     const sList: number[] = [];
+    // 渡り長上限を超える交差のうち最初(弧長最小)のもの
+    let overLongS = Infinity;
     for (const edge of model.network.edges) {
       for (const c of waterCrossings(edge.path, sdf, CANAL_SAMPLE_STEP)) {
         // 交差中点に最も近い水路上の弧長
@@ -592,11 +644,13 @@ function planFallbackCanal(
           acc += seg;
         }
         sList.push(bestS);
+        if (c.length > lenLimit) overLongS = Math.min(overLongS, bestS);
       }
     }
     sList.sort((u, v) => u - v);
-    const cutAt = sList[CANAL_MAX_BRIDGES];
-    if (cutAt === undefined) break;
+    const countCut = sList[CANAL_MAX_BRIDGES];
+    const cutAt = Math.min(countCut ?? Infinity, overLongS);
+    if (!Number.isFinite(cutAt)) break;
     const cutLen = Math.max(width * 3, cutAt - width - 2);
     const total = pathLength(pts);
     if (cutLen >= total) break;
@@ -607,7 +661,9 @@ function planFallbackCanal(
     }
     pts = shortened;
   }
-  if (countRoadCrossings(model, pts, width) > CANAL_MAX_BRIDGES) return null;
+  const finalStats = roadCrossingStats(model, pts, width, []);
+  if (finalStats.count > CANAL_MAX_BRIDGES) return null;
+  if (finalStats.maxLength > lenLimit) return null;
   if (pathLength(pts) < width * 3) return null;
   return { points: pts, width, id: "canal/fallback", towpathSide: 1 };
 }
@@ -644,7 +700,7 @@ export function runCanals(model: WorldModel): void {
 
   const canals: Canal[] = [];
   for (let i = 0; i < planned; i++) {
-    const canal = planCanal(model, field, anchors, gap, i, width, radius);
+    const canal = planCanal(model, field, anchors, gap, i, width, radius, canals);
     if (canal) canals.push(canal);
   }
   // 全滅時のフォールバック(堀留)。デフォルト全50の「必ず1本以上」を守る
@@ -668,6 +724,8 @@ export function runCanals(model: WorldModel): void {
     for (const edge of model.network.edges) {
       for (const c of waterCrossings(edge.path, sdf, CANAL_SAMPLE_STEP)) {
         perCanal++;
+        // 単一交差の渡り長上限(contracts/ground-water.md「水路の性質」)
+        if (c.length > crossingLengthLimit(canal.width)) assertionViolations++;
         model.water.bridges.push({
           id: claimId(idCounts, bridgeBaseId(c.position)),
           position: c.position,

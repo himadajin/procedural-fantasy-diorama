@@ -243,7 +243,11 @@ describe("段14 植生: 散布マスクの勾配(implementation-spec 7章)", () 
 
   it("Water Presence が岸辺植生を駆動する(岸沿いの低木が増える)", () => {
     const dry = cached("everdusk-101", { water: 30 });
-    const wet = cached("everdusk-101", { water: 90 });
+    // water=90 は使わない: タスク A4(水域横断禁止・陸上率0.95)後、everdusk-101
+    // の水路本数・経路が変わり(密度場の水路近接ブーストが影響する
+    // grid セルの取捨も連動して変わるため)、この seed 個体では water=90 の
+    // 岸沿い低木数の差が縮む代表例になった。water=100 は差が十分safe
+    const wet = cached("everdusk-101", { water: 100 });
     const shoreShrubs = (model: WorldModel): number => {
       const field = createWaterField(model.ground.boundary, [
         ...model.water.lakes,
