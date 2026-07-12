@@ -233,18 +233,65 @@ function buildCenterConnector(
  * 内部を通る(polygonSignedDistance ≤ 許容差)。
  */
 function plazaTouchesRoad(
-  plaza: Plaza,
+  polygon: Polygon,
   edges: WorldModel["network"]["edges"],
 ): boolean {
   for (const edge of edges) {
     const samples = resamplePath(edge.path, ROAD_TOUCH_SAMPLE_STEP);
     for (const p of samples) {
-      if (polygonSignedDistance(p.x, p.z, plaza.polygon) <= ROAD_TOUCH_TOLERANCE) {
+      if (polygonSignedDistance(p.x, p.z, polygon) <= ROAD_TOUCH_TOLERANCE) {
         return true;
       }
     }
   }
   return false;
+}
+
+/** 接触検証が外れた場合にアンカーへ寄せる段階数(契約: network-plaza.md Plaza 節) */
+const TOUCH_NUDGE_MAX_STEPS = 6;
+/** 1段階あたりの寄せ幅(半径比。契約と同じ提案値) */
+const TOUCH_NUDGE_STEP_RATIO = 0.15;
+
+/**
+ * gate / bridgehead / crossing 広場の採択直前に行う接触検証+寄せ
+ * (契約: network-plaza.md Plaza 節「全広場の道路接続保証」)。
+ *
+ * `pos` が既に道路に接していればそのまま返す。外れている場合は `anchor`
+ * (gate 位置 / 橋詰めの道路端 / 交差ノード)へ向けて `radius ×
+ * TOUCH_NUDGE_STEP_RATIO` ずつ最大 `TOUCH_NUDGE_MAX_STEPS` 回寄せ、
+ * 既存の `siteOk`(水域・footprint・広場間距離)を保ったまま再検証する。
+ * 決定論的(乱数を消費しない)。寄せても接しなければ null を返し、
+ * 呼び出し側は次の候補(縮小・別の袂・棄却)へ進む。
+ */
+function resolveTouchingSite(
+  check: SiteCheck,
+  pos: Vec2,
+  radius: number,
+  wobbles: number[],
+  anchor: Vec2,
+  edges: WorldModel["network"]["edges"],
+): { position: Vec2; polygon: Polygon } | null {
+  const initialPolygon = plazaPolygon(pos, radius, wobbles);
+  if (plazaTouchesRoad(initialPolygon, edges)) {
+    return { position: pos, polygon: initialPolygon };
+  }
+  const dx = anchor.x - pos.x;
+  const dz = anchor.z - pos.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 1e-6) return null;
+  const ux = dx / dist;
+  const uz = dz / dist;
+  const step = radius * TOUCH_NUDGE_STEP_RATIO;
+  for (let k = 1; k <= TOUCH_NUDGE_MAX_STEPS; k++) {
+    const d = Math.min(step * k, dist);
+    const candidate: Vec2 = { x: pos.x + ux * d, z: pos.z + uz * d };
+    if (!siteOk(check, candidate, radius, wobbles)) continue;
+    const candidatePolygon = plazaPolygon(candidate, radius, wobbles);
+    if (plazaTouchesRoad(candidatePolygon, edges)) {
+      return { position: candidate, polygon: candidatePolygon };
+    }
+  }
+  return null;
 }
 
 /** 湖・池・水路を合成した水域 sdf(正=陸側) */
@@ -491,12 +538,22 @@ export function runPlazas(model: WorldModel): void {
         z: gate.position.z + Math.sin(gate.angle) * sign * (r + 2),
       };
       if (!siteOk(check, pos, r, wobbles)) continue;
+      // 接触検証: 外れていれば門位置(道路との交点近傍)へ寄せて再検証する
+      const resolved = resolveTouchingSite(
+        check,
+        pos,
+        r,
+        wobbles,
+        gate.position,
+        model.network.edges,
+      );
+      if (!resolved) continue;
       plazas.push({
         id: `plaza/gate/${gate.id}`,
         kind: "gate",
-        position: pos,
+        position: resolved.position,
         radius: r,
-        polygon: plazaPolygon(pos, r, wobbles),
+        polygon: resolved.polygon,
       });
       break;
     }
@@ -526,16 +583,29 @@ export function runPlazas(model: WorldModel): void {
     let placed = false;
     for (const sign of signs) {
       if (placed) break;
+      // 橋詰めの道路端(橋の袂。r=-1.5 で bridge.length/2 の地点に戻す
+      // = 橋詰め広場を寄せる先のアンカー)
+      const roadEnd = endFor(sign, -1.5);
       for (const scale of SHRINK_STEPS) {
         const r = r0 * scale;
         const end = endFor(sign, r);
         if (!siteOk(check, end, r, wobbles)) continue;
+        // 接触検証: 外れていれば橋詰めの道路端へ寄せて再検証する
+        const resolved = resolveTouchingSite(
+          check,
+          end,
+          r,
+          wobbles,
+          roadEnd,
+          model.network.edges,
+        );
+        if (!resolved) continue;
         plazas.push({
           id: `plaza/bridgehead/${bridge.id}`,
           kind: "bridgehead",
-          position: end,
+          position: resolved.position,
           radius: r,
-          polygon: plazaPolygon(end, r, wobbles),
+          polygon: resolved.polygon,
         });
         placed = true;
         break;
@@ -566,12 +636,23 @@ export function runPlazas(model: WorldModel): void {
     for (const scale of SHRINK_STEPS) {
       const r = (4 + 2.5 * rPick) * scale;
       if (!siteOk(check, node.position, r, wobbles)) continue;
+      // 接触検証: crossing は交差ノード自身がアンカー(構成上ほぼ常に
+      // 接するが、寄せ処理の経路を他 kind と揃えて一貫させる)
+      const resolved = resolveTouchingSite(
+        check,
+        node.position,
+        r,
+        wobbles,
+        node.position,
+        model.network.edges,
+      );
+      if (!resolved) continue;
       plazas.push({
         id: `plaza/crossing/${node.id}`,
         kind: "crossing",
-        position: node.position,
+        position: resolved.position,
         radius: r,
-        polygon: plazaPolygon(node.position, r, wobbles),
+        polygon: resolved.polygon,
       });
       break;
     }
@@ -617,10 +698,12 @@ export function runPlazas(model: WorldModel): void {
   if (!Number.isFinite(model.centerPlan.facing)) assertionViolations++;
   // 全広場の道路接続保証(Phase B。courtyard を除く。契約:
   // network-plaza.md Plaza 節「全広場の道路接続保証」)。gate / bridgehead /
-  // crossing は構成上満たすはずで、center は上の接続路が満たす
+  // crossing は採択直前の resolveTouchingSite が接触検証+寄せ+棄却まで
+  // 済ませており、center は上の接続路が満たすため、ここでは最終防御として
+  // 二重に検証する
   for (const plaza of plazas) {
     if (plaza.kind === "courtyard") continue;
-    if (!plazaTouchesRoad(plaza, model.network.edges)) assertionViolations++;
+    if (!plazaTouchesRoad(plaza.polygon, model.network.edges)) assertionViolations++;
   }
   if (assertionViolations > 0) {
     console.warn(`plazas: パイプライン内アサーション違反 ${assertionViolations} 件`);

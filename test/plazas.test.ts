@@ -231,6 +231,24 @@ describe("plazas: 全広場の道路接続保証(Phase B。契約: network-plaza
       }
     }
   });
+
+  // B7 検収で発見したコーナーケース(lakeside-2 / water=95 / monumentality=100):
+  // 橋詰め広場1件が採択位置のままでは道路周長に接せず、B4 の新設アサーションが
+  // 検出していた(plans/2026-07-12-worldgen-rework-roads.md B7)。B7 対応で
+  // gate / bridgehead / crossing の採択直前に接触検証+アンカーへの寄せを
+  // 追加した(plazas.ts resolveTouchingSite)。この組を固定で回帰させる。
+  it("lakeside-2 / water=95 / monumentality=100(bridgehead 広場の接触コーナーケース)", async () => {
+    const model = await build("lakeside-2", { water: 95, monumentality: 100 });
+    const bridgeheads = model.plazas.filter((p) => p.kind === "bridgehead");
+    expect(bridgeheads.length).toBeGreaterThan(0);
+    for (const plaza of model.plazas) {
+      if (plaza.kind === "courtyard") continue;
+      expect(
+        touchesRoad(model, plaza),
+        `lakeside-2 water=95 monumentality=100 ${plaza.id}(${plaza.kind}) に接する道路が無い`,
+      ).toBe(true);
+    }
+  });
 });
 
 describe("plazas: 中心前広場の接続路(Phase B。契約: network-plaza.md Plaza 節「中心前広場の接続路」)", () => {

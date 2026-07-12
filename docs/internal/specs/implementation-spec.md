@@ -319,8 +319,7 @@ Node上のVitestでそのままテストできる。
 > **Phase B 註記**(`../plans/2026-07-12-worldgen-rework-roads.md`、
 > 2026-07-12): 上記 1.6節の World Scale 駆動(進入点 2〜5)・
 > Settlement Pressure 駆動(streetBudget)は Phase B の決定であり、
-> 実装はタスク B2(進入点)・B3(streetBudget)で追いつく。それまで
-> コードは旧仕様(進入点 2〜4、streetBudget なし)のまま動作する。
+> タスク B2(進入点)・B3(streetBudget)で実装済み(2026-07-12)。
 > 現行の道路・広場・ゾーニング仕様は `../contracts/network-plaza.md` を
 > 正とする。
 

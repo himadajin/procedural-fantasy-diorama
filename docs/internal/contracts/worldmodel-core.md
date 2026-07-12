@@ -59,12 +59,10 @@ interface WorldModel {
 
 > **Phase B 註記**(`plans/2026-07-12-worldgen-rework-roads.md`): 上記の
 > `zoning` フィールド、および下記 Derived の `entryPointCount` 新式・
-> `streetBudget` は Phase B の決定であり、実装はタスク B2
-> (entryPointCount)・B3(streetBudget)・B5(zoning)で追いつく。
-> それまでコードは旧仕様(`zoning` なし、`entryPointCount` は
-> `clamp(round(2 + 2×scale + entryJitter), 2, 4)`、`streetBudget` なし)の
-> まま動作する。`zoning` のスキーマ・算出規則は
-> [network-plaza.md](network-plaza.md)「Density 節 zoning」を参照。
+> `streetBudget` は Phase B の決定であり、タスク B2(entryPointCount)・
+> B3(streetBudget)・B5(zoning)で実装済み(2026-07-12)。`zoning` の
+> スキーマ・算出規則は [network-plaza.md](network-plaza.md)「Density 節
+> zoning」を参照。
 
 ### Meta(導出設定。PHASE 2〜)
 
