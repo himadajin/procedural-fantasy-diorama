@@ -244,15 +244,41 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    b7522aab → 9bdacd9a
   //   seed-b {}                    dfffb83c → 32764980
   //   seed-b {water:70}            80c34214 → 88009bca
+  //
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B6 で更新。意図した変更:
+  // オーケストレーターの数値検査(3 seed × Settlement{0,50,100} ×
+  // Scale{50,100})に基づき derived の2式を調整した(worldmodel-core.md
+  // 「Derived」、network-plaza.md 予算節):
+  //   (1) parcelCountMax = round(60 + 200×scale) → round(60 + 200×scale +
+  //       80×settle)。60〜340(旧 60〜260)。街路の導入で街路沿いに区画が
+  //       生まれるようになり、Settlement=100 側がほぼ全条件で上限
+  //       (160/160・260/260)に飽和していたため、Settlement 連動を追加。
+  //   (2) streetBudget = worldSize×(0.5+2.2×settle)×(0.55+0.9×scale) →
+  //       worldSize×(0.35+2.35×settle)×(0.55+0.9×scale)。Settlement=0 の
+  //       基礎係数を 0.5→0.35 へ引き下げ(寒村(建物14棟程度)に街路13〜15本が
+  //       生えていたのを是正)。Settlement=100 側の係数 2.7 は不変。
+  // どちらも Settlement Pressure に連動する式であり、乱数消費は不変
+  // (parcelCountMax は棄却上限、streetBudget は成長打ち切り閾値としてのみ
+  // 使われるため、乱数消費順自体は変わらないが、生成結果(区画・街路の本数と
+  // 形状)が変わるため密度→結界→広場→区画→建物→植生へ連鎖し、全 8 組が変わる。
+  // 新旧対応(B5 → B6):
+  //   everdusk-101 {}              1899b2b0 → d92da4fc
+  //   everdusk-101 {water:0}       3519feb0 → 50e1727f
+  //   everdusk-101 {water:95}      d445ceb0 → 2bff0d52
+  //   everdusk-101 {worldScale:0}  6ff6fe5d → c016779e
+  //   everdusk-101 {worldScale:100} 214d49fe → 5ad9fb39
+  //   seed-a {}                    9bdacd9a → c9345f90
+  //   seed-b {}                    32764980 → d7f9a3ee
+  //   seed-b {water:70}            88009bca → c0c7c687
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "1899b2b0"],
-    ["everdusk-101", { water: 0 }, "3519feb0"],
-    ["everdusk-101", { water: 95 }, "d445ceb0"],
-    ["everdusk-101", { worldScale: 0 }, "6ff6fe5d"],
-    ["everdusk-101", { worldScale: 100 }, "214d49fe"],
-    ["seed-a", {}, "9bdacd9a"],
-    ["seed-b", {}, "32764980"],
-    ["seed-b", { water: 70 }, "88009bca"],
+    ["everdusk-101", {}, "d92da4fc"],
+    ["everdusk-101", { water: 0 }, "50e1727f"],
+    ["everdusk-101", { water: 95 }, "2bff0d52"],
+    ["everdusk-101", { worldScale: 0 }, "c016779e"],
+    ["everdusk-101", { worldScale: 100 }, "5ad9fb39"],
+    ["seed-a", {}, "c9345f90"],
+    ["seed-b", {}, "d7f9a3ee"],
+    ["seed-b", { water: 70 }, "c0c7c687"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

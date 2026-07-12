@@ -160,6 +160,10 @@ Settlement Pressure (居住圧力):
 - 小道(建物間を結ぶ細い道)の生成量
 - 二次街路(建物群の内部を区切る有機成長の路地。street)の総量
   (streetBudget)。Phase B(`../plans/2026-07-12-worldgen-rework-roads.md`)
+- 区画数の上限(parcelCountMax)への寄与。Phase B(B6)で追加。街路の
+  導入で街路沿いに区画が生まれるようになったため、Settlement=100 でも
+  上限に恒常的に張り付かないよう World Scale 駆動に加えて連動させる
+  (`../plans/2026-07-12-worldgen-rework-roads.md`)
 - 建物の平均階数への弱い正の寄与
 - 水路の本数への弱い正の寄与(主駆動は Water Presence。街が育つほど水路が増える)
 

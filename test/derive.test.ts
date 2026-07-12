@@ -158,17 +158,50 @@ describe("computeDerived: 境界値", () => {
     }
   });
 
-  it("streetBudget = worldSize × (0.5 + 2.2×settle) × (0.55 + 0.9×scale) の式に一致する(Phase B)", () => {
+  it("streetBudget = worldSize × (0.35 + 2.35×settle) × (0.55 + 0.9×scale) の式に一致する(Phase B・B6)", () => {
     for (const seed of SEEDS) {
       for (const worldScale of [0, 25, 50, 75, 100]) {
         for (const settlement of [0, 25, 50, 75, 100]) {
           const d = computeDerived(seed, withParams({ worldScale, settlement }));
           const scale = worldScale / 100;
           const settle = settlement / 100;
-          const expected = d.worldSize * (0.5 + 2.2 * settle) * (0.55 + 0.9 * scale);
+          const expected = d.worldSize * (0.35 + 2.35 * settle) * (0.55 + 0.9 * scale);
           expect(d.streetBudget).toBeCloseTo(expected, 6);
           expect(d.streetBudget).toBeGreaterThan(0);
         }
+      }
+    }
+  });
+
+  it("parcelCountMax = round(60 + 200×scale + 80×settle) の式に一致し、60〜340 に収まる(B6)", () => {
+    for (const seed of SEEDS) {
+      for (const worldScale of [0, 25, 50, 75, 100]) {
+        for (const settlement of [0, 25, 50, 75, 100]) {
+          const d = computeDerived(seed, withParams({ worldScale, settlement }));
+          const scale = worldScale / 100;
+          const settle = settlement / 100;
+          const expected = Math.round(60 + 200 * scale + 80 * settle);
+          expect(d.parcelCountMax).toBe(expected);
+          expect(d.parcelCountMax).toBeGreaterThanOrEqual(60);
+          expect(d.parcelCountMax).toBeLessThanOrEqual(340);
+        }
+      }
+    }
+  });
+
+  it("parcelCountMax は worldScale・settlement それぞれに対して単調非減少(B6)", () => {
+    for (const seed of SEEDS) {
+      let prevByScale = -Infinity;
+      for (const worldScale of [0, 25, 50, 75, 100]) {
+        const d = computeDerived(seed, withParams({ worldScale, settlement: 50 }));
+        expect(d.parcelCountMax).toBeGreaterThanOrEqual(prevByScale);
+        prevByScale = d.parcelCountMax;
+      }
+      let prevBySettle = -Infinity;
+      for (const settlement of [0, 25, 50, 75, 100]) {
+        const d = computeDerived(seed, withParams({ worldScale: 50, settlement }));
+        expect(d.parcelCountMax).toBeGreaterThanOrEqual(prevBySettle);
+        prevBySettle = d.parcelCountMax;
       }
     }
   });
