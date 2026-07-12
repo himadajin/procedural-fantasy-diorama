@@ -87,6 +87,13 @@ export interface Derived {
   laneAmount: number;
   /** 建物の平均階数への弱い正の寄与。0〜0.6 */
   floorsBias: number;
+  /**
+   * 二次街路(street)の総弧長予算(実寸)。Phase B(提案値)。
+   * = worldSize × (0.5 + 2.2×settle) × (0.55 + 0.9×scale)。
+   * Settlement Pressure の主駆動先(worldSize/scale にも連動する複合式)。
+   * network-plaza.md「二次街路(street)の有機成長」参照
+   */
+  streetBudget: number;
 
   // --- Prosperity 駆動 ---
   /** 壁材の階層(掘立→木組み漆喰→石造→切石)。0〜3 連続 */
@@ -175,6 +182,7 @@ export function createEmptyDerived(): Derived {
     parcelSize: 0,
     laneAmount: 0,
     floorsBias: 0,
+    streetBudget: 0,
     wallTier: 0,
     roofTier: 0,
     roadGrade: 0,
@@ -267,7 +275,7 @@ export interface Ground {
   zoneMask: ZoneMask;
 }
 
-export type RoadClass = "main" | "connector" | "lane";
+export type RoadClass = "main" | "connector" | "street" | "lane";
 
 export interface BridgeSite {
   id: string;
@@ -467,6 +475,14 @@ export interface WorldModel {
   ground: Ground;
   water: Water;
   density: Density;
+  /**
+   * ゾーニング場(市街度 urbanity。0〜1)。段7「一次密度場」が
+   * density.primary と同じタイミングで算出し書き込む(それまで null)。
+   * 契約の正は contracts/network-plaza.md「Density 節 zoning」。
+   * 消費者は Phase D(施設)と段5(streets.ts)の市街限定成長(参照式は
+   * streets.ts のコメント参照)
+   */
+  zoning: FieldGrid | null;
   network: Network;
   plazas: Plaza[];
   centerPlan: CenterPlan;
@@ -495,6 +511,7 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
       shoreline: { cellSize: 0, loops: [] },
     },
     density: { primary: null, final: null },
+    zoning: null,
     network: { nodes: [], edges: [], entryPoints: [] },
     plazas: [],
     centerPlan: {

@@ -21,6 +21,8 @@ import {
   polygonSignedDistance,
   waterBodies,
 } from "../model/waterfield";
+import { chaikin, resamplePath } from "../model/geometry";
+import { STREET_GRADE_DROP, STREET_WIDTH } from "./streets";
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
@@ -48,6 +50,249 @@ const AXIS_HEIGHT_FACTOR = {
   waterside: 0.85,
   rustic: 0.7,
 } as const;
+
+/**
+ * 中心前広場の接続路(Phase B。契約: network-plaza.md Plaza 節
+ * 「中心前広場の接続路」)。
+ *
+ * - 流入方位の許容差: 契約は「facing と一致させる」とだけ定め、幾何的な
+ *   厳密一致が不可能な場合(水域・footprint による回避)の許容量を定めて
+ *   いない。本実装では ±30°(提案値。B7 で調整しうる)を許容し、facing の
+ *   延長線に最も近い候補から順に試す
+ */
+const CONNECTOR_ANGLE_OFFSETS = [
+  0,
+  (10 * Math.PI) / 180,
+  -(10 * Math.PI) / 180,
+  (20 * Math.PI) / 180,
+  -(20 * Math.PI) / 180,
+  (30 * Math.PI) / 180,
+  -(30 * Math.PI) / 180,
+];
+/** 流入方位と facing の許容差(提案値。上記オフセット候補の最大値と一致させる) */
+export const CONNECTOR_FACING_TOLERANCE = (30 * Math.PI) / 180;
+/** 接続路が水域を避ける最小クリアランス(契約: waterSdf < 幅/2+1) */
+const CONNECTOR_WATER_CLEAR = STREET_WIDTH / 2 + 1;
+/** 接続路が centerPlan.footprint を避ける最小クリアランス(lanes.ts 等の桁感に合わせた提案値) */
+const CONNECTOR_FOOT_CLEAR = 1;
+/** 迂回の via 点に加える横ずれ候補(近い順。提案値) */
+const CONNECTOR_DETOUR_OFFSETS = [6, -6, 12, -12, 18, -18, 24, -24];
+/** 「広場ポリゴンに接するか内部を通る」判定の標本間隔・許容差 */
+const ROAD_TOUCH_SAMPLE_STEP = 3;
+const ROAD_TOUCH_TOLERANCE = 0.5;
+
+/** 線分 ab が水域・footprint を侵さないか(標本 8 点) */
+function segmentClear(
+  a: Vec2,
+  b: Vec2,
+  waterSdf: (x: number, z: number) => number,
+  footprint: Polygon,
+): boolean {
+  const SAMPLES = 8;
+  for (let i = 0; i <= SAMPLES; i++) {
+    const t = i / SAMPLES;
+    const x = a.x + (b.x - a.x) * t;
+    const z = a.z + (b.z - a.z) * t;
+    if (waterSdf(x, z) < CONNECTOR_WATER_CLEAR) return false;
+    if (footprint.length >= 3 && polygonSignedDistance(x, z, footprint) < CONNECTOR_FOOT_CLEAR) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** 折れ線の全区間が水域・footprint を侵さないか */
+function polylineClear(
+  points: Vec2[],
+  waterSdf: (x: number, z: number) => number,
+  footprint: Polygon,
+): boolean {
+  for (let i = 0; i + 1 < points.length; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (!a || !b) continue;
+    if (!segmentClear(a, b, waterSdf, footprint)) return false;
+  }
+  return true;
+}
+
+/**
+ * from → to の経路を探す。直線基調(まず直線を試す)で、水域・footprint に
+ * よりやむを得ない場合のみ 1〜2 個の via 点で軽く迂回し、Chaikin 1回で
+ * 平滑化する(端点は Chaikin が保持するため from/to は厳密に保たれる)。
+ * 見つからなければ null(呼び出し側は次点のノード・角度候補へ進む)。
+ */
+function findClearPath(
+  from: Vec2,
+  to: Vec2,
+  waterSdf: (x: number, z: number) => number,
+  footprint: Polygon,
+): Vec2[] | null {
+  if (polylineClear([from, to], waterSdf, footprint)) return [from, to];
+
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const len = Math.hypot(dx, dz) || 1;
+  const px = -dz / len;
+  const pz = dx / len;
+
+  // 1 via 点(中点からの横ずれ)
+  const mid = { x: (from.x + to.x) / 2, z: (from.z + to.z) / 2 };
+  for (const off of CONNECTOR_DETOUR_OFFSETS) {
+    const via = { x: mid.x + px * off, z: mid.z + pz * off };
+    const pts = [from, via, to];
+    if (polylineClear(pts, waterSdf, footprint)) return chaikin(pts);
+  }
+
+  // 2 via 点(S字。1 via 点で回避できない障害物の縁を追う)
+  const q1 = { x: from.x + dx * 0.33, z: from.z + dz * 0.33 };
+  const q2 = { x: from.x + dx * 0.66, z: from.z + dz * 0.66 };
+  for (const off of CONNECTOR_DETOUR_OFFSETS) {
+    const via1 = { x: q1.x + px * off, z: q1.z + pz * off };
+    const via2 = { x: q2.x + px * off, z: q2.z + pz * off };
+    const pts = [from, via1, via2, to];
+    if (polylineClear(pts, waterSdf, footprint)) return chaikin(pts);
+  }
+  return null;
+}
+
+interface CenterConnector {
+  fromNodeId: string;
+  entry: Vec2;
+  path: Vec2[];
+}
+
+/**
+ * 広場中心から角度 theta のレイと広場ポリゴン(中心まわりの星形多角形。
+ * plazaPolygon の頂点は角度の単調な関数で配置されるため、任意方向のレイは
+ * 境界とちょうど1回交わる)との交点。「広場縁」を wobble 込みの実形状から
+ * 厳密に求める(半径の仮定に頼らない)。交点が見つからない場合(数値誤差)
+ * は radius 位置へフォールバックする
+ */
+function plazaEdgePoint(plaza: Plaza, theta: number): Vec2 {
+  const center = plaza.position;
+  const dx = Math.cos(theta);
+  const dz = Math.sin(theta);
+  const n = plaza.polygon.length;
+  for (let i = 0; i < n; i++) {
+    const a = plaza.polygon[i];
+    const b = plaza.polygon[(i + 1) % n];
+    if (!a || !b) continue;
+    const ex = b.x - a.x;
+    const ez = b.z - a.z;
+    const det = ex * dz - ez * dx;
+    if (Math.abs(det) < 1e-9) continue;
+    const acx = a.x - center.x;
+    const acz = a.z - center.z;
+    const t = (ex * acz - ez * acx) / det;
+    const s = (dx * acz - dz * acx) / det;
+    if (t >= 0 && s >= -1e-6 && s <= 1 + 1e-6) {
+      return { x: center.x + dx * t, z: center.z + dz * t };
+    }
+  }
+  return { x: center.x + dx * plaza.radius, z: center.z + dz * plaza.radius };
+}
+
+/**
+ * 中心前広場の接続路を決定論的に探す: facing の延長線(角度オフセット候補を
+ * 近い順に走査)× 最寄りの道路ノード(全 class。距離昇順→id 昇順でタイブレーク)
+ * の組み合わせを、経路が見つかるまで順に試す。乱数は使わない。
+ */
+function buildCenterConnector(
+  model: WorldModel,
+  plaza: Plaza,
+  facing: number,
+  waterSdf: (x: number, z: number) => number,
+  footprint: Polygon,
+): CenterConnector | null {
+  for (const off of CONNECTOR_ANGLE_OFFSETS) {
+    const theta = facing + off;
+    const entry: Vec2 = plazaEdgePoint(plaza, theta);
+    if (waterSdf(entry.x, entry.z) < CONNECTOR_WATER_CLEAR) continue;
+    if (footprint.length >= 3 && polygonSignedDistance(entry.x, entry.z, footprint) < CONNECTOR_FOOT_CLEAR) {
+      continue;
+    }
+    const candidates = model.network.nodes
+      .map((n) => ({
+        id: n.id,
+        position: n.position,
+        d: Math.hypot(n.position.x - entry.x, n.position.z - entry.z),
+      }))
+      .sort((a, b) => a.d - b.d || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (const cand of candidates) {
+      const path = findClearPath(cand.position, entry, waterSdf, footprint);
+      if (path) return { fromNodeId: cand.id, entry, path };
+    }
+  }
+  return null;
+}
+
+/**
+ * 全広場の道路接続保証(Phase B。courtyard を除く)の検証:
+ * 少なくとも1本の道路 edge の path 標本点が広場ポリゴンの周長に接するか
+ * 内部を通る(polygonSignedDistance ≤ 許容差)。
+ */
+function plazaTouchesRoad(
+  polygon: Polygon,
+  edges: WorldModel["network"]["edges"],
+): boolean {
+  for (const edge of edges) {
+    const samples = resamplePath(edge.path, ROAD_TOUCH_SAMPLE_STEP);
+    for (const p of samples) {
+      if (polygonSignedDistance(p.x, p.z, polygon) <= ROAD_TOUCH_TOLERANCE) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** 接触検証が外れた場合にアンカーへ寄せる段階数(契約: network-plaza.md Plaza 節) */
+const TOUCH_NUDGE_MAX_STEPS = 6;
+/** 1段階あたりの寄せ幅(半径比。契約と同じ提案値) */
+const TOUCH_NUDGE_STEP_RATIO = 0.15;
+
+/**
+ * gate / bridgehead / crossing 広場の採択直前に行う接触検証+寄せ
+ * (契約: network-plaza.md Plaza 節「全広場の道路接続保証」)。
+ *
+ * `pos` が既に道路に接していればそのまま返す。外れている場合は `anchor`
+ * (gate 位置 / 橋詰めの道路端 / 交差ノード)へ向けて `radius ×
+ * TOUCH_NUDGE_STEP_RATIO` ずつ最大 `TOUCH_NUDGE_MAX_STEPS` 回寄せ、
+ * 既存の `siteOk`(水域・footprint・広場間距離)を保ったまま再検証する。
+ * 決定論的(乱数を消費しない)。寄せても接しなければ null を返し、
+ * 呼び出し側は次の候補(縮小・別の袂・棄却)へ進む。
+ */
+function resolveTouchingSite(
+  check: SiteCheck,
+  pos: Vec2,
+  radius: number,
+  wobbles: number[],
+  anchor: Vec2,
+  edges: WorldModel["network"]["edges"],
+): { position: Vec2; polygon: Polygon } | null {
+  const initialPolygon = plazaPolygon(pos, radius, wobbles);
+  if (plazaTouchesRoad(initialPolygon, edges)) {
+    return { position: pos, polygon: initialPolygon };
+  }
+  const dx = anchor.x - pos.x;
+  const dz = anchor.z - pos.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 1e-6) return null;
+  const ux = dx / dist;
+  const uz = dz / dist;
+  const step = radius * TOUCH_NUDGE_STEP_RATIO;
+  for (let k = 1; k <= TOUCH_NUDGE_MAX_STEPS; k++) {
+    const d = Math.min(step * k, dist);
+    const candidate: Vec2 = { x: pos.x + ux * d, z: pos.z + uz * d };
+    if (!siteOk(check, candidate, radius, wobbles)) continue;
+    const candidatePolygon = plazaPolygon(candidate, radius, wobbles);
+    if (plazaTouchesRoad(candidatePolygon, edges)) {
+      return { position: candidate, polygon: candidatePolygon };
+    }
+  }
+  return null;
+}
 
 /** 湖・池・水路を合成した水域 sdf(正=陸側) */
 function combinedWaterSdf(model: WorldModel): (x: number, z: number) => number {
@@ -193,6 +438,7 @@ export function runPlazas(model: WorldModel): void {
   // --- 中心前広場(facing の確定を兼ねる) ---
   const facingInit = roadConvergenceAngle(model);
   let facing = facingInit;
+  let centerPlaza: Plaza | null = null;
   const footHalf = derived.centerFootprint / 2;
   {
     const rng = makeRng(seed, "plazas/center");
@@ -217,13 +463,15 @@ export function runPlazas(model: WorldModel): void {
             z: center.z + Math.sin(a) * (edgeT + r + 1 + extra),
           };
           if (!siteOk(check, pos, r, wobbles)) continue;
-          plazas.push({
+          const plaza: Plaza = {
             id: "plaza/center",
             kind: "center",
             position: pos,
             radius: r,
             polygon: plazaPolygon(pos, r, wobbles),
-          });
+          };
+          plazas.push(plaza);
+          centerPlaza = plaza;
           // 採択した広場の方位で facing を確定する(契約)
           facing = Math.atan2(pos.z - center.z, pos.x - center.x);
           placed = true;
@@ -232,6 +480,41 @@ export function runPlazas(model: WorldModel): void {
       }
     }
     if (!placed) assertionViolations++;
+  }
+
+  // --- 中心前広場の接続路(Phase B。契約: network-plaza.md Plaza 節
+  //     「中心前広場の接続路」)。中心前広場が確定した後、facing の延長線に
+  //     最も近い広場縁(±30°まで許容)と、最寄りの道路ノード(全 class)を
+  //     決定論的に走査して短い接続路を network へ追記のみで加える ---
+  if (centerPlaza) {
+    const conn = buildCenterConnector(
+      model,
+      centerPlaza,
+      facing,
+      check.waterSdf,
+      check.footprint,
+    );
+    if (conn) {
+      const entryNodeId = `node/street/plaza/${centerPlaza.id}`;
+      model.network.nodes = [
+        ...model.network.nodes,
+        { id: entryNodeId, position: conn.entry },
+      ];
+      model.network.edges = [
+        ...model.network.edges,
+        {
+          id: `street/plaza/${centerPlaza.id}`,
+          from: conn.fromNodeId,
+          to: entryNodeId,
+          class: "street",
+          width: STREET_WIDTH,
+          path: conn.path,
+          grade: clamp(derived.roadGrade - STREET_GRADE_DROP, 0, 2),
+        },
+      ];
+    } else {
+      assertionViolations++;
+    }
   }
 
   // --- 結界門前広場 ---
@@ -255,12 +538,22 @@ export function runPlazas(model: WorldModel): void {
         z: gate.position.z + Math.sin(gate.angle) * sign * (r + 2),
       };
       if (!siteOk(check, pos, r, wobbles)) continue;
+      // 接触検証: 外れていれば門位置(道路との交点近傍)へ寄せて再検証する
+      const resolved = resolveTouchingSite(
+        check,
+        pos,
+        r,
+        wobbles,
+        gate.position,
+        model.network.edges,
+      );
+      if (!resolved) continue;
       plazas.push({
         id: `plaza/gate/${gate.id}`,
         kind: "gate",
-        position: pos,
+        position: resolved.position,
         radius: r,
-        polygon: plazaPolygon(pos, r, wobbles),
+        polygon: resolved.polygon,
       });
       break;
     }
@@ -290,16 +583,29 @@ export function runPlazas(model: WorldModel): void {
     let placed = false;
     for (const sign of signs) {
       if (placed) break;
+      // 橋詰めの道路端(橋の袂。r=-1.5 で bridge.length/2 の地点に戻す
+      // = 橋詰め広場を寄せる先のアンカー)
+      const roadEnd = endFor(sign, -1.5);
       for (const scale of SHRINK_STEPS) {
         const r = r0 * scale;
         const end = endFor(sign, r);
         if (!siteOk(check, end, r, wobbles)) continue;
+        // 接触検証: 外れていれば橋詰めの道路端へ寄せて再検証する
+        const resolved = resolveTouchingSite(
+          check,
+          end,
+          r,
+          wobbles,
+          roadEnd,
+          model.network.edges,
+        );
+        if (!resolved) continue;
         plazas.push({
           id: `plaza/bridgehead/${bridge.id}`,
           kind: "bridgehead",
-          position: end,
+          position: resolved.position,
           radius: r,
-          polygon: plazaPolygon(end, r, wobbles),
+          polygon: resolved.polygon,
         });
         placed = true;
         break;
@@ -330,12 +636,23 @@ export function runPlazas(model: WorldModel): void {
     for (const scale of SHRINK_STEPS) {
       const r = (4 + 2.5 * rPick) * scale;
       if (!siteOk(check, node.position, r, wobbles)) continue;
+      // 接触検証: crossing は交差ノード自身がアンカー(構成上ほぼ常に
+      // 接するが、寄せ処理の経路を他 kind と揃えて一貫させる)
+      const resolved = resolveTouchingSite(
+        check,
+        node.position,
+        r,
+        wobbles,
+        node.position,
+        model.network.edges,
+      );
+      if (!resolved) continue;
       plazas.push({
         id: `plaza/crossing/${node.id}`,
         kind: "crossing",
-        position: node.position,
+        position: resolved.position,
         radius: r,
-        polygon: plazaPolygon(node.position, r, wobbles),
+        polygon: resolved.polygon,
       });
       break;
     }
@@ -379,6 +696,15 @@ export function runPlazas(model: WorldModel): void {
   }
   if (!(model.centerPlan.heightHint > 0)) assertionViolations++;
   if (!Number.isFinite(model.centerPlan.facing)) assertionViolations++;
+  // 全広場の道路接続保証(Phase B。courtyard を除く。契約:
+  // network-plaza.md Plaza 節「全広場の道路接続保証」)。gate / bridgehead /
+  // crossing は採択直前の resolveTouchingSite が接触検証+寄せ+棄却まで
+  // 済ませており、center は上の接続路が満たすため、ここでは最終防御として
+  // 二重に検証する
+  for (const plaza of plazas) {
+    if (plaza.kind === "courtyard") continue;
+    if (!plazaTouchesRoad(plaza.polygon, model.network.edges)) assertionViolations++;
+  }
   if (assertionViolations > 0) {
     console.warn(`plazas: パイプライン内アサーション違反 ${assertionViolations} 件`);
   }

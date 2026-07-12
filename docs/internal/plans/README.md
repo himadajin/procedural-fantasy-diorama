@@ -16,3 +16,5 @@
 - `2026-07-07-verification-record.md` — PHASE 7 の総合検証記録(凍結)。
 - `2026-07-11-worldgen-rework-water.md` — ワールド生成刷新のロードマップと
   Phase A(水系)の実行計画・実施記録(2026-07-12 受け入れ済み・凍結)。
+- `2026-07-12-worldgen-rework-roads.md` — ワールド生成刷新 Phase B(道路・街区)の
+  実行計画・実施記録(2026-07-12 受け入れ済み・凍結)。

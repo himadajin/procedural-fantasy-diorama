@@ -164,15 +164,121 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    6a40e14c → 6a40e14c(不変)
   //   seed-b {}                    3e3e2341 → 37b960fd
   //   seed-b {water:70}            7849a971 → 992ee82a
+  //
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B2 で更新。意図した変更:
+  // derive.ts の entryPointCount を `clamp(round(2 + 2×scale + entryJitter), 2, 4)`
+  // から `clamp(round(2 + 2.8×scale + entryJitter), 2, 5)` へ変更した(進入点数を
+  // World Scale に強く連動させ、大きい箱庭の幹線骨格を増やす。3.2節(7)・
+  // worldmodel-core.md「Derived」)。entryJitter・pondJitter の消費数・消費順は
+  // 不変(rng 消費に影響する変更ではなく、丸め対象の式のみを変えたため)。
+  // worldScale=0 は新旧どちらの式でも entryPointCount=2 に丸まるため不変。
+  // worldScale=50(全パラメータ既定)は 3+jitter → 3.4+jitter へ丸め閾値が動くため、
+  // entryJitter が閾値をまたぐ seed のみ変わる(everdusk-101 は 3→4 へ変化、
+  // seed-a・seed-b は元々 3 のまま変化なし=不変)。worldScale=100 は
+  // 旧式が常に 4 に飽和していたのに対し新式は 4.8+jitter で 5 まで届くため、
+  // everdusk-101 は 4→5 へ変化した。進入点数が変わった組は道路網(段5)以降
+  // (密度・結界・広場・区画・建物・植生等)の生成結果も連鎖して変わる。
+  // 新旧対応(A7 → B2):
+  //   everdusk-101 {}              b4a46541 → 019930b4
+  //   everdusk-101 {water:0}       16eb82ac → 70b7bd86
+  //   everdusk-101 {water:95}      0d7a81c7 → 6b7825a1
+  //   everdusk-101 {worldScale:0}  c1754828 → c1754828(不変)
+  //   everdusk-101 {worldScale:100} 2ebaf32f → 079c7947
+  //   seed-a {}                    6a40e14c → 6a40e14c(不変)
+  //   seed-b {}                    37b960fd → 37b960fd(不変)
+  //   seed-b {water:70}            992ee82a → 992ee82a(不変)
+  //
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B3 で更新。意図した変更:
+  // 幹線(main/connector)から発芽して局所規則で伸びる二次街路(class
+  // "street")を導入した(段5後半サブフェーズ pipeline/streets.ts。
+  // contracts/network-plaza.md「二次街路(street)の有機成長」)。
+  // 発芽点ごとの独立乱数サブストリーム(`streets/sprout/<edgeId>/<k>`)を
+  // 新規消費するため、street が1本でも生える組(streetBudget > 0 は
+  // worldScale の全域で正)はすべてハッシュが変わる。街路の追加は
+  // 密度(道路近接ブースト)→結界→広場→区画→建物→植生へ連鎖するため、
+  // worldScale=0(道路網に依存しない部分は不変でも街路自体は生える)を
+  // 含む全 8 組が変わる。
+  // 新旧対応(B2 → B3):
+  //   everdusk-101 {}              019930b4 → c2917dc5
+  //   everdusk-101 {water:0}       70b7bd86 → 3b793c62
+  //   everdusk-101 {water:95}      6b7825a1 → 7a73349f
+  //   everdusk-101 {worldScale:0}  c1754828 → 4697ee8f
+  //   everdusk-101 {worldScale:100} 079c7947 → 8007b11a
+  //   seed-a {}                    6a40e14c → d4b53d5c
+  //   seed-b {}                    37b960fd → 439327ba
+  //   seed-b {water:70}            992ee82a → 13b94626
+  //
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B4 で更新。意図した変更:
+  // 中心前広場が確定した後、最寄りの道路ノードから広場縁(facing の延長線
+  // ±30° 以内)への接続路(class "street"、id "street/plaza/<plazaId>")を
+  // network へ追記した(contracts/network-plaza.md Plaza 節「中心前広場の
+  // 接続路」)。中心前広場は全 seed×params で必ず1個確定するため、接続路の
+  // 追記(nodes/edges 各+1)は全組で発生し、後段(舗装・区画・小道・建物)へ
+  // 連鎖する。よって全 8 組のハッシュが変わる。
+  // 新旧対応(B3 → B4):
+  //   everdusk-101 {}              c2917dc5 → beb17b57
+  //   everdusk-101 {water:0}       3b793c62 → 755240c1
+  //   everdusk-101 {water:95}      7a73349f → 9a80742e
+  //   everdusk-101 {worldScale:0}  4697ee8f → b42d2dc4
+  //   everdusk-101 {worldScale:100} 8007b11a → 6511a826
+  //   seed-a {}                    d4b53d5c → b7522aab
+  //   seed-b {}                    439327ba → dfffb83c
+  //   seed-b {water:70}            13b94626 → 80c34214
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B5 で更新。意図した変更:
+  // `model.zoning`(市街度 urbanity。0〜1 の 64² FieldGrid)を新設し、段7
+  // 「一次密度場」(density.ts の runDensity)が density.primary と同じ走査で
+  // 算出・書き込むようにした(contracts/network-plaza.md「Density 節
+  // zoning」)。urbanity = smoothstep(0.10, 0.45, protoDensity + 0.5×roadBoost)
+  // で、protoDensity・roadBoost は density.primary の算出に使う既存の値
+  // (centerTerm×fade・道路近接ブースト)をそのまま流用する(乱数非消費・
+  // density.primary はビット同一のまま)。zoning は WorldModel 直下の新規
+  // フィールドであり正規化ハッシュの直列化対象に加わるため、値そのものが
+  // 変わらない worldScale=0 の組を含む全 8 組でハッシュが変わる
+  // (フィールドの追加自体が構造差になるため)。
+  // 新旧対応(B4 → B5):
+  //   everdusk-101 {}              beb17b57 → 1899b2b0
+  //   everdusk-101 {water:0}       755240c1 → 3519feb0
+  //   everdusk-101 {water:95}      9a80742e → d445ceb0
+  //   everdusk-101 {worldScale:0}  b42d2dc4 → 6ff6fe5d
+  //   everdusk-101 {worldScale:100} 6511a826 → 214d49fe
+  //   seed-a {}                    b7522aab → 9bdacd9a
+  //   seed-b {}                    dfffb83c → 32764980
+  //   seed-b {water:70}            80c34214 → 88009bca
+  //
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B6 で更新。意図した変更:
+  // オーケストレーターの数値検査(3 seed × Settlement{0,50,100} ×
+  // Scale{50,100})に基づき derived の2式を調整した(worldmodel-core.md
+  // 「Derived」、network-plaza.md 予算節):
+  //   (1) parcelCountMax = round(60 + 200×scale) → round(60 + 200×scale +
+  //       80×settle)。60〜340(旧 60〜260)。街路の導入で街路沿いに区画が
+  //       生まれるようになり、Settlement=100 側がほぼ全条件で上限
+  //       (160/160・260/260)に飽和していたため、Settlement 連動を追加。
+  //   (2) streetBudget = worldSize×(0.5+2.2×settle)×(0.55+0.9×scale) →
+  //       worldSize×(0.35+2.35×settle)×(0.55+0.9×scale)。Settlement=0 の
+  //       基礎係数を 0.5→0.35 へ引き下げ(寒村(建物14棟程度)に街路13〜15本が
+  //       生えていたのを是正)。Settlement=100 側の係数 2.7 は不変。
+  // どちらも Settlement Pressure に連動する式であり、乱数消費は不変
+  // (parcelCountMax は棄却上限、streetBudget は成長打ち切り閾値としてのみ
+  // 使われるため、乱数消費順自体は変わらないが、生成結果(区画・街路の本数と
+  // 形状)が変わるため密度→結界→広場→区画→建物→植生へ連鎖し、全 8 組が変わる。
+  // 新旧対応(B5 → B6):
+  //   everdusk-101 {}              1899b2b0 → d92da4fc
+  //   everdusk-101 {water:0}       3519feb0 → 50e1727f
+  //   everdusk-101 {water:95}      d445ceb0 → 2bff0d52
+  //   everdusk-101 {worldScale:0}  6ff6fe5d → c016779e
+  //   everdusk-101 {worldScale:100} 214d49fe → 5ad9fb39
+  //   seed-a {}                    9bdacd9a → c9345f90
+  //   seed-b {}                    32764980 → d7f9a3ee
+  //   seed-b {water:70}            88009bca → c0c7c687
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "b4a46541"],
-    ["everdusk-101", { water: 0 }, "16eb82ac"],
-    ["everdusk-101", { water: 95 }, "0d7a81c7"],
-    ["everdusk-101", { worldScale: 0 }, "c1754828"],
-    ["everdusk-101", { worldScale: 100 }, "2ebaf32f"],
-    ["seed-a", {}, "6a40e14c"],
-    ["seed-b", {}, "37b960fd"],
-    ["seed-b", { water: 70 }, "992ee82a"],
+    ["everdusk-101", {}, "d92da4fc"],
+    ["everdusk-101", { water: 0 }, "50e1727f"],
+    ["everdusk-101", { water: 95 }, "2bff0d52"],
+    ["everdusk-101", { worldScale: 0 }, "c016779e"],
+    ["everdusk-101", { worldScale: 100 }, "5ad9fb39"],
+    ["seed-a", {}, "c9345f90"],
+    ["seed-b", {}, "d7f9a3ee"],
+    ["seed-b", { water: 70 }, "c0c7c687"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

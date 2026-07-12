@@ -284,12 +284,17 @@ interface GateInfo {
 /**
  * 結界環×道路 edge の全交点に結界門を置き、交点を edge.path へ挿入する
  * (局所スナップ。道路の大規模な引き直しはしない)。
+ * スナップ対象は class "main" / "connector" に限定する(Phase B。
+ * contracts/wards.md「gates」。"street" / "lane" には門を開かない —
+ * 門は幹線格の道に限る。結界環が street・lane と交差しても門は生成せず、
+ * その交点は壁の接地検証からも除外しない=当たる区間はそのまま "wall" として扱う)
  */
 function planGates(model: WorldModel, ring: Vec2[]): GateInfo[] {
   const gates: GateInfo[] = [];
   const counts = new Map<string, number>();
   const n = ring.length;
   for (const edge of model.network.edges) {
+    if (edge.class !== "main" && edge.class !== "connector") continue;
     const crossings: {
       pi: number;
       t: number;
@@ -930,9 +935,13 @@ export function runWards(model: WorldModel): void {
         if (segmentIntersection(a, b, c, d)) assertionViolations++;
       }
     }
-    // 3) 結界横断道路はすべて門位置を通る(wardLevel ≥ 2)
+    // 3) 結界横断道路はすべて門位置を通る(wardLevel ≥ 2。門スナップ対象は
+    //    main / connector に限定するため、本検証も同じ対象に限る。Phase B。
+    //    street・lane が結界環を横切っても門は生成せず、その交点はそのまま
+    //    wall として扱う=検証対象外)
     if (derived.wardLevel >= 2) {
       for (const edge of model.network.edges) {
+        if (edge.class !== "main" && edge.class !== "connector") continue;
         for (let i = 0; i + 1 < edge.path.length; i++) {
           const a = edge.path[i];
           const b = edge.path[i + 1];

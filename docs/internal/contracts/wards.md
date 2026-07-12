@@ -54,11 +54,16 @@ interface Wards {
   3 は門開口以外がほぼ wall の完全環。PHASE 5b)
 - `gates` は wardLevel ≥ 2 のとき、結界環と道路 edge の全交点に生成する
   (`roadEdgeId` は交差 edge の id、`angle` は交点での道路方向)。
-  道路側の補正は門位置の点を edge.path へ挿入する局所スナップのみで、
-  道路の大規模な引き直しはしない。よって「結界環を横切る道路は必ず
-  門位置を通る」(門位置と edge.path の距離は 0)。wardLevel 1 では
-  gates は空(壁が無く、境界標の列は道を遮らない)。gate の直近の
-  ringSegments は門開口の "gap" になる
+  **スナップ対象の道路 edge は class `"main"` / `"connector"` に限定する**
+  (Phase B。`"street"` / `"lane"` には門を開かない — 門は幹線格の道に
+  限る。結界環が street・lane と交差しても門は生成せず、その交点は壁の
+  接地検証からも除外しない=当たる区間はそのまま "wall" として扱う。
+  タスク B3 で `pipeline/wards.ts` の門スナップ対象を main/connector
+  へ限定する形で実装済み(2026-07-12))。道路側の補正は門位置の点を
+  edge.path へ挿入する局所スナップのみで、道路の大規模な引き直しはしない。
+  よって「結界環を横切る main / connector は必ず門位置を通る」(門位置と
+  edge.path の距離は 0)。wardLevel 1 では gates は空(壁が無く、境界標の列は道を
+  遮らない)。gate の直近の ringSegments は門開口の "gap" になる
 - `towers` は wardLevel ≥ 2。結界環上の屈曲点を優先し、間隔規則
   (towerScale 駆動の目標本数と最小弧間隔)と水辺・門・橋詰めへの近接で
   採点して選ぶ(広場は段9確定のため、「広場近傍」の選好は広場が置かれる

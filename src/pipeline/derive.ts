@@ -38,10 +38,14 @@ export function computeDerived(seed: string, params: Params): Derived {
   return {
     // --- World Scale 駆動 ---
     worldSize,
-    entryPointCount: clamp(Math.round(2 + 2 * scale + entryJitter), 2, 4),
+    // Phase B(2026-07-12): 2〜4 から 2〜5 へ拡張(進入点数の World Scale 連動強化)
+    entryPointCount: clamp(Math.round(2 + 2.8 * scale + entryJitter), 2, 5),
     roadBudget: worldSize * (2.2 + 1.8 * scale),
     marginWidth: 18 + 30 * scale,
-    parcelCountMax: Math.round(60 + 200 * scale),
+    // Phase B(2026-07-12・B6): Settlement 連動を追加(街路沿いに区画が
+    // 生まれるようになり、Settlement=100 側が上限に恒常的に張り付いて
+    // いたため。worldmodel-core.md「Derived」)
+    parcelCountMax: Math.round(60 + 200 * scale + 80 * settle),
 
     // --- Settlement Pressure 駆動 ---
     densityPeak: 0.55 + 0.45 * settle,
@@ -50,6 +54,11 @@ export function computeDerived(seed: string, params: Params): Derived {
     parcelSize: 16 - 9 * settle,
     laneAmount: settle,
     floorsBias: 0.6 * settle,
+    // Phase B: 二次街路(street)の総弧長予算。worldSize/scale にも連動する
+    // 複合式(worldmodel-core.md「Derived」)。B6(2026-07-12)で
+    // Settlement=0 の基礎係数を 0.5→0.35 へ引き下げ(寒村の街路過多を
+    // 是正。Settlement=100 側は 2.7 で不変)
+    streetBudget: worldSize * (0.35 + 2.35 * settle) * (0.55 + 0.9 * scale),
 
     // --- Prosperity 駆動 ---
     wallTier: 3 * prosper,

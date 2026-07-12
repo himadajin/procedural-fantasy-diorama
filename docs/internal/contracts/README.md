@@ -13,7 +13,7 @@
 |---|---|
 | [worldmodel-core.md](worldmodel-core.md) | WorldModel の正宣言・全体規約(座標系・ID規則・プレーンデータ規約)・基本型(Vec2/Polygon/Spline)・WorldModel interface・Meta(Params/Derived) |
 | [ground-water.md](ground-water.md) | Ground(ZoneMask を含む)・Water(Shoreline / Canal / BridgeSite・水系の保証を含む) |
-| [network-plaza.md](network-plaza.md) | Density(FieldGrid)・Network(小道を含む)・Plaza・CenterPlan |
+| [network-plaza.md](network-plaza.md) | Density(FieldGrid)・zoning(市街度。Phase B)・Network(street の有機成長・小道を含む)・Plaza・CenterPlan |
 | [wards.md](wards.md) | Wards(結界計画)・結界構造の立体化(commit 17)・魔法灯・浮遊要素・橋の立体化(commit 18) |
 | [buildings.md](buildings.md) | Parcel・Building・Part の変換規約・Part の型語彙(全 commit 分)・インスタンス経路のピース分解・中心建築・水辺建築の拡張 |
 | [materials.md](materials.md) | Part の `materialId` の語彙(基準色。art-direction 5.1節と同期) |
