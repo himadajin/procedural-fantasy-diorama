@@ -166,6 +166,9 @@ Settlement Pressure (居住圧力):
   (`../plans/2026-07-12-worldgen-rework-roads.md`)
 - 建物の平均階数への弱い正の寄与
 - 水路の本数への弱い正の寄与(主駆動は Water Presence。街が育つほど水路が増える)
+- 連棟(長屋)クラスタの採択率(高いほど壁を接する街区が増える。Phase C
+  で導入する区画グループ単位のクラスタ抽選の主駆動。
+  `../plans/2026-07-12-worldgen-rework-layout.md`)
 
 Prosperity (繁栄度):
 - 壁材の階層: 掘立柱・粗い木 → 木組み+漆喰 → 石造 → 切石+装飾
@@ -173,6 +176,8 @@ Prosperity (繁栄度):
 - 屋根の整い(色ムラ・歪みの少なさ)、煙突の有無
 - 道の等級(土 → 砂利 → 石畳)と広場の舗装、水路の護岸の整い
 - 建物の傾き・沈み込みノイズの逆数(高いほど整然)
+- 中庭型クラスタの採択率(高いほど中庭を囲む家群が増える。
+  `../plans/2026-07-12-worldgen-rework-layout.md`)
 
 Water Presence (水辺の強さ):
 - 湖の生成確率(lakeChance)と面積(lakeArea)、池の数(pondCount。0〜4)と
@@ -322,6 +327,13 @@ Node上のVitestでそのままテストできる。
 > タスク B2(進入点)・B3(streetBudget)で実装済み(2026-07-12)。
 > 現行の道路・広場・ゾーニング仕様は `../contracts/network-plaza.md` を
 > 正とする。
+
+> **Phase C 註記**(`../plans/2026-07-12-worldgen-rework-layout.md`、
+> 2026-07-12): 上記 1.6節の Settlement Pressure 駆動(連棟クラスタ採択率)・
+> Prosperity 駆動(中庭型クラスタ採択率)は Phase C の決定であり、
+> 実装はタスク C4(中庭型)・C5(連棟)で追いつく。それまでコードは
+> クラスタ語彙を持たず、全建物が単棟である。現行の配置語彙の仕様は
+> `../contracts/buildings.md` を正とする。
 
 ---
 

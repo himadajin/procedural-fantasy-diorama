@@ -269,6 +269,12 @@ interface Network {
 > 「全広場の道路接続保証」「中心前広場の接続路」「roadConvergenceAngle の
 > street 重み 0」は Phase B の決定であり、タスク B4 で実装済み(2026-07-12)。
 
+> **Phase C 註記**(`plans/2026-07-12-worldgen-rework-layout.md`): 下記
+> `"courtyard"` の記述(「段12「建物」の中心建築展開が中庭壁の内側に
+> 追加する」)は、一般建物の中庭型クラスタも追加主体に加える形へ改訂した
+> (中心建築に限らない)。実装はタスク C4 で追いつく。それまでコードは
+> 中心建築のみが `"courtyard"` Plaza を追加する。
+
 ```ts
 interface Plaza {
   id: string;
@@ -286,8 +292,9 @@ interface Plaza {
   回避する。`"gate"` は各結界門の内側(中心側)、`"bridgehead"` は橋の袂
   (中心に近い側を優先。採択は watersideRate 駆動の確率)、`"crossing"` は
   主道どうしの交差ノード(確率的)。`"courtyard"` は段12「建物」の
-  中心建築展開(PHASE 5a)が中庭壁の内側に追加する
-  (Parcel / Building 節「中心建築」)
+  中心建築展開(PHASE 5a)**および**一般建物の中庭型クラスタ(Phase C)が
+  中庭壁の内側に追加する(buildings.md「中心建築」節、および
+  「中庭型(courtyard)の性質」節)
 - `polygon` は `position` 中心の不整形 n 角形(時計回り。radius 基準で
   0.88〜1.0 倍の揺らぎ。頂点は radius の円内)
 - 衝突回避: 採択順(center → gate → bridgehead → crossing)で、既採択
