@@ -207,15 +207,32 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    6a40e14c → d4b53d5c
   //   seed-b {}                    37b960fd → 439327ba
   //   seed-b {water:70}            992ee82a → 13b94626
+  //
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B4 で更新。意図した変更:
+  // 中心前広場が確定した後、最寄りの道路ノードから広場縁(facing の延長線
+  // ±30° 以内)への接続路(class "street"、id "street/plaza/<plazaId>")を
+  // network へ追記した(contracts/network-plaza.md Plaza 節「中心前広場の
+  // 接続路」)。中心前広場は全 seed×params で必ず1個確定するため、接続路の
+  // 追記(nodes/edges 各+1)は全組で発生し、後段(舗装・区画・小道・建物)へ
+  // 連鎖する。よって全 8 組のハッシュが変わる。
+  // 新旧対応(B3 → B4):
+  //   everdusk-101 {}              c2917dc5 → beb17b57
+  //   everdusk-101 {water:0}       3b793c62 → 755240c1
+  //   everdusk-101 {water:95}      7a73349f → 9a80742e
+  //   everdusk-101 {worldScale:0}  4697ee8f → b42d2dc4
+  //   everdusk-101 {worldScale:100} 8007b11a → 6511a826
+  //   seed-a {}                    d4b53d5c → b7522aab
+  //   seed-b {}                    439327ba → dfffb83c
+  //   seed-b {water:70}            13b94626 → 80c34214
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "c2917dc5"],
-    ["everdusk-101", { water: 0 }, "3b793c62"],
-    ["everdusk-101", { water: 95 }, "7a73349f"],
-    ["everdusk-101", { worldScale: 0 }, "4697ee8f"],
-    ["everdusk-101", { worldScale: 100 }, "8007b11a"],
-    ["seed-a", {}, "d4b53d5c"],
-    ["seed-b", {}, "439327ba"],
-    ["seed-b", { water: 70 }, "13b94626"],
+    ["everdusk-101", {}, "beb17b57"],
+    ["everdusk-101", { water: 0 }, "755240c1"],
+    ["everdusk-101", { water: 95 }, "9a80742e"],
+    ["everdusk-101", { worldScale: 0 }, "b42d2dc4"],
+    ["everdusk-101", { worldScale: 100 }, "6511a826"],
+    ["seed-a", {}, "b7522aab"],
+    ["seed-b", {}, "dfffb83c"],
+    ["seed-b", { water: 70 }, "80c34214"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

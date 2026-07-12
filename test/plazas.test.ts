@@ -4,8 +4,11 @@ import {
   createWaterField,
   distToPolyline,
   pointInPolygon,
+  polygonSignedDistance,
 } from "../src/model/waterfield";
+import { resamplePath } from "../src/model/geometry";
 import { runPipeline } from "../src/pipeline/run";
+import { CONNECTOR_FACING_TOLERANCE } from "../src/pipeline/plazas";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
@@ -185,6 +188,105 @@ describe("plazas: centerPlan 後半(facing / heightHint)", () => {
           model.centerPlan.heightHint / model.meta.derived.centerHeight;
         expect(ratio).toBeGreaterThanOrEqual(0.7 - 1e-9);
         expect(ratio).toBeLessThanOrEqual(1.15 + 1e-9);
+      }
+    }
+  });
+});
+
+/** 折れ線を弧長 3 単位で標本化し、広場ポリゴンの周長に接するか内部を通るか */
+function touchesRoad(
+  model: WorldModel,
+  plaza: { polygon: WorldModel["plazas"][number]["polygon"] },
+): boolean {
+  const TOLERANCE = 0.5;
+  for (const edge of model.network.edges) {
+    for (const p of resamplePath(edge.path, 3)) {
+      if (polygonSignedDistance(p.x, p.z, plaza.polygon) <= TOLERANCE) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** 折れ線の角度差(0〜π) */
+function angleDiff(a: number, b: number): number {
+  let d = Math.abs(a - b) % (Math.PI * 2);
+  if (d > Math.PI) d = Math.PI * 2 - d;
+  return d;
+}
+
+describe("plazas: 全広場の道路接続保証(Phase B。契約: network-plaza.md Plaza 節)", () => {
+  it("courtyard を除く全ての広場に、周長に接するか内部を通る道路 edge が1本以上ある", async () => {
+    for (const seed of SEEDS) {
+      for (const monumentality of [0, 50, 100]) {
+        const model = await build(seed, { monumentality });
+        for (const plaza of model.plazas) {
+          if (plaza.kind === "courtyard") continue;
+          expect(
+            touchesRoad(model, plaza),
+            `seed=${seed} monumentality=${monumentality} ${plaza.id}(${plaza.kind}) に接する道路が無い`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe("plazas: 中心前広場の接続路(Phase B。契約: network-plaza.md Plaza 節「中心前広場の接続路」)", () => {
+  it("中心前広場に street/plaza/<plazaId> の接続路が network へ追記される", async () => {
+    for (const seed of SEEDS) {
+      for (const monumentality of [0, 50, 100]) {
+        const model = await build(seed, { monumentality });
+        const centerPlaza = model.plazas.find((p) => p.kind === "center");
+        expect(centerPlaza, `seed=${seed} monumentality=${monumentality}`).toBeDefined();
+        if (!centerPlaza) continue;
+        const expectedId = `street/plaza/${centerPlaza.id}`;
+        const connector = model.network.edges.find((e) => e.id === expectedId);
+        expect(
+          connector,
+          `seed=${seed} monumentality=${monumentality} ${expectedId} が見つからない`,
+        ).toBeDefined();
+        if (!connector) continue;
+        expect(connector.class).toBe("street");
+        // 両端ノードが存在し、path の端点と一致する
+        const nodeById = new Map(model.network.nodes.map((n) => [n.id, n.position]));
+        const head = connector.path[0];
+        const tail = connector.path[connector.path.length - 1];
+        expect(nodeById.get(connector.from)).toEqual(head);
+        expect(nodeById.get(connector.to)).toEqual(tail);
+      }
+    }
+  });
+
+  it("接続路の流入方位(広場中心から見た接続点の方位)が centerPlan.facing と ±30° 以内で一致する", async () => {
+    for (const seed of SEEDS) {
+      for (const monumentality of [0, 50, 100]) {
+        const model = await build(seed, { monumentality });
+        const centerPlaza = model.plazas.find((p) => p.kind === "center");
+        if (!centerPlaza) continue;
+        const connector = model.network.edges.find(
+          (e) => e.id === `street/plaza/${centerPlaza.id}`,
+        );
+        if (!connector) continue;
+        const nodeById = new Map(model.network.nodes.map((n) => [n.id, n.position]));
+        // 広場側の端点(node/street/plaza/<plazaId>)を特定する
+        const plazaSideId = [connector.from, connector.to].find((id) =>
+          id.startsWith("node/street/plaza/"),
+        );
+        expect(plazaSideId, `seed=${seed} monumentality=${monumentality}`).toBeDefined();
+        if (!plazaSideId) continue;
+        const entry = nodeById.get(plazaSideId);
+        expect(entry).toBeDefined();
+        if (!entry) continue;
+        const incomingAngle = Math.atan2(
+          entry.z - centerPlaza.position.z,
+          entry.x - centerPlaza.position.x,
+        );
+        expect(
+          angleDiff(incomingAngle, model.centerPlan.facing),
+          `seed=${seed} monumentality=${monumentality}`,
+        ).toBeLessThanOrEqual(CONNECTOR_FACING_TOLERANCE + 1e-9);
       }
     }
   });

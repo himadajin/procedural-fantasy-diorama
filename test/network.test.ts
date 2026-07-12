@@ -12,8 +12,12 @@ import { runGround } from "../src/pipeline/ground";
 import { runWater } from "../src/pipeline/water";
 import { runSiting } from "../src/pipeline/siting";
 import { runNetwork } from "../src/pipeline/network";
+import { runCanals } from "../src/pipeline/canals";
+import { runWards } from "../src/pipeline/wards";
+import { runPlazas } from "../src/pipeline/plazas";
 import {
   createDensityDecay,
+  runDensity,
   protoDensityAt,
 } from "../src/pipeline/density";
 import {
@@ -354,6 +358,48 @@ describe("network: 二次街路(street)の有機成長(Phase B。契約は netwo
       for (const entry of model.network.entryPoints) {
         expect(reached.has(nodeAt(model, entry.position))).toBe(true);
       }
+    }
+  });
+});
+
+describe("network: 段9(広場)の中心前広場接続路は追記のみ(計画書 B4)", () => {
+  it("段5〜段8 の nodes / edges は段9(広場)を通しても不変で、street/plaza/ が追記される", () => {
+    for (const seed of STREET_SEEDS) {
+      const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS });
+      runDerive(model);
+      runGround(model);
+      runWater(model);
+      runSiting(model);
+      runNetwork(model);
+      runCanals(model);
+      runDensity(model);
+      runWards(model);
+      const edgesBefore = structuredClone(model.network.edges);
+      const nodesBefore = structuredClone(model.network.nodes);
+      runPlazas(model);
+      // 段5〜段8 時点の nodes / edges は id・内容・配列順とも一切変わらない
+      // (先頭が完全一致。段9 は末尾へ中心前広場の接続路を追記するのみ)
+      expect(model.network.edges.slice(0, edgesBefore.length)).toEqual(
+        edgesBefore,
+      );
+      expect(model.network.nodes.slice(0, nodesBefore.length)).toEqual(
+        nodesBefore,
+      );
+      // 追記分はすべて中心前広場の接続路(class "street"、id 規約
+      // "street/plaza/<plazaId>")
+      const addedEdges = model.network.edges.slice(edgesBefore.length);
+      for (const e of addedEdges) {
+        expect(e.class).toBe("street");
+        expect(e.id).toMatch(/^street\/plaza\//);
+      }
+      const centerPlaza = model.plazas.find((p) => p.kind === "center");
+      if (centerPlaza) {
+        expect(addedEdges.length).toBe(1);
+        expect(addedEdges[0]?.id).toBe(`street/plaza/${centerPlaza.id}`);
+      }
+      // id の一意性
+      const ids = model.network.edges.map((e) => e.id);
+      expect(new Set(ids).size).toBe(ids.length);
     }
   });
 });
