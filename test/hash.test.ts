@@ -292,15 +292,48 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    c9345f90 → 8b072991
   //   seed-b {}                    d7f9a3ee → 223287ea
   //   seed-b {water:70}            c0c7c687 → 55c73d2d
+  //
+  // 計画書 2026-07-12-worldgen-rework-layout.md タスク C3 で更新。意図した変更:
+  // (1) サイズ勾配(contracts/buildings.md「floors の改訂」): floors の算出式に
+  //     urbanity 項を追加した(`floorsBase += 1.1 × smoothstep(0.55, 0.9,
+  //     urbanity(建物位置))`。urbanity は `model.zoning` から footprint 手前の
+  //     center 位置でサンプルする、Phase B 導入の既存 FieldGrid)。クランプ
+  //     上限を「urbanity ≥ 0.75 の一般建物のみ 4、それ以外は従来どおり 3」に
+  //     した(中心建築の 1〜5 階は不変)。
+  // (2) 同型連続の抑制(contracts/buildings.md「同型連続の抑制の設計原理」):
+  //     `Parcel.groupId` のハッシュ + parcel.id 由来のスロット連番から決まる
+  //     決定論的な ±1 符号(`layoutParity`。乱数非消費)を導入し、house の
+  //     L 字抽選確率(`0.35 ± 0.25×parity`)・壁材/屋根材の階層添字の揺らぎ
+  //     (`±0.5×parity` を既存 rng ±0.6 揺らぎに加算)・hip 屋根抽選確率
+  //     (`±0.1×parity`)・roof.pitch(`±1.5°×parity`)へ加算した。いずれも
+  //     隣接建物の生成結果は参照しない(位置由来のみ)。
+  // どちらも乱数消費数・消費順は不変(floors の urbanity 項・parity 変調は
+  // すべて既存の乱数値への加算/クランプ対象の変更のみ)。区画が1件でも存在
+  // する組はすべて生成結果(floors・shape・materials・roof)が変わるため、
+  // 全 8 組のハッシュが変わる(water:0 も区画・建物は生成されるため対象)。
+  // オーケストレーター確認(Settlement 100・3 seed): floors[1/2/3/4] の
+  // 棟数分布は概ね 0/0〜3/123〜219/2、4 階はすべて urbanity ≥ 0.75 の位置
+  // (below75floor4 = 0 を機械確認)。壁材 3 連続の頻度(区画グループ内・
+  // スロット順の長さ3窓)は変調前 29/191(rate 0.152)→ 変調後 17/191
+  // (rate 0.089)で明確に低下した。
+  // 新旧対応(C2 → C3):
+  //   everdusk-101 {}              dc90e334 → f7fac9c2
+  //   everdusk-101 {water:0}       601ffc8c → 804d1da0
+  //   everdusk-101 {water:95}      4d4da11e → a24efad4
+  //   everdusk-101 {worldScale:0}  7ac593d7 → 1e6ad8b1
+  //   everdusk-101 {worldScale:100} 4d2444f6 → 7aec297a
+  //   seed-a {}                    8b072991 → c8729c73
+  //   seed-b {}                    223287ea → c645b0dd
+  //   seed-b {water:70}            55c73d2d → f01a5f6f
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "dc90e334"],
-    ["everdusk-101", { water: 0 }, "601ffc8c"],
-    ["everdusk-101", { water: 95 }, "4d4da11e"],
-    ["everdusk-101", { worldScale: 0 }, "7ac593d7"],
-    ["everdusk-101", { worldScale: 100 }, "4d2444f6"],
-    ["seed-a", {}, "8b072991"],
-    ["seed-b", {}, "223287ea"],
-    ["seed-b", { water: 70 }, "55c73d2d"],
+    ["everdusk-101", {}, "f7fac9c2"],
+    ["everdusk-101", { water: 0 }, "804d1da0"],
+    ["everdusk-101", { water: 95 }, "a24efad4"],
+    ["everdusk-101", { worldScale: 0 }, "1e6ad8b1"],
+    ["everdusk-101", { worldScale: 100 }, "7aec297a"],
+    ["seed-a", {}, "c8729c73"],
+    ["seed-b", {}, "c645b0dd"],
+    ["seed-b", { water: 70 }, "f01a5f6f"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
