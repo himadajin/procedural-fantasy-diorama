@@ -87,6 +87,13 @@ export interface Derived {
   laneAmount: number;
   /** 建物の平均階数への弱い正の寄与。0〜0.6 */
   floorsBias: number;
+  /**
+   * 二次街路(street)の総弧長予算(実寸)。Phase B(提案値)。
+   * = worldSize × (0.5 + 2.2×settle) × (0.55 + 0.9×scale)。
+   * Settlement Pressure の主駆動先(worldSize/scale にも連動する複合式)。
+   * network-plaza.md「二次街路(street)の有機成長」参照
+   */
+  streetBudget: number;
 
   // --- Prosperity 駆動 ---
   /** 壁材の階層(掘立→木組み漆喰→石造→切石)。0〜3 連続 */
@@ -175,6 +182,7 @@ export function createEmptyDerived(): Derived {
     parcelSize: 0,
     laneAmount: 0,
     floorsBias: 0,
+    streetBudget: 0,
     wallTier: 0,
     roofTier: 0,
     roadGrade: 0,
@@ -267,7 +275,7 @@ export interface Ground {
   zoneMask: ZoneMask;
 }
 
-export type RoadClass = "main" | "connector" | "lane";
+export type RoadClass = "main" | "connector" | "street" | "lane";
 
 export interface BridgeSite {
   id: string;

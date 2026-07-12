@@ -12,7 +12,7 @@ import { runWater } from "../src/pipeline/water";
 import { runSiting } from "../src/pipeline/siting";
 import { runNetwork } from "../src/pipeline/network";
 import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
+import { createDensityDecay, protoDensityAt, runDensity } from "../src/pipeline/density";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
@@ -108,5 +108,38 @@ describe("density: FieldGrid 実体(contracts/network-plaza.md Density 節)", ()
       const b = build(seed, { arcana: 95 });
       expect(a.density.primary).toEqual(b.density.primary);
     }
+  });
+});
+
+describe("density: street 近接ブースト(Phase B。届く距離 10・強さ 0.16)", () => {
+  it("street 上の値が、道路近接ブーストを除いた proto-density より高い(同一地点での比較)", () => {
+    // 「近い点 vs 遠い点」の比較は、2点間で中心距離(centerTerm)自体が
+    // 変わってしまい、ブースト(最大 0.16)より centerTerm の変化が大きい
+    // 場合に false-negative になりうる(道路の向きが中心方向に対して
+    // 急な地点など)。同一地点で「ブースト込み(grid の実値)」と
+    // 「ブースト抜き(proto-density)」を比較すれば、中心距離の影響を
+    // 受けずにブーストの寄与だけを検証できる
+    let checked = 0;
+    for (const seed of SEEDS) {
+      const model = build(seed, { settlement: 100, worldScale: 100 });
+      const grid = model.density.primary;
+      if (!grid) throw new Error("primary が生成されていない");
+      const decay = createDensityDecay(model);
+      const streets = model.network.edges.filter((e) => e.class === "street");
+      for (const edge of streets) {
+        const a = edge.path[0];
+        const b = edge.path[edge.path.length - 1];
+        if (!a || !b) continue;
+        const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+        const withBoost = sampleFieldGrid(grid, mid.x, mid.z);
+        const withoutBoost = protoDensityAt(decay, mid.x, mid.z);
+        // 既に 1.0 に飽和している(clamp)場合はブーストの寄与が見えないため
+        // 比較対象から除外する(飽和していない大多数の street で確認できれば十分)
+        if (withBoost >= 0.999) continue;
+        expect(withBoost, `seed=${seed} edge=${edge.id}`).toBeGreaterThan(withoutBoost);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 });

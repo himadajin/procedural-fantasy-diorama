@@ -396,9 +396,12 @@ function planBackLanes(ctx: LaneContext, laneAmount: number, grade: number): voi
     row.parcels.push(parcel);
   }
 
-  // 走査順は edges の配列順 × L → R(環境依存の順序に依存しない)
+  // 走査順は edges の配列順 × L → R(環境依存の順序に依存しない)。
+  // 対象 edge は main / connector に限定する(Phase B。contracts/network-plaza.md
+  // 「小道の性質」— street 自身が路地であり、路地の裏へさらに細道を張ると
+  // 過密になるため street は対象外とする)
   for (const edge of model.network.edges) {
-    if (edge.class === "lane") continue;
+    if (edge.class !== "main" && edge.class !== "connector") continue;
     for (const sideStr of ["L", "R"] as const) {
       const row = rows.get(`${edge.id}/${sideStr}`);
       if (!row || row.parcels.length < 2) continue;

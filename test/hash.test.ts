@@ -187,15 +187,35 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    6a40e14c → 6a40e14c(不変)
   //   seed-b {}                    37b960fd → 37b960fd(不変)
   //   seed-b {water:70}            992ee82a → 992ee82a(不変)
+  //
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B3 で更新。意図した変更:
+  // 幹線(main/connector)から発芽して局所規則で伸びる二次街路(class
+  // "street")を導入した(段5後半サブフェーズ pipeline/streets.ts。
+  // contracts/network-plaza.md「二次街路(street)の有機成長」)。
+  // 発芽点ごとの独立乱数サブストリーム(`streets/sprout/<edgeId>/<k>`)を
+  // 新規消費するため、street が1本でも生える組(streetBudget > 0 は
+  // worldScale の全域で正)はすべてハッシュが変わる。街路の追加は
+  // 密度(道路近接ブースト)→結界→広場→区画→建物→植生へ連鎖するため、
+  // worldScale=0(道路網に依存しない部分は不変でも街路自体は生える)を
+  // 含む全 8 組が変わる。
+  // 新旧対応(B2 → B3):
+  //   everdusk-101 {}              019930b4 → c2917dc5
+  //   everdusk-101 {water:0}       70b7bd86 → 3b793c62
+  //   everdusk-101 {water:95}      6b7825a1 → 7a73349f
+  //   everdusk-101 {worldScale:0}  c1754828 → 4697ee8f
+  //   everdusk-101 {worldScale:100} 079c7947 → 8007b11a
+  //   seed-a {}                    6a40e14c → d4b53d5c
+  //   seed-b {}                    37b960fd → 439327ba
+  //   seed-b {water:70}            992ee82a → 13b94626
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "019930b4"],
-    ["everdusk-101", { water: 0 }, "70b7bd86"],
-    ["everdusk-101", { water: 95 }, "6b7825a1"],
-    ["everdusk-101", { worldScale: 0 }, "c1754828"],
-    ["everdusk-101", { worldScale: 100 }, "079c7947"],
-    ["seed-a", {}, "6a40e14c"],
-    ["seed-b", {}, "37b960fd"],
-    ["seed-b", { water: 70 }, "992ee82a"],
+    ["everdusk-101", {}, "c2917dc5"],
+    ["everdusk-101", { water: 0 }, "3b793c62"],
+    ["everdusk-101", { water: 95 }, "7a73349f"],
+    ["everdusk-101", { worldScale: 0 }, "4697ee8f"],
+    ["everdusk-101", { worldScale: 100 }, "8007b11a"],
+    ["seed-a", {}, "d4b53d5c"],
+    ["seed-b", {}, "439327ba"],
+    ["seed-b", { water: 70 }, "13b94626"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

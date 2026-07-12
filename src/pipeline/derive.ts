@@ -51,6 +51,9 @@ export function computeDerived(seed: string, params: Params): Derived {
     parcelSize: 16 - 9 * settle,
     laneAmount: settle,
     floorsBias: 0.6 * settle,
+    // Phase B: 二次街路(street)の総弧長予算。worldSize/scale にも連動する
+    // 複合式(worldmodel-core.md「Derived」)
+    streetBudget: worldSize * (0.5 + 2.2 * settle) * (0.55 + 0.9 * scale),
 
     // --- Prosperity 駆動 ---
     wallTier: 3 * prosper,
