@@ -59,7 +59,7 @@
  * - 採択は watersideRate(Water)駆動。張り出し延長と同じ衝突検査+
  *   全一般建物 footprint・採択済み水辺領域との重なり検査に通った場合のみ
  */
-import { makeRng, type Rng } from "../rng";
+import { hashString, makeRng, type Rng } from "../rng";
 import {
   FLOOR_HEIGHT,
   SHORE_SKIRT_BOTTOM_Y,
@@ -102,6 +102,11 @@ function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
 }
 
+function smoothstep(edge0: number, edge1: number, v: number): number {
+  const t = clamp((v - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
 // --- セットバック(契約: 前面 0.5 / 側面 0.7 / 背面 0.7) ---
 const FRONT_SETBACK = 0.5;
 const SIDE_SETBACK = 0.7;
@@ -136,6 +141,9 @@ const OVERHANG_ROAD_CLEAR = 0.3;
 // --- 屋根(art-direction 6節: 勾配 50〜58度) ---
 const ROOF_PITCH_MIN = 50;
 const ROOF_PITCH_MAX = 58;
+/** 同型抑制(下記)による hip 抽選確率・pitch への変調幅(契約の提案値) */
+const ROOF_HIP_PARITY_WAVE = 0.1;
+const ROOF_PITCH_PARITY_WAVE = 1.5;
 
 // --- 部品展開(contracts/buildings.md「Part の型語彙」) ---
 // 階高は model/worldmodel.ts の FLOOR_HEIGHT を正とする(中心建築文法と共有)
@@ -285,6 +293,8 @@ const MATERIAL_TIER_ROLE_ADJUST: Record<BuildingRole, number> = {
 };
 /** 素材階層の seed 揺らぎ幅(±) */
 const MATERIAL_TIER_JITTER = 0.6;
+/** 同型抑制(下記)による素材階層添字への変調幅(契約の提案値) */
+const MATERIAL_PARITY_WAVE = 0.5;
 
 // --- zoneMask の建物上書き(段10 と同じ流儀。契約) ---
 const BUILDING_ZONE_BLEND = 1.2;
@@ -313,6 +323,46 @@ const FLOORS_ROLE_ADJUST: Record<BuildingRole, number> = {
   outskirt: -0.6,
   center: 0,
 };
+
+// --- サイズ勾配(市街中心の一般建物を 4 階まで許容。Phase C。
+//     contracts/buildings.md「floors の改訂」) ---
+/** urbanity 項の係数(提案値) */
+const FLOORS_URBAN_GAIN = 1.1;
+/** urbanity 正規化 smoothstep の下端・上端(提案値) */
+const FLOORS_URBAN_EDGE0 = 0.55;
+const FLOORS_URBAN_EDGE1 = 0.9;
+/** この urbanity 以上の建物のみ floors 上限 4(それ以外は上限 3。提案値) */
+const FLOORS_URBAN_4F_THRESHOLD = 0.75;
+
+// --- 同型連続の抑制(位置由来の決定論的変調。Phase C。乱数非消費。
+//     contracts/buildings.md「同型連続の抑制の設計原理」) ---
+/** house の L 字抽選確率への変調幅(提案値: 0.35 ± 0.25) */
+const SHAPE_L_PARITY_WAVE = 0.25;
+
+/**
+ * parcel.id ("parcel/<edgeId>/<L|R>/<slot>") 末尾のスロット連番を復元する。
+ * groupId は同一 edge・同一側の連続採択 run なので、この絶対スロット値の
+ * 偶奇はグループ内の隣接判定にそのまま使える(区画から独立に再導出でき、
+ * スキーマは増やさない。計画書 C3「スロット序数」)。
+ */
+function parcelSlot(parcel: Parcel): number {
+  const idx = parcel.id.lastIndexOf("/");
+  return Number(parcel.id.slice(idx + 1));
+}
+
+/**
+ * 同型連続の抑制の変調符号(±1。groupId を持たない区画は 0=無変調)。
+ * スロット序数の偶奇に groupId のハッシュ由来の位相ビットを足しているため、
+ * 同一グループ内では隣接スロットどうしが必ず符号反転する一方、グループが
+ * 違えば偶数/奇数どちらに + が付くかもずれる。乱数は消費しない(隣接建物の
+ * 生成結果も参照しない。設計原理どおり位置由来のみ)。
+ */
+function layoutParity(parcel: Parcel): number {
+  if (!parcel.groupId) return 0;
+  const phase = hashString(parcel.groupId) & 1;
+  const slot = parcelSlot(parcel);
+  return (slot + phase) % 2 === 0 ? 1 : -1;
+}
 
 /** 役割ごとの基壇高さ補正 */
 const PLINTH_ROLE_ADJUST: Record<BuildingRole, number> = {
@@ -403,6 +453,7 @@ function shapeVertices(
   role: BuildingRole,
   bw: number,
   bd: number,
+  parity: number,
 ): { verts: LocalPoint[]; compound: boolean; wings: Wing[] } {
   const w2 = bw / 2;
   if (role === "hall" && bw >= 8 && bd >= 8) {
@@ -427,7 +478,8 @@ function shapeVertices(
       ],
     };
   }
-  if (role === "house" && bw >= 7.5 && bd >= 7.5 && rng.chance(0.35)) {
+  const lShapeP = clamp(0.35 + SHAPE_L_PARITY_WAVE * parity, 0, 1);
+  if (role === "house" && bw >= 7.5 && bd >= 7.5 && rng.chance(lShapeP)) {
     // L字: 背面の一角を欠き取る
     const right = rng.chance(0.5);
     const nw = bw * 0.4;
@@ -527,18 +579,26 @@ function decideMaterials(
   role: BuildingRole,
   wallTier: number,
   roofTier: number,
+  parity: number,
 ): Building["materials"] {
   const adj = MATERIAL_TIER_ROLE_ADJUST[role];
+  const parityJitter = MATERIAL_PARITY_WAVE * parity;
   const wallIdx = clamp(
     Math.round(
-      wallTier + adj + rng.range(-MATERIAL_TIER_JITTER, MATERIAL_TIER_JITTER),
+      wallTier +
+        adj +
+        rng.range(-MATERIAL_TIER_JITTER, MATERIAL_TIER_JITTER) +
+        parityJitter,
     ),
     0,
     WALL_MATERIALS.length - 1,
   );
   const roofIdx = clamp(
     Math.round(
-      roofTier + adj + rng.range(-MATERIAL_TIER_JITTER, MATERIAL_TIER_JITTER),
+      roofTier +
+        adj +
+        rng.range(-MATERIAL_TIER_JITTER, MATERIAL_TIER_JITTER) +
+        parityJitter,
     ),
     0,
     ROOF_MATERIALS.length - 1,
@@ -1703,6 +1763,8 @@ export function runBuildings(model: WorldModel): void {
   for (const parcel of model.parcels) {
     const id = `building/${parcel.id.slice("parcel/".length)}`;
     const rng = makeRng(seed, id);
+    // 同型連続の抑制(Phase C。位置由来・乱数非消費。上記 layoutParity)
+    const parity = layoutParity(parcel);
 
     // --- 幾何の下ごしらえ(接道フレーム) ---
     const [fa, fb] = parcel.frontEdge;
@@ -1724,6 +1786,9 @@ export function runBuildings(model: WorldModel): void {
       z: origin.z + backZ * (usableD / 2),
     };
     const density = final ? sampleFieldGrid(final, center.x, center.z) : 0;
+    const urbanity = model.zoning
+      ? sampleFieldGrid(model.zoning, center.x, center.z)
+      : 0;
 
     // --- 役割 ---
     const role = decideRole(rng, model, parcel, center, density);
@@ -1746,7 +1811,13 @@ export function runBuildings(model: WorldModel): void {
     bw = clamp(bw, 2.2, usableW);
     bd = clamp(bd, 2.2, usableD);
     // waterside は shapeVertices が矩形を返す(張り出しの合成を単純に保つ。契約)
-    const { verts: localVerts, compound, wings } = shapeVertices(rng, role, bw, bd);
+    const { verts: localVerts, compound, wings } = shapeVertices(
+      rng,
+      role,
+      bw,
+      bd,
+      parity,
+    );
     // 張り出し前の正面スパン(扉・石垣・外階段のアンカー。4b)
     const fw = wings[0];
     const frontSpan = fw ? { u0: fw.u0, u1: fw.u1 } : { u0: 0, u1: 0 };
@@ -1884,22 +1955,36 @@ export function runBuildings(model: WorldModel): void {
       if (ctx.waterBodySdf(v.x, v.z) < 0) overWater = true;
     }
 
-    // --- 階数(Settlement / Prosperity / 役割) ---
+    // --- 階数(Settlement / Prosperity / 役割 / urbanity。サイズ勾配
+    //     (Phase C。contracts/buildings.md「floors の改訂」)) ---
     const floorsBase =
       1.05 +
       derived.floorsBias +
       0.4 * derived.detailAmount +
       FLOORS_ROLE_ADJUST[role] +
+      FLOORS_URBAN_GAIN *
+        smoothstep(FLOORS_URBAN_EDGE0, FLOORS_URBAN_EDGE1, urbanity) +
       rng.range(-0.3, 0.5);
-    const floors = clamp(Math.round(floorsBase), 1, 3);
+    const floorsMax = urbanity >= FLOORS_URBAN_4F_THRESHOLD ? 4 : 3;
+    const floors = clamp(Math.round(floorsBase), 1, floorsMax);
 
-    // --- 屋根(50〜58度。L/T は複合屋根) ---
+    // --- 屋根(50〜58度。L/T は複合屋根。hip 抽選・pitch は同型抑制の
+    //     序数変調込み) ---
+    const hipRoleP =
+      role === "hall"
+        ? clamp(0.6 + ROOF_HIP_PARITY_WAVE * parity, 0, 1)
+        : clamp(0.2 + ROOF_HIP_PARITY_WAVE * parity, 0, 1);
     let roofType: Building["roof"]["type"] = "gable";
     if (compound) roofType = "compound";
-    else if (role === "hall" && rng.chance(0.6)) roofType = "hip";
-    else if (floors >= 2 && rng.chance(0.2)) roofType = "hip";
-    const pitch =
-      ROOF_PITCH_MIN + (ROOF_PITCH_MAX - ROOF_PITCH_MIN) * rng.next();
+    else if (role === "hall" && rng.chance(hipRoleP)) roofType = "hip";
+    else if (floors >= 2 && rng.chance(hipRoleP)) roofType = "hip";
+    const pitch = clamp(
+      ROOF_PITCH_MIN +
+        (ROOF_PITCH_MAX - ROOF_PITCH_MIN) * rng.next() +
+        ROOF_PITCH_PARITY_WAVE * parity,
+      ROOF_PITCH_MIN,
+      ROOF_PITCH_MAX,
+    );
 
     // --- 接地(基壇・杭・石基礎。契約の機械判定表現) ---
     const plinthHeight = clamp(
@@ -1924,6 +2009,7 @@ export function runBuildings(model: WorldModel): void {
       role,
       derived.wallTier,
       derived.roofTier,
+      parity,
     );
     // 詳細部品(PHASE 4b commit 14)は派生サブストリーム
     // "building/<id>/details" のみ消費する(骨格・materials の消費は不変)

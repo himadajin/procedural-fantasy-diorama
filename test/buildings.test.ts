@@ -11,6 +11,7 @@ import {
   distToPolyline,
 } from "../src/model/waterfield";
 import { polygonsOverlap } from "../src/model/geometry";
+import { sampleFieldGrid } from "../src/model/fieldgrid";
 import { runDerive } from "../src/pipeline/derive";
 import { runGround } from "../src/pipeline/ground";
 import { runWater } from "../src/pipeline/water";
@@ -136,13 +137,32 @@ describe("buildings: 骨格データの性質", () => {
     }
   });
 
-  it("floors は 1〜3 の整数(中心建築は 1〜5)、屋根勾配は 50〜58 度、L/T は複合屋根", () => {
+  /** footprint 重心での urbanity(市街度)。floors のサイズ勾配検証用(Phase C) */
+  function buildingUrbanity(model: WorldModel, b: WorldModel["buildings"][number]): number {
+    if (!model.zoning) return 0;
+    let cx = 0;
+    let cz = 0;
+    for (const v of b.footprint) {
+      cx += v.x;
+      cz += v.z;
+    }
+    cx /= b.footprint.length;
+    cz /= b.footprint.length;
+    return sampleFieldGrid(model.zoning, cx, cz);
+  }
+
+  it("floors は 1〜3(urbanity ≥ 0.75 の一般建物のみ 4)の整数(中心建築は 1〜5)、屋根勾配は 50〜58 度、L/T は複合屋根", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
       for (const b of model.buildings) {
         expect(Number.isInteger(b.floors)).toBe(true);
         expect(b.floors).toBeGreaterThanOrEqual(1);
-        expect(b.floors).toBeLessThanOrEqual(b.role === "center" ? 5 : 3);
+        if (b.role === "center") {
+          expect(b.floors).toBeLessThanOrEqual(5);
+        } else {
+          const urbanity = buildingUrbanity(model, b);
+          expect(b.floors).toBeLessThanOrEqual(urbanity >= 0.75 ? 4 : 3);
+        }
         expect(b.roof.pitch).toBeGreaterThanOrEqual(50);
         expect(b.roof.pitch).toBeLessThanOrEqual(58);
         if (b.role !== "center" && b.footprint.length > 4) {
@@ -150,6 +170,31 @@ describe("buildings: 骨格データの性質", () => {
         }
       }
     }
+  });
+
+  it("サイズ勾配(Phase C): 一般建物の 4 階は urbanity ≥ 0.75 の位置のみ許容される", () => {
+    // Settlement 100 は市街地が広がり、urbanity ≥ 0.75 の一般建物が多数
+    // 生まれる条件(implementation-spec 1.6節・contracts/buildings.md
+    // 「floors の改訂」)。この条件で 4 階建物の存在と urbanity 下限の双方を
+    // 機械検証する。
+    let sawFloor4 = 0;
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 100 });
+      for (const b of general(model)) {
+        const urbanity = buildingUrbanity(model, b);
+        // (b) urbanity < 0.75 の建物は floors ≤ 3
+        if (urbanity < 0.75) {
+          expect(b.floors).toBeLessThanOrEqual(3);
+        }
+        // (a) 4 階建物の位置はすべて urbanity ≥ 0.75
+        if (b.floors === 4) {
+          sawFloor4++;
+          expect(urbanity).toBeGreaterThanOrEqual(0.75);
+        }
+      }
+    }
+    // 4 階建物が実在する条件であることを確認(空検証にしない)
+    expect(sawFloor4).toBeGreaterThan(0);
   });
 
   it("footprint は時計回り(shoelace 符号負)・自己交差なし(頂点数 4〜8)", () => {
@@ -168,6 +213,65 @@ describe("buildings: 骨格データの性質", () => {
         expect(sum).toBeLessThan(0);
       }
     }
+  });
+});
+
+describe("buildings: 同型連続の抑制(位置由来の決定論的変調。Phase C)", () => {
+  /**
+   * 区画グループ内の壁材が「3 区画以上連続して同一」になる頻度を数える。
+   * グループ内をスロット連番順に並べ、長さ 3 の窓(スライディングウィンドウ)
+   * ごとに「直前 2 区画と同一壁材が連続 3 以上続いている」かを判定する。
+   */
+  function materialRun3Stats(model: WorldModel): {
+    windows: number;
+    run3plus: number;
+  } {
+    const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+    const byGroup = new Map<string, { slot: number; wall: string }[]>();
+    for (const b of general(model)) {
+      if (!b.parcelId) continue;
+      const parcel = parcelById.get(b.parcelId);
+      if (!parcel || !parcel.groupId) continue;
+      const slot = Number(parcel.id.slice(parcel.id.lastIndexOf("/") + 1));
+      let arr = byGroup.get(parcel.groupId);
+      if (!arr) {
+        arr = [];
+        byGroup.set(parcel.groupId, arr);
+      }
+      arr.push({ slot, wall: b.materials.wall });
+    }
+    let windows = 0;
+    let run3plus = 0;
+    for (const arr of byGroup.values()) {
+      if (arr.length < 3) continue;
+      arr.sort((a, b) => a.slot - b.slot);
+      let runLen = 1;
+      for (let i = 1; i < arr.length; i++) {
+        runLen = arr[i]?.wall === arr[i - 1]?.wall ? runLen + 1 : 1;
+        if (runLen >= 3) run3plus++;
+      }
+      windows += arr.length - 2;
+    }
+    return { windows, run3plus };
+  }
+
+  it("同一壁材が 3 連続する頻度が、変調なし(実測固定値)より有意に低い", () => {
+    // Settlement 100(固定 seed 3 本)での実測値。決定論的なので固定して比較する
+    // (計画書 C3「同型抑制の統計検証」)。同一コードで序数変調
+    // (MATERIAL_PARITY_WAVE)を 0 に戻すと windows=191 / run3plus=29
+    // (rate 0.152)になることを一時確認済み。変調ありの実測は以下のとおり
+    // 有意に下回る。
+    let windows = 0;
+    let run3plus = 0;
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 100 });
+      const stats = materialRun3Stats(model);
+      windows += stats.windows;
+      run3plus += stats.run3plus;
+    }
+    expect(windows).toBeGreaterThan(0);
+    // 変調なしの実測 rate 0.152(29/191)を明確に下回ることを固定閾値で検証
+    expect(run3plus / windows).toBeLessThan(0.12);
   });
 });
 
