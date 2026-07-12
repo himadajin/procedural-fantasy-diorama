@@ -475,6 +475,14 @@ export interface WorldModel {
   ground: Ground;
   water: Water;
   density: Density;
+  /**
+   * ゾーニング場(市街度 urbanity。0〜1)。段7「一次密度場」が
+   * density.primary と同じタイミングで算出し書き込む(それまで null)。
+   * 契約の正は contracts/network-plaza.md「Density 節 zoning」。
+   * 消費者は Phase D(施設)と段5(streets.ts)の市街限定成長(参照式は
+   * streets.ts のコメント参照)
+   */
+  zoning: FieldGrid | null;
   network: Network;
   plazas: Plaza[];
   centerPlan: CenterPlan;
@@ -503,6 +511,7 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
       shoreline: { cellSize: 0, loops: [] },
     },
     density: { primary: null, final: null },
+    zoning: null,
     network: { nodes: [], edges: [], entryPoints: [] },
     plazas: [],
     centerPlan: {

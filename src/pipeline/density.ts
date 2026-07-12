@@ -19,7 +19,7 @@ function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
 }
 
-function smoothstep(edge0: number, edge1: number, v: number): number {
+export function smoothstep(edge0: number, edge1: number, v: number): number {
   const t = clamp((v - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
 }
@@ -37,6 +37,17 @@ const ROAD_BOOST_CONNECTOR = 0.2;
 const ROAD_BOOST_STREET = 0.16;
 /** 外縁フェードの幅(marginWidth 比) */
 const EDGE_FADE_RATIO = 0.6;
+/**
+ * urbanity(市街度)正規化の smoothstep 下端(契約の提案値。
+ * network-plaza.md「Density 節 zoning」)。
+ * urbanity = smoothstep(URBANITY_EDGE0, URBANITY_THRESHOLD, protoDensity + 0.5×roadBoost)
+ */
+export const URBANITY_EDGE0 = 0.1;
+/**
+ * urbanity 正規化の smoothstep 上端 = 市街ゾーンの閾値(urbanity ≥ これで
+ * 市街ゾーン、未満は農村ゾーン。契約: 両者は同じ 0.45 という提案値)
+ */
+export const URBANITY_THRESHOLD = 0.45;
 
 interface Segment {
   ax: number;
@@ -161,12 +172,13 @@ export function protoDensityAt(
   return centerTerm * fade;
 }
 
-/** パイプライン段の実体: density.primary を埋める */
+/** パイプライン段の実体: density.primary・model.zoning を埋める */
 export function runDensity(model: WorldModel): void {
   const { derived } = model.meta;
   const size = model.ground.size;
   const cellSize = (size * DENSITY_SPAN_RATIO) / DENSITY_RESOLUTION;
   const grid = createFieldGrid(DENSITY_RESOLUTION, cellSize);
+  const zoningGrid = createFieldGrid(DENSITY_RESOLUTION, cellSize);
   const half = (DENSITY_RESOLUTION * cellSize) / 2;
 
   const decay = createDensityDecay(model);
@@ -179,6 +191,9 @@ export function runDensity(model: WorldModel): void {
       const z = (iz + 0.5) * cellSize - half;
 
       const { centerTerm, fade } = decay(x, z);
+      // fade<=0(外縁の外)では protoDensity(= centerTerm×fade)が 0 になり、
+      // zoning も既定値 0(createFieldGrid の初期値)のまま = 農村ゾーンで
+      // primary(既存仕様)と同じ扱いになるため、continue でよい
       if (fade <= 0) continue;
 
       // 道路近接ブースト(main > connector > street)
@@ -200,10 +215,22 @@ export function runDensity(model: WorldModel): void {
 
       grid.values[fieldCellIndex(grid, ix, iz)] =
         clamp(centerTerm + boost, 0, 1) * fade;
+
+      // ゾーニング場(市街度 urbanity。契約: network-plaza.md「Density 節
+      // zoning」)。protoDensity = centerTerm × fade(道路近接ブーストを
+      // 含まない生値。protoDensityAt と同一式)、roadBoost は上記の boost を
+      // そのまま使う。primary の算出(直上)には一切影響しない
+      const protoDensity = centerTerm * fade;
+      zoningGrid.values[fieldCellIndex(zoningGrid, ix, iz)] = smoothstep(
+        URBANITY_EDGE0,
+        URBANITY_THRESHOLD,
+        protoDensity + 0.5 * boost,
+      );
     }
   }
 
   model.density.primary = grid;
+  model.zoning = zoningGrid;
 
   // パイプライン内アサーション: 違反は throw せず件数を console に出す
   let violations = 0;
