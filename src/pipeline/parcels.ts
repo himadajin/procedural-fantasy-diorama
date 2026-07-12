@@ -287,7 +287,7 @@ function rejectByCollision(
   model: WorldModel,
   ctx: SiteContext,
   rect: CandidateRect,
-  accepted: Parcel[],
+  accepted: AcceptedParcel[],
 ): boolean {
   const { derived } = model.meta;
 
@@ -356,7 +356,7 @@ function rejectByCollision(
   }
   // (6) 既採択の区画
   for (const other of accepted) {
-    const ob = polygonBounds(other.polygon);
+    const ob = polygonBounds(other.parcel.polygon);
     if (
       ob.minX > rectB.maxX ||
       ob.maxX < rectB.minX ||
@@ -365,9 +365,77 @@ function rejectByCollision(
     ) {
       continue;
     }
-    if (polygonsOverlap(rect.polygon, other.polygon)) return true;
+    if (polygonsOverlap(rect.polygon, other.parcel.polygon)) return true;
   }
   return false;
+}
+
+/**
+ * 採択済み区画(groupId 抜き)+run 検出に要るスロット情報。
+ * `id` に既に埋め込まれているスロット連番を、run 検出用に別途保持する
+ * (id のパースに依存させない)。
+ */
+interface AcceptedParcel {
+  parcel: Omit<Parcel, "groupId">;
+  side: "L" | "R";
+  slot: number;
+}
+
+/**
+ * 区画グループ(`Parcel.groupId`)の決定論的な後処理(契約:
+ * 「区画グループとクラスタパターン」節)。
+ *
+ * 同一 `roadEdgeId`・同一側(L/R)で、スロット連番が連続して採択された
+ * 区画の並び(run)を 1 グループとする。棄却された候補もスロット連番を
+ * 消費するが、連続判定は「採択済みどうしの隣接スロット」のみで行う
+ * (棄却で欠番になった箇所は run を分断する)。前後が非採択の孤立区画も
+ * 長さ 1 の run になる。乱数は消費しない。区画の採択・位置・数・順序は
+ * 一切変えない(groupId を書き加えるだけ)。
+ */
+function assignGroupIds(entries: AcceptedParcel[]): Parcel[] {
+  // 同一 edge・同一側ごとにグルーピング(挿入順は元の採択順のまま)
+  const buckets = new Map<string, AcceptedParcel[]>();
+  for (const entry of entries) {
+    const key = `${entry.parcel.roadEdgeId}/${entry.side}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
+    }
+    bucket.push(entry);
+  }
+
+  const groupIdByParcelId = new Map<string, string>();
+  for (const [key, bucket] of buckets) {
+    // スロット連番順に並べる(採択順で既に昇順のはずだが、run 検出の
+    // 前提を id パース非依存で保証するため明示的にソートする)
+    bucket.sort((a, b) => a.slot - b.slot);
+    let runIndex = 0;
+    let runStart = 0;
+    for (let i = 0; i < bucket.length; i++) {
+      const isLast = i === bucket.length - 1;
+      const currentEntry = bucket[i];
+      const nextEntry = isLast ? undefined : bucket[i + 1];
+      const continuesRun =
+        nextEntry !== undefined &&
+        currentEntry !== undefined &&
+        nextEntry.slot === currentEntry.slot + 1;
+      if (!continuesRun) {
+        const groupId = `block/${key}/${runIndex}`;
+        for (let j = runStart; j <= i; j++) {
+          const member = bucket[j];
+          if (member) groupIdByParcelId.set(member.parcel.id, groupId);
+        }
+        runIndex++;
+        runStart = i + 1;
+      }
+    }
+  }
+
+  return entries.map((entry) => ({
+    ...entry.parcel,
+    groupId: groupIdByParcelId.get(entry.parcel.id) ?? "",
+  }));
 }
 
 /** パイプライン段の実体: density.final と parcels を埋める */
@@ -388,7 +456,7 @@ export function runParcels(model: WorldModel): void {
   // --- 区画分割 ---
   const ctx = createSiteContext(model);
   const shore = collectShorePoints(model);
-  const accepted: Parcel[] = [];
+  const accepted: AcceptedParcel[] = [];
   let capReached = false;
 
   for (const edge of model.network.edges) {
@@ -479,13 +547,17 @@ export function runParcels(model: WorldModel): void {
         }
 
         accepted.push({
-          id,
-          roadEdgeId: edge.id,
-          polygon: rect.polygon,
-          frontEdge: rect.frontEdge,
-          facing: rect.facing,
-          waterside,
-          canalside,
+          parcel: {
+            id,
+            roadEdgeId: edge.id,
+            polygon: rect.polygon,
+            frontEdge: rect.frontEdge,
+            facing: rect.facing,
+            waterside,
+            canalside,
+          },
+          side: side === 1 ? "L" : "R",
+          slot,
         });
         if (accepted.length >= derived.parcelCountMax) capReached = true;
       }
@@ -494,12 +566,14 @@ export function runParcels(model: WorldModel): void {
     }
   }
 
-  model.parcels = accepted;
+  // --- 区画グループ(groupId)の付与(乱数非消費・決定論的後処理) ---
+  const finalParcels = assignGroupIds(accepted);
+  model.parcels = finalParcels;
 
   // --- パイプライン内アサーション(throw せず件数を console に出す) ---
   // 接道保証: frontEdge 中点から接道 edge への距離 ≤ width/2 + 2.0
   const edgeById = new Map(model.network.edges.map((e) => [e.id, e]));
-  for (const parcel of accepted) {
+  for (const parcel of finalParcels) {
     const edge = edgeById.get(parcel.roadEdgeId);
     if (!edge) {
       violations++;
@@ -511,13 +585,43 @@ export function runParcels(model: WorldModel): void {
       violations++;
     }
   }
+  // groupId の整合(全区画が付与済み・形式・同一グループ内は同一 edge・
+  // 同一側かつスロット連番が連続)
+  const GROUP_ID_RE = /^block\/(.+)\/(L|R)\/(\d+)$/;
+  const groupSlots = new Map<string, number[]>();
+  for (let i = 0; i < finalParcels.length; i++) {
+    const parcel = finalParcels[i];
+    const meta = accepted[i];
+    if (!parcel || !meta) continue;
+    const m = GROUP_ID_RE.exec(parcel.groupId);
+    if (!m || m[1] !== parcel.roadEdgeId || m[2] !== meta.side) {
+      violations++;
+      continue;
+    }
+    let slots = groupSlots.get(parcel.groupId);
+    if (!slots) {
+      slots = [];
+      groupSlots.set(parcel.groupId, slots);
+    }
+    slots.push(meta.slot);
+  }
+  for (const slots of groupSlots.values()) {
+    slots.sort((a, b) => a - b);
+    for (let i = 1; i < slots.length; i++) {
+      const prev = slots[i - 1];
+      const cur = slots[i];
+      if (prev === undefined || cur === undefined || cur !== prev + 1) {
+        violations++;
+      }
+    }
+  }
   // 既存区画との重なりゼロ(構成上ゼロのはず。再検査)
-  for (let i = 0; i < accepted.length; i++) {
-    const a = accepted[i];
+  for (let i = 0; i < finalParcels.length; i++) {
+    const a = finalParcels[i];
     if (!a) continue;
     const ab = polygonBounds(a.polygon);
-    for (let j = i + 1; j < accepted.length; j++) {
-      const b = accepted[j];
+    for (let j = i + 1; j < finalParcels.length; j++) {
+      const b = finalParcels[j];
       if (!b) continue;
       const bb = polygonBounds(b.polygon);
       if (
@@ -532,7 +636,7 @@ export function runParcels(model: WorldModel): void {
     }
   }
   // 上限・密度場の整合
-  if (accepted.length > derived.parcelCountMax) violations++;
+  if (finalParcels.length > derived.parcelCountMax) violations++;
   const primary = model.density.primary;
   if (primary) {
     for (let i = 0; i < final.values.length; i++) {

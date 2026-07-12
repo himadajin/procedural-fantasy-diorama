@@ -270,15 +270,37 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    9bdacd9a → c9345f90
   //   seed-b {}                    32764980 → d7f9a3ee
   //   seed-b {water:70}            88009bca → c0c7c687
+  //
+  // 計画書 2026-07-12-worldgen-rework-layout.md タスク C2 で更新。意図した変更:
+  // `Parcel.groupId`("block/<roadEdgeId>/<L|R>/<runIndex>")を新設した
+  // (contracts/buildings.md「区画グループとクラスタパターン」)。同一
+  // roadEdgeId・同一側(L/R)でスロット連番が連続して採択された区画の並び
+  // (run)を、採択済み区画からの決定論的な後処理で検出して付与する
+  // (parcels.ts assignGroupIds)。乱数は消費せず、区画の採択・位置・数・
+  // 順序も一切変えない(4 seed × 3 param 組で groupId を除いた区画列が
+  // 変更前とビット同一であることを一時比較で確認済み)。groupId は
+  // WorldModel 直下の Parcel の新規フィールドであり正規化ハッシュの
+  // 直列化対象に加わるため、区画が1件でも存在する組はすべてハッシュが変わる
+  // (フィールドの追加自体が構造差になるため)。本表の全 8 組は区画を持つため
+  // 全組が変わる。
+  // 新旧対応(B6/B7 → C2):
+  //   everdusk-101 {}              d92da4fc → dc90e334
+  //   everdusk-101 {water:0}       50e1727f → 601ffc8c
+  //   everdusk-101 {water:95}      2bff0d52 → 4d4da11e
+  //   everdusk-101 {worldScale:0}  c016779e → 7ac593d7
+  //   everdusk-101 {worldScale:100} 5ad9fb39 → 4d2444f6
+  //   seed-a {}                    c9345f90 → 8b072991
+  //   seed-b {}                    d7f9a3ee → 223287ea
+  //   seed-b {water:70}            c0c7c687 → 55c73d2d
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "d92da4fc"],
-    ["everdusk-101", { water: 0 }, "50e1727f"],
-    ["everdusk-101", { water: 95 }, "2bff0d52"],
-    ["everdusk-101", { worldScale: 0 }, "c016779e"],
-    ["everdusk-101", { worldScale: 100 }, "5ad9fb39"],
-    ["seed-a", {}, "c9345f90"],
-    ["seed-b", {}, "d7f9a3ee"],
-    ["seed-b", { water: 70 }, "c0c7c687"],
+    ["everdusk-101", {}, "dc90e334"],
+    ["everdusk-101", { water: 0 }, "601ffc8c"],
+    ["everdusk-101", { water: 95 }, "4d4da11e"],
+    ["everdusk-101", { worldScale: 0 }, "7ac593d7"],
+    ["everdusk-101", { worldScale: 100 }, "4d2444f6"],
+    ["seed-a", {}, "8b072991"],
+    ["seed-b", {}, "223287ea"],
+    ["seed-b", { water: 70 }, "55c73d2d"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
