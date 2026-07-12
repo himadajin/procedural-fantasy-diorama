@@ -190,9 +190,11 @@ interface Network {
   (袋小路ではなくループを作るのが主経路)。以下に当たる成長は停止する:
   水域(waterSdf < 幅/2 + 1)、境界マージン、`centerPlan.footprint`
   +予約領域、下記形状健全性 4 項への抵触
-- **予算**: `derived.streetBudget = worldSize × (0.5 + 2.2×settle) ×
-  (0.55 + 0.9×scale)`(worldmodel-core.md「Derived」が正)。成長した
-  street の総弧長がこの予算を超えたら成長を終了する
+- **予算**: `derived.streetBudget = worldSize × (0.35 + 2.35×settle) ×
+  (0.55 + 0.9×scale)`(worldmodel-core.md「Derived」が正。Phase B(B6)で
+  Settlement=0 の基礎係数を 0.5→0.35 へ引き下げ、寒村の街路過多を是正
+  した提案値。B7 検収で再調整しうる)。成長した street の総弧長がこの
+  予算を超えたら成長を終了する
 - **形状健全性(4 項。A7 の教訓により最初から契約化する)**:
   1. 交差角の下限: 新しい交差(スナップ接続を含む)の最小交差角 ≥ 30°。
   2. 並走間隔の下限: 既存道路(全 class)と 10 未満の距離で 16 以上

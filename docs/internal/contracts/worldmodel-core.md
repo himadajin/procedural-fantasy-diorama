@@ -103,7 +103,9 @@ interface Derived {
                             // 2〜4 から拡張。= clamp(round(2 + 2.8×scale + entryJitter), 2, 5))
   roadBudget: number;        // 道路網の総延長予算(実寸)。worldSize × 2.2〜4.0
   marginWidth: number;       // 外縁余白(森・草地帯)の厚み。18〜48
-  parcelCountMax: number;    // 区画数の上限。60〜260(整数)
+  parcelCountMax: number;    // 区画数の上限。60〜340(整数)。Phase B(B6)で
+                            // Settlement 連動を追加(提案値。B7 検収で再調整しうる)。
+                            // = round(60 + 200×scale + 80×settle)
 
   // --- Settlement Pressure 駆動 ---
   densityPeak: number;       // 密度場の中心ピーク値。0.55〜1.0
@@ -112,10 +114,13 @@ interface Derived {
   parcelSize: number;        // 平均敷地間口。16〜7(高いほど狭小・高密)
   laneAmount: number;        // 小道(建物間の細い道)の生成量。0〜1
   floorsBias: number;        // 建物の平均階数への弱い正の寄与。0〜0.6
-  streetBudget: number;      // 二次街路(street)の総弧長予算(実寸)。Phase B(提案値)。
-                            // = worldSize × (0.5 + 2.2×settle) × (0.55 + 0.9×scale)。
+  streetBudget: number;      // 二次街路(street)の総弧長予算(実寸)。Phase B(提案値。
+                            // B7 検収で再調整しうる)。
+                            // = worldSize × (0.35 + 2.35×settle) × (0.55 + 0.9×scale)。
                             // Settlement Pressure の主駆動先(worldSize/scale にも連動する
-                            // 複合式)。network-plaza.md「二次街路(street)の有機成長」参照
+                            // 複合式)。B6 で Settlement=0 の基礎係数を 0.5→0.35 へ
+                            // 引き下げ(寒村の街路過多を是正。Settlement=100 側は
+                            // 2.7 で不変)。network-plaza.md「二次街路(street)の有機成長」参照
 
   // --- Prosperity 駆動 ---
   wallTier: number;          // 壁材の階層(掘立→木組み漆喰→石造→切石)。0〜3 連続
