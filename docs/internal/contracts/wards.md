@@ -58,12 +58,11 @@ interface Wards {
   (Phase B。`"street"` / `"lane"` には門を開かない — 門は幹線格の道に
   限る。結界環が street・lane と交差しても門は生成せず、その交点は壁の
   接地検証からも除外しない=当たる区間はそのまま "wall" として扱う。
-  実装はタスク B3 で `pipeline/wards.ts` の門スナップ対象を main/connector
-  へ限定する形で追いつく。それまでコードは street が存在しないため
-  実質的な差分は無い)。道路側の補正は門位置の点を edge.path へ挿入する
-  局所スナップのみで、道路の大規模な引き直しはしない。よって「結界環を
-  横切る main / connector は必ず門位置を通る」(門位置と edge.path の
-  距離は 0)。wardLevel 1 では gates は空(壁が無く、境界標の列は道を
+  タスク B3 で `pipeline/wards.ts` の門スナップ対象を main/connector
+  へ限定する形で実装済み(2026-07-12))。道路側の補正は門位置の点を
+  edge.path へ挿入する局所スナップのみで、道路の大規模な引き直しはしない。
+  よって「結界環を横切る main / connector は必ず門位置を通る」(門位置と
+  edge.path の距離は 0)。wardLevel 1 では gates は空(壁が無く、境界標の列は道を
   遮らない)。gate の直近の ringSegments は門開口の "gap" になる
 - `towers` は wardLevel ≥ 2。結界環上の屈曲点を優先し、間隔規則
   (towerScale 駆動の目標本数と最小弧間隔)と水辺・門・橋詰めへの近接で
