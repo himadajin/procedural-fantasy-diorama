@@ -60,7 +60,15 @@ export const PARALLEL_DIST = 10;
 export const PARALLEL_RUN_MAX = 16;
 /** 3) 袋小路率の上限 */
 export const DEAD_END_RATIO_MAX = 0.35;
-/** 市街限定の proto-density 閾値(契約の提案値) */
+/**
+ * 市街限定の proto-density 閾値(契約の提案値)。段5(本ファイル)は段7
+ * (density.ts の model.zoning)より前に走るため roadBoost を持たず、
+ * urbanity(0〜1 正規化後。閾値 0.45)ではなく protoDensity の生値のみで
+ * 市街限定を判定する。0.22(protoDensity)と 0.45(urbanity)は
+ * スケールが異なる 2 つの数値だが同一の意図(市街限定)の 2 つの表現であり、
+ * B7 の検収で同時に調整する(contracts/network-plaza.md「Density 節
+ * zoning」の対応関係の注記)
+ */
 export const PROTO_THRESHOLD = 0.22;
 /** 境界マージン(実装上の選択。lanes.ts 等の桁感に合わせた提案値) */
 const BOUNDARY_CLEAR = 4;

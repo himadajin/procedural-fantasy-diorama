@@ -224,15 +224,35 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    d4b53d5c → b7522aab
   //   seed-b {}                    439327ba → dfffb83c
   //   seed-b {water:70}            13b94626 → 80c34214
+  // 計画書 2026-07-12-worldgen-rework-roads.md タスク B5 で更新。意図した変更:
+  // `model.zoning`(市街度 urbanity。0〜1 の 64² FieldGrid)を新設し、段7
+  // 「一次密度場」(density.ts の runDensity)が density.primary と同じ走査で
+  // 算出・書き込むようにした(contracts/network-plaza.md「Density 節
+  // zoning」)。urbanity = smoothstep(0.10, 0.45, protoDensity + 0.5×roadBoost)
+  // で、protoDensity・roadBoost は density.primary の算出に使う既存の値
+  // (centerTerm×fade・道路近接ブースト)をそのまま流用する(乱数非消費・
+  // density.primary はビット同一のまま)。zoning は WorldModel 直下の新規
+  // フィールドであり正規化ハッシュの直列化対象に加わるため、値そのものが
+  // 変わらない worldScale=0 の組を含む全 8 組でハッシュが変わる
+  // (フィールドの追加自体が構造差になるため)。
+  // 新旧対応(B4 → B5):
+  //   everdusk-101 {}              beb17b57 → 1899b2b0
+  //   everdusk-101 {water:0}       755240c1 → 3519feb0
+  //   everdusk-101 {water:95}      9a80742e → d445ceb0
+  //   everdusk-101 {worldScale:0}  b42d2dc4 → 6ff6fe5d
+  //   everdusk-101 {worldScale:100} 6511a826 → 214d49fe
+  //   seed-a {}                    b7522aab → 9bdacd9a
+  //   seed-b {}                    dfffb83c → 32764980
+  //   seed-b {water:70}            80c34214 → 88009bca
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "beb17b57"],
-    ["everdusk-101", { water: 0 }, "755240c1"],
-    ["everdusk-101", { water: 95 }, "9a80742e"],
-    ["everdusk-101", { worldScale: 0 }, "b42d2dc4"],
-    ["everdusk-101", { worldScale: 100 }, "6511a826"],
-    ["seed-a", {}, "b7522aab"],
-    ["seed-b", {}, "dfffb83c"],
-    ["seed-b", { water: 70 }, "80c34214"],
+    ["everdusk-101", {}, "1899b2b0"],
+    ["everdusk-101", { water: 0 }, "3519feb0"],
+    ["everdusk-101", { water: 95 }, "d445ceb0"],
+    ["everdusk-101", { worldScale: 0 }, "6ff6fe5d"],
+    ["everdusk-101", { worldScale: 100 }, "214d49fe"],
+    ["seed-a", {}, "9bdacd9a"],
+    ["seed-b", {}, "32764980"],
+    ["seed-b", { water: 70 }, "88009bca"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
