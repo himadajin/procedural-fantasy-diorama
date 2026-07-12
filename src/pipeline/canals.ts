@@ -167,6 +167,9 @@ function mainRoadGaps(model: WorldModel): { mid: number; width: number }[] {
   const c = model.centerPlan.position;
   const dirs: number[] = [];
   for (const edge of model.network.edges) {
+    // main(進入点→中心)のみを対象とする(Phase B: street 追加後も、中心に
+    // 直結する道路は構成上 main のみのため実質差分は無いが、明示しておく)
+    if (edge.class !== "main") continue;
     const path = edge.path;
     if (path.length < 2) continue;
     const head = path[0];

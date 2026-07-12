@@ -22,6 +22,7 @@ import type { RoadClass, Vec2, WorldModel } from "../model/worldmodel";
 import { createWaterField, waterBodies, type WaterField } from "../model/waterfield";
 import { fbm2D, noiseSeed } from "./noise";
 import { chaikin, pathLength, simplifyPath } from "../model/geometry";
+import { growStreets, verifyStreetShapeHealth, type StreetGrowthDiagnostics } from "./streets";
 
 /** 経路探索グリッドの一辺セル数の下限・上限(spec 9節: 解像度の上限クリップ) */
 const GRID_MIN = 56;
@@ -277,8 +278,16 @@ interface RoadEdge {
   grade: number;
 }
 
-/** パイプライン段の実体: network.nodes/edges を埋める(道路(段5)は湖・池を渡らないため water.bridges は触らない) */
-export function runNetwork(model: WorldModel): void {
+/**
+ * パイプライン段の実体: network.nodes/edges を埋める(道路(段5)は湖・池を
+ * 渡らないため water.bridges は触らない)。
+ * `streetDiagnosticsOut` は任意(テスト・検収がstreetの継続ペア情報を
+ * 取り出すためのフック。省略時は内部で使い捨てる)。
+ */
+export function runNetwork(
+  model: WorldModel,
+  streetDiagnosticsOut?: StreetGrowthDiagnostics,
+): void {
   const { derived } = model.meta;
   const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const g = makeGrid(model.ground.size);
@@ -461,9 +470,17 @@ export function runNetwork(model: WorldModel): void {
   // water.bridges は本段では触らない(道路は湖・池を渡らないため段5 は
   // BridgeSite を抽出しない。橋は段6「水路」と段8「結界計画」由来のみ)
 
-  // サマリー(段13 の担当だが、中間PHASEでは部分的に埋める)
+  // 段5後半サブフェーズ: 幹線から発芽する二次街路(street)を成長させ、
+  // nodes/edges へ追記する(Phase B。contracts/network-plaza.md
+  // 「二次街路(street)の有機成長」)。本段の乱数非消費部分(A*・コスト場)は
+  // 上記まで完了しており、ここから先のみ乱数を消費する
+  const streetDiagnostics = streetDiagnosticsOut ?? { continuationPairs: new Set<string>() };
+  growStreets(model, streetDiagnostics);
+
+  // サマリー(段13 の担当だが、中間PHASEでは部分的に埋める。street 込みの
+  // 総延長にする)
   let roadLength = 0;
-  for (const edge of edges) roadLength += pathLength(edge.path);
+  for (const edge of model.network.edges) roadLength += pathLength(edge.path);
   model.summary.scale.roadLength = roadLength;
 
   // パイプライン内アサーション: 違反は throw せず件数を console に出す
@@ -506,6 +523,23 @@ export function runNetwork(model: WorldModel): void {
   if (assertionViolations > 0) {
     console.warn(
       `network: パイプライン内アサーション違反 ${assertionViolations} 件`,
+    );
+  }
+
+  // 3〜6) 二次街路(street)の形状健全性 4 項(Phase B。契約と同じ閾値を
+  // network.test.ts・B7 検収メトリクスと共有する。A6 の教訓により三者を
+  // 最初から一致させる)。違反は throw せず件数を console に出す
+  const health = verifyStreetShapeHealth(model, streetDiagnostics.continuationPairs);
+  let streetHealthViolations = 0;
+  streetHealthViolations += health.crossAngleViolations;
+  streetHealthViolations += health.parallelViolations;
+  streetHealthViolations += health.unnodedCrossings;
+  if (health.deadEndRatio > 0.35 + 1e-9) streetHealthViolations++;
+  if (streetHealthViolations > 0) {
+    console.warn(
+      `network: street 形状健全性違反 ${streetHealthViolations} 件` +
+        `(交差角=${health.crossAngleViolations} 並走=${health.parallelViolations} ` +
+        `立体交差=${health.unnodedCrossings} 袋小路率=${health.deadEndRatio.toFixed(3)})`,
     );
   }
 }

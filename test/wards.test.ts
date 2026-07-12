@@ -209,8 +209,11 @@ describe("wards: 結界門と道路(局所スナップ)", () => {
             `${gate.id} が道路 path 上にない`,
           ).toBeLessThan(1e-6);
         }
-        // 2) 結界環×道路の全交点の近傍に門がある
+        // 2) 結界環×道路の全交点の近傍に門がある(門スナップ対象は
+        //    main / connector に限定。Phase B。street・lane が結界環を
+        //    横切っても門は生成しない契約のため、検証対象も同じに限る)
         for (const edge of model.network.edges) {
+          if (edge.class !== "main" && edge.class !== "connector") continue;
           for (let i = 0; i + 1 < edge.path.length; i++) {
             const a = edge.path[i];
             const b = edge.path[i + 1];
