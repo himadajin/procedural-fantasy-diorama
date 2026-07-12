@@ -238,6 +238,105 @@ describe("parcels: 敷地の性質(接道・衝突・上限)", () => {
   });
 });
 
+describe("parcels: 区画グループ(groupId。契約「区画グループとクラスタパターン」)", () => {
+  const PARCEL_ID_RE = /^parcel\/(.+)\/(L|R)\/(\d+)$/;
+  const GROUP_ID_RE = /^block\/(.+)\/(L|R)\/(\d+)$/;
+
+  function parseParcelId(id: string): { edgeId: string; side: "L" | "R"; slot: number } {
+    const m = PARCEL_ID_RE.exec(id);
+    if (!m) throw new Error(`unexpected parcel id: ${id}`);
+    const edgeId = m[1];
+    const side = m[2];
+    const slot = m[3];
+    if (edgeId === undefined || (side !== "L" && side !== "R") || slot === undefined) {
+      throw new Error(`unexpected parcel id: ${id}`);
+    }
+    return { edgeId, side, slot: Number(slot) };
+  }
+
+  it("全区画に groupId が付与される", () => {
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 100 });
+      expect(model.parcels.length).toBeGreaterThan(0);
+      for (const parcel of model.parcels) {
+        expect(typeof parcel.groupId).toBe("string");
+        expect(parcel.groupId.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("groupId の形式は block/<roadEdgeId>/<L|R>/<runIndex>", () => {
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 100 });
+      for (const parcel of model.parcels) {
+        const m = GROUP_ID_RE.exec(parcel.groupId);
+        expect(m).not.toBeNull();
+        if (!m) continue;
+        expect(m[1]).toBe(parcel.roadEdgeId);
+      }
+    }
+  });
+
+  it("同一グループ内の区画は同一 edge・同一側かつスロット連番が連続する", () => {
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 100 });
+      const byGroup = new Map<string, typeof model.parcels>();
+      for (const parcel of model.parcels) {
+        let arr = byGroup.get(parcel.groupId);
+        if (!arr) {
+          arr = [];
+          byGroup.set(parcel.groupId, arr);
+        }
+        arr.push(parcel);
+      }
+      expect(byGroup.size).toBeGreaterThan(0);
+      for (const [groupId, members] of byGroup) {
+        const groupMatch = GROUP_ID_RE.exec(groupId);
+        expect(groupMatch).not.toBeNull();
+        if (!groupMatch) continue;
+        const [, groupEdgeId, groupSide] = groupMatch;
+        const slots = members
+          .map((p) => {
+            const parsed = parseParcelId(p.id);
+            // 同一 edge・同一側であること
+            expect(parsed.edgeId).toBe(groupEdgeId);
+            expect(parsed.side).toBe(groupSide);
+            expect(p.roadEdgeId).toBe(groupEdgeId);
+            return parsed.slot;
+          })
+          .sort((a, b) => a - b);
+        // スロット連番が連続すること(欠番なし)
+        for (let i = 1; i < slots.length; i++) {
+          expect(slots[i]).toBe((slots[i - 1] ?? 0) + 1);
+        }
+      }
+    }
+  });
+
+  it("孤立区画(前後が非採択)は長さ1のグループになる", () => {
+    let foundSingleton = false;
+    for (const seed of SEEDS) {
+      const model = cached(seed);
+      const counts = new Map<string, number>();
+      for (const parcel of model.parcels) {
+        counts.set(parcel.groupId, (counts.get(parcel.groupId) ?? 0) + 1);
+      }
+      for (const count of counts.values()) {
+        if (count === 1) foundSingleton = true;
+      }
+    }
+    expect(foundSingleton).toBe(true);
+  });
+
+  it("決定性: 同一 seed + params で groupId を含む parcels が完全一致する", () => {
+    for (const seed of SEEDS) {
+      const a = build(seed, { settlement: 100 });
+      const b = build(seed, { settlement: 100 });
+      expect(JSON.stringify(a.parcels)).toBe(JSON.stringify(b.parcels));
+    }
+  });
+});
+
 describe("parcels: 岸線占有率 40% 上限(契約の測り方)", () => {
   const OCCUPY_DIST = 6;
   const CAP = 0.4;

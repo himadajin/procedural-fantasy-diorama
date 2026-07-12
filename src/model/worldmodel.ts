@@ -370,6 +370,12 @@ export interface Parcel {
   waterside: boolean;
   /** 水路沿い(同) */
   canalside: boolean;
+  /**
+   * "block/<roadEdgeId>/<L|R>/<runIndex>"。区画グループ
+   * (同一 edge・同一側でスロット連番が連続する採択区画の並び。Phase C。
+   * contracts/buildings.md「区画グループとクラスタパターン」)
+   */
+  groupId: string;
 }
 
 export type BuildingRole =
