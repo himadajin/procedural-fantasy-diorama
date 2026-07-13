@@ -501,25 +501,48 @@ export type ClusterPattern = "single" | "rowhouse" | "courtyard" | "stagger";
 /** グループ長の条件(契約の表) */
 const ROWHOUSE_MIN_LEN = 3;
 const COURTYARD_MIN_LEN = 3;
-const COURTYARD_MAX_LEN = 5;
+/**
+ * 中庭型条件「グループ長」上限(契約の表。2026-07-13 追補。計画書
+ * `plans/2026-07-13-worldgen-rework-tuning.md` タスク T2)。旧値 5 は
+ * C7 実測(中庭当選 18/54 条件)で希少すぎたため 6 へ緩和した。
+ */
+const COURTYARD_MAX_LEN = 6;
 const STAGGER_MIN_LEN = 2;
 /** 連棟条件: urbanity 下限(契約の表) */
 const ROWHOUSE_URBANITY_MIN = 0.6;
 /**
  * 中庭型条件「奥行き余裕あり」(契約の表)= グループ内の最小 usableD
  * (前面・背面セットバック控除後の可住奥行き。既定 frontSetback=0.5 で評価)
- * が 6 以上(契約「区画グループとクラスタパターン」節の提案値。
- * C4c / C7 で中庭の実寸と付き合わせて調整しうる)。
+ * が 5 以上(2026-07-13 追補。計画書
+ * `plans/2026-07-13-worldgen-rework-tuning.md` タスク T2)。旧値 6 は
+ * C7 実測で中庭型の当選が希少すぎたため緩和した。降格側(囲いの帯 1.2・
+ * 最小寸法)はこの緩和と無関係のまま変更しない。
  */
-const COURTYARD_DEPTH_MARGIN = 6;
+const COURTYARD_DEPTH_MARGIN = 5;
 
 /** 連棟の採択率(契約の提案値) */
 function rowhouseChance(settle: number): number {
   return clamp(0.2 + 0.6 * settle, 0, 0.75);
 }
-/** 中庭型の採択率(契約の提案値) */
+/**
+ * 中庭型の採択率(2026-07-13〜14 追補。計画書
+ * `plans/2026-07-13-worldgen-rework-tuning.md` 3.2 節+追補)。旧式
+ * `0.12 + 0.28 × prosper` は C7 実測で中庭型の当選が希少すぎたため緩和した。
+ *
+ * この採択率は「囲いの成立見込み」の事前判定
+ * (courtyardEnclosureFeasible。3.2 節追補)とセットで決めた値:
+ * 事前判定なしでは、settle100 の当選グループがほぼ構造的に降格して
+ * 抽選の重みだけを占有し、連棟(中核語彙)の成立を単調に毀損した
+ * (54 条件実測: 連棟成立 C7 基準 184 棟 → 本レートで 146 棟)。
+ * 事前判定の導入後は構造的空振りが消え、本レートでも連棟成立 177 棟
+ * (基準の 96.2% ≥ 完了条件 95%)・中庭成立 29(≥ 22)を満たす。
+ * 事前判定つきの計測で計画書 3.2 節の当初提案値 `0.15+0.35×prosper` は
+ * 中庭成立 22・連棟 181、本レートは中庭成立 29・連棟 177 で、いずれも
+ * 完了条件を満たすが「連棟の制約内で中庭成立を最大化」する本レートを
+ * 採用した(3.2 節追補の指示)。
+ */
 function courtyardChance(prosper: number): number {
-  return 0.12 + 0.28 * prosper;
+  return 0.2 + 0.6 * prosper;
 }
 /** 雁行の採択率(契約の提案値: 上記に外れた残りに 0.45) */
 const STAGGER_CHANCE = 0.45;
@@ -557,6 +580,15 @@ const COURTYARD_WALL_THICKNESS = 0.4;
 /** 中庭として成立させる最小の幅・奥行き(下回れば単棟へフォールバック) */
 const COURTYARD_MIN_WIDTH = 6;
 const COURTYARD_MIN_DEPTH = 2.5;
+/**
+ * 中間メンバーの目標可住奥行き(後退量の逆算式)の下限クランプ。
+ * siteGeometry の usableD 下限・役割別サイズ式の bw/bd 下限(いずれも 2.2)
+ * と同じ「最小の家」の床値。囲いの成立見込みの事前判定
+ * (courtyardEnclosureFeasible)はこのクランプが**かからない**ことを
+ * 適格条件とする(2026-07-14 追補。かかるグループは内側奥行きが
+ * 構造的に COURTYARD_MIN_DEPTH を下回る)。
+ */
+const COURTYARD_MEMBER_USABLE_MIN = 2.2;
 /** 帯制約 (12) を満たすための段階的な縮小の試行回数・1回あたりの縮小量 */
 const COURTYARD_SHRINK_STEPS = 4;
 const COURTYARD_SHRINK_STEP_SIZE = 0.6;
@@ -809,6 +841,38 @@ function courtyardBackLine(members: readonly Parcel[]): number {
   return vBack - COURTYARD_WALL_GAP;
 }
 
+/**
+ * 中庭型の適格条件「囲いの成立見込み」の事前判定(2026-07-14 追補。計画書
+ * `plans/2026-07-13-worldgen-rework-tuning.md` 3.2 節追補。契約
+ * 「区画グループとクラスタパターン」節)。
+ *
+ * グループの区画データのみから(乱数非消費・順序非依存)、囲いの内側
+ * 奥行きが COURTYARD_MIN_DEPTH(2.5)に届く見込みを判定する。判定式は
+ * 中間メンバーの後退量の逆算式(runBuildings の targetUsableD)の
+ * 下限クランプ(COURTYARD_MEMBER_USABLE_MIN = 2.2)が**かからない**こと:
+ * クランプがかからなければ、役割別サイズ式の奥行き上限
+ * (COURTYARD_DEPTH_FRACTION_MAX = 0.95)で建てても plaza 奥行き
+ * (plazaVBack − vFront)がちょうど COURTYARD_MIN_DEPTH 残ることが
+ * 逆算式の構成から保証される。クランプがかかるグループは、後退させても
+ * 建物背面が vBack に寄り切れず、内側奥行きが構造的に 2.5 を下回る
+ * (T2 差し戻しの実測で settle100 の当選グループがほぼ全て
+ * vBack − vFront = 2.3〜2.4 で降格していた構造)。
+ * 等価な閉形式: minUsableD ≥ COURTYARD_MEMBER_USABLE_MIN ×
+ * COURTYARD_DEPTH_FRACTION_MAX + COURTYARD_WALL_INSET +
+ * COURTYARD_MIN_DEPTH + 2 × COURTYARD_WALL_GAP(= 6.59)。
+ */
+function courtyardEnclosureFeasible(members: readonly Parcel[]): boolean {
+  const vBack = courtyardBackLine(members);
+  const targetUsableDUnclamped =
+    (vBack -
+      COURTYARD_WALL_INSET -
+      FRONT_SETBACK -
+      COURTYARD_MIN_DEPTH -
+      COURTYARD_WALL_GAP) /
+    COURTYARD_DEPTH_FRACTION_MAX;
+  return targetUsableDUnclamped >= COURTYARD_MEMBER_USABLE_MIN;
+}
+
 /** グループ内の 1 区画ぶんの配置計画 */
 export interface ParcelLayout {
   /** 抽選で当選したパターン(rowhouse/courtyard は C4b 時点では single 同様に扱う) */
@@ -887,10 +951,13 @@ export function planGroupLayouts(model: WorldModel): Map<string, ParcelLayout> {
       avgUrbanity >= ROWHOUSE_URBANITY_MIN &&
       allHouse &&
       !anyWaterside;
+    // 囲いの成立見込みの事前判定(2026-07-14 追補)は区画データのみから
+    // 決定論的に評価する(courtyardEnclosureFeasible。乱数非消費・順序非依存)
     const courtyardEligible =
       n >= COURTYARD_MIN_LEN &&
       n <= COURTYARD_MAX_LEN &&
-      minUsableD >= COURTYARD_DEPTH_MARGIN;
+      minUsableD >= COURTYARD_DEPTH_MARGIN &&
+      courtyardEnclosureFeasible(members);
     // 3.4 節(14): waterside/canalside を含むグループは雁行の適格から除外する
     const staggerEligible = n >= STAGGER_MIN_LEN && !anyWaterside;
 
@@ -3820,7 +3887,7 @@ export function runBuildings(model: WorldModel): void {
           COURTYARD_MIN_DEPTH -
           COURTYARD_WALL_GAP) /
           COURTYARD_DEPTH_FRACTION_MAX,
-        2.2,
+        COURTYARD_MEMBER_USABLE_MIN,
         naturalUsableD,
       );
       opts = {

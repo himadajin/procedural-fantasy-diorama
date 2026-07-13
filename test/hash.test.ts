@@ -485,14 +485,47 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    782cede1 → 9d5b26ea
   //   seed-b {}                    f2ba3256 → 83000cd2
   //   seed-b {water:70}            3b10d92f → 9f347408
+  //
+  // T2(中庭型の適格緩和。計画書 2026-07-13-worldgen-rework-tuning.md
+  // タスク T2+3.2 節追補。contracts/buildings.md「区画グループとクラスタ
+  // パターン」節)で更新。意図した変更:
+  // (1) 中庭型の適格条件の緩和: グループ長 3〜5→3〜6、minUsableD 6→5。
+  // (2) 適格条件への「囲いの成立見込み」事前判定の追加(3.2 節追補):
+  //     グループの区画データのみから囲いの内側奥行きの見込みを見積もり
+  //     (乱数非消費・順序非依存。式は契約と buildings.ts の
+  //     courtyardEnclosureFeasible)、最小奥行き 2.5 に構造的に届かない
+  //     グループを抽選の候補から外す。事前判定なしでは settle100 の当選が
+  //     ほぼ全て降格の空振りとなり、抽選の重みを占有して連棟の成立を
+  //     毀損していた(54 条件実測: 184→146 棟)。
+  // (3) 採択率 `0.12+0.28×prosper` → `0.20+0.60×prosper`(事前判定と
+  //     セットで、連棟の完了条件(基準の 95%)内で中庭成立を最大化)。
+  // 中庭型の当選・成立が変わるグループが 1 つでも生じる seed×params の
+  // 組はハッシュが変わる(中庭型メンバーは footprint の後退・回転・
+  // courtyard-wall・courtyard Plaza が単棟と異なるため)。降格側(囲いの
+  // 帯 1.2・最小寸法)・雁行/連棟/裏庭の判定基準は無傷(読み替え表どおり)。
+  // 実測(6 seed × Settlement{0,50,100} × Prosperity{0,50,100} の54条件):
+  // 中庭当選 20→37、成立(courtyard Plaza 成立)14→29、降格 8 件
+  // (破綻なし)、連棟成立 184→177 棟(基準の 96.2%)。事前判定による
+  // 除外は 192 グループ(うち settle100 が 183)。完了条件(3.2 節追補:
+  // 中庭成立 ≥22 かつ 連棟成立 ≥ 基準の 95% = 175)を達成。8 組中 4 組は
+  // 該当 seed の乱数列上たまたま中庭型の当選・成立が変わらなかったため不変。
+  // 新旧対応(T1 → T2):
+  //   everdusk-101 {}              9ba7191a → 1bbf4203
+  //   everdusk-101 {water:0}       8333c340 → 012c27e7
+  //   everdusk-101 {water:95}      d22e5515 → d22e5515(不変)
+  //   everdusk-101 {worldScale:0}  aad21a5a → aad21a5a(不変)
+  //   everdusk-101 {worldScale:100} 9202570a → 978ed67e
+  //   seed-a {}                    9d5b26ea → 9d5b26ea(不変)
+  //   seed-b {}                    83000cd2 → b832272a
+  //   seed-b {water:70}            9f347408 → 9f347408(不変)
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "9ba7191a"],
-    ["everdusk-101", { water: 0 }, "8333c340"],
+    ["everdusk-101", {}, "1bbf4203"],
+    ["everdusk-101", { water: 0 }, "012c27e7"],
     ["everdusk-101", { water: 95 }, "d22e5515"],
     ["everdusk-101", { worldScale: 0 }, "aad21a5a"],
-    ["everdusk-101", { worldScale: 100 }, "9202570a"],
+    ["everdusk-101", { worldScale: 100 }, "978ed67e"],
     ["seed-a", {}, "9d5b26ea"],
-    ["seed-b", {}, "83000cd2"],
+    ["seed-b", {}, "b832272a"],
     ["seed-b", { water: 70 }, "9f347408"],
   ];
 
