@@ -2346,8 +2346,14 @@ function expandWaterfrontParts(
 /**
  * 段12「建物」の1区画ぶんの生成に与える配置パラメータ(Phase C)。
  * 乱数は一切消費しない(セットバック・向き・矩形固定の変調のみ)。
+ *
+ * `export`(ギャラリー機能。`../plans/2026-07-14-gallery.md` G1・
+ * `docs/internal/contracts/pipeline.md`「ギャラリー生成エントリ」節): この
+ * 型と `buildParcelBuilding`・`SINGLE_BUILD_OPTIONS` は `pipeline/gallery.ts`
+ * が本番の生成関数として呼ぶために公開する。既存呼び出し(本番ループ・
+ * 中庭型・裏庭の再生成)の挙動は一切変えない。
  */
-interface BuildLayoutOptions {
+export interface BuildLayoutOptions {
   frontSetback: number;
   /** 背面セットバックへの追加分(中庭型グループの全メンバー。契約
    *  「中庭型(courtyard)の性質」実装補足の後退量。グループの奥行き基準線
@@ -2375,9 +2381,24 @@ interface BuildLayoutOptions {
    *  中庭型は後退セットバックの背面帯を共有の中庭として使うため、同じ帯へ
    *  個別の裏庭を重ねると courtyard-wall / courtyard Plaza と衝突する) */
   allowBackyard: boolean;
+  /**
+   * 非 null の場合、`decideRole` の抽選結果を破棄してこの役割へ**置き換える**
+   * (rng 消費は `decideRole` 呼び出しにより通常どおり行われ、結果だけを捨てる。
+   * `forceRectangle`・`sizeOverride` と同じ意味論)。ギャラリー機能
+   * (`../plans/2026-07-14-gallery.md` G1)専用: 対象 id `building/<role>` の
+   * role を確実に反映するための機構。本番ループ(`runBuildings`・
+   * `finalizeCourtyardGroups` 等)は常に `null` を渡し、`decideRole` の抽選を
+   * 一切変えない(契約「ギャラリー生成エントリ」節・G1 実装時の契約追補)。
+   */
+  roleOverride: BuildingRole | null;
 }
 
-const SINGLE_BUILD_OPTIONS: BuildLayoutOptions = {
+/**
+ * 単棟の既定オプション(セットバック・向きとも無変調)。`export`
+ * (ギャラリー機能。`pipeline/gallery.ts` が `buildParcelBuilding` の呼び出しに
+ * `{ ...SINGLE_BUILD_OPTIONS, roleOverride: <role> }` の形で使う)。
+ */
+export const SINGLE_BUILD_OPTIONS: BuildLayoutOptions = {
   frontSetback: FRONT_SETBACK,
   backSetbackExtra: 0,
   forceRectangle: false,
@@ -2385,6 +2406,7 @@ const SINGLE_BUILD_OPTIONS: BuildLayoutOptions = {
   rotatePivot: "centroid",
   sizeOverride: null,
   allowBackyard: true,
+  roleOverride: null,
 };
 
 /** 段12「建物」1棟ぶんの生成結果(骨格・素材・部品込みの Building と、
@@ -2413,8 +2435,13 @@ interface BuiltParcelResult {
  * 常に同一の結果を返す純関数)。中庭型の端建物の内向きスナップ候補生成・
  * 帯制約超過時のグループ全体フォールバック(単棟への再生成)は、この関数を
  * 異なる `opts` で複数回呼び出すことで実現する。
+ *
+ * `export`(ギャラリー機能。`../plans/2026-07-14-gallery.md` G1・
+ * `docs/internal/contracts/pipeline.md`「ギャラリー生成エントリ」節の
+ * 「本番の生成関数のみを呼ぶ制約」): `pipeline/gallery.ts` が対象1体の
+ * 生成に直接呼ぶ本番関数。
  */
-function buildParcelBuilding(
+export function buildParcelBuilding(
   model: WorldModel,
   ctx: SiteContext,
   parcel: Parcel,
@@ -2442,8 +2469,12 @@ function buildParcelBuilding(
     ? sampleFieldGrid(model.zoning, center.x, center.z)
     : 0;
 
-  // --- 役割 ---
-  const role = decideRole(rng, model, parcel, center, density);
+  // --- 役割(ギャラリー機能: opts.roleOverride が非 null なら決定ロジックの
+  //     結果を破棄して置き換える。rng 消費は decideRole 呼び出しにより
+  //     通常どおり行われる。既存呼び出しは常に roleOverride: null のため
+  //     本番のワールド生成の役割決定・消費列は一切変わらない) ---
+  const decidedRole = decideRole(rng, model, parcel, center, density);
+  const role = opts.roleOverride ?? decidedRole;
 
   // --- 寸法と形状 ---
   const widthT = rng.next();
@@ -3054,6 +3085,7 @@ function finalizeCourtyardGroups(
         sizeOverride: { bw: depthReach, bd: rowLength },
         // 中庭型の端建物は裏庭を持たない(契約「裏庭の性質」の中庭型除外)
         allowBackyard: false,
+        roleOverride: null,
       };
       const candidate = buildParcelBuilding(model, ctx, member, candidateOpts);
       if (candidate.role === "waterside") continue;

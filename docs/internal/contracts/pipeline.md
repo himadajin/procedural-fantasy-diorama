@@ -220,6 +220,13 @@ runPipeline(seed: string, params: Params, opts?: {
 (平坦な地面1枚、区画1枚など)だけを直接上書きして合成する。本番の
 パイプライン段(`pipeline/derive` 等、上記「パイプライン段契約」節)を
 順に実行する必要はなく、対象の生成に必要なフィールドの素の合成でよい。
+ただし、段そのものではなく段が内部で使う純関数(`pipeline/derive.ts` の
+`computeDerived` 等)を呼んで `meta.derived` のような必須メタフィールドを
+埋めることは、この規約の範囲内とする(対象生成の本体ではなく極小モデルの
+合成の一部であり、本番の判定式を再実装しないための選択)。同様に、
+出力整形(`summary` フィールドの機械算出)には `pipeline/summary.ts` の
+`runSummary`(乱数非消費・モデル状態からの決定的な集計。段そのものが
+既に「対象生成」を含まない純粋な集計関数)を直接呼んでよい。
 
 **本番の生成関数と `buildWorld` のみを呼ぶ制約(本契約の核心)**:
 合成した極小 WorldModel に対しては、本番の生成関数(一般建物であれば
@@ -230,6 +237,24 @@ runPipeline(seed: string, params: Params, opts?: {
 禁止する(本番の絵と乖離させないため。`../plans/2026-07-14-gallery.md`
 3.1節)。ギャラリー固有のコードは、極小モデルの合成・UI・URL状態の
 範囲に限る。three非依存(上記「モジュール境界規則」に従う)。
+
+**role の強制(2026-07-14 G1 追補)**: 一般建物の役割(`BuildingRole`)は
+`pipeline/buildings.ts` の `decideRole` が広場隣接・橋詰め近接・水辺隣接
+などの乱数抽選込みで決めるため、対象id `building/<role>` の役割を
+入力(seed・区画データ)の合成だけで確実に反映させることはできない
+(例: `warehouse` は `rng.chance(0.6)` に懸かり、対象を選んでも house に
+なる seed があり得る)。このため `buildParcelBuilding` の第4引数
+`BuildLayoutOptions` に `roleOverride: BuildingRole | null` を追加した:
+非 null なら `decideRole` の抽選結果を**乱数消費は通常どおり行ったうえで**
+役割の値だけ置き換える(`forceRectangle`・`sizeOverride` と同じ「抽選消費
+は保つが結果は捨てる」意味論)。本番のワールド生成(`runBuildings` の
+本番ループ・`finalizeCourtyardGroups` 等の既存呼び出し)は常に
+`roleOverride: null` を渡し、`decideRole` の抽選・消費列を一切変えない。
+ギャラリーは `pipeline/gallery.ts` から
+`buildParcelBuilding(model, ctx, parcel, { ...SINGLE_BUILD_OPTIONS, roleOverride: <対象role> })`
+の形で呼ぶ。`buildParcelBuilding`・`BuildLayoutOptions`・
+`SINGLE_BUILD_OPTIONS` は本節の呼び出し元として `pipeline/buildings.ts`
+から `export` する(いずれもギャラリー導入前は非公開だった)。
 
 **出力**: 正規化ハッシュ(上記「WorldModel 正規化ハッシュ」節と同一定義)を
 `summary.hash` へ格納した、本物の WorldModel(極小だが `runPipeline` の
