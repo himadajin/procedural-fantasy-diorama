@@ -36,7 +36,8 @@ const ROOF_IDS = ["thatch", "shingle", "tile", "slate"];
 const TRIM_IDS = ["wood", "stone"];
 const ALL_MATERIAL_IDS = new Set([...WALL_IDS, ...ROOF_IDS, ...TRIM_IDS]);
 /** commit 13 の骨格語彙 + PHASE 4b commit 14 の詳細語彙 +
- *  PHASE 6 commit 19 の水辺拡張語彙(deck) */
+ *  PHASE 6 commit 19 の水辺拡張語彙(deck) +
+ *  Phase C タスク C4c の中庭型語彙(courtyard-wall) */
 const PART_TYPES = new Set([
   "plinth",
   "pile",
@@ -52,13 +53,29 @@ const PART_TYPES = new Set([
   "stair",
   "dormer",
   "deck",
+  "courtyard-wall",
 ]);
-/** 建物本体に付かない部品(敷地前面帯に置かれる。footprint 検査から除く) */
+/** 建物本体に付かない部品(敷地前面帯・中庭型の塀に置かれる。footprint
+ *  検査から除く。courtyard-wall は親区画ではなくグループ帯で検証する
+ *  ため、下記の「部品が footprint から大きくはみ出さない」テストでは
+ *  別扱いにする(契約「中庭型(courtyard)の性質」帯制約 (12)) */
 const SITE_PART_TYPES = new Set(["fence", "stair"]);
+/** グループ帯(1.2)で検証する部品区分(契約 (12): courtyard-wall はグループの
+ *  いずれかのメンバー区画から 1.2 以内であればよい) */
+const GROUP_BAND_PART_TYPES = new Set(["courtyard-wall"]);
 
 /** 水辺拡張部品(commit 19。骨格・詳細の性質検査から契約どおり除く) */
 function isWaterfront(p: Part): boolean {
   return p.params?.waterfront === 1;
+}
+
+/** 裏庭部品(Phase C タスク C6。fence(背面・側面)・shed の wall/gable)。
+ *  骨格の壁体・屋根の型別カウント検査からは除き、footprint 帯検査では
+ *  SITE_PART_TYPES と同じ流儀(親区画 1.2 帯。ただし連棟の共有裏庭に対応する
+ *  ため Building.spanParcelIds の全区画のいずれかから 1.2 以内、へ一般化する。
+ *  契約「裏庭の性質」実装補足) */
+function isBackyard(p: Part): boolean {
+  return p.params?.backyard === 1;
 }
 
 function buildUntilParcels(seed: string, over: Partial<Params> = {}): WorldModel {
@@ -176,8 +193,11 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
       for (const b of general(model)) {
-        // 張り出し部屋の壁体(waterfront)は骨格の翼数検査の対象外(契約)
-        const walls = partsOf(b, "wall").filter((p) => !isWaterfront(p));
+        // 張り出し部屋の壁体(waterfront)・裏庭 shed の壁体(backyard)は
+        // 骨格の翼数検査の対象外(契約)
+        const walls = partsOf(b, "wall").filter(
+          (p) => !isWaterfront(p) && !isBackyard(p),
+        );
         expect(walls.length).toBeGreaterThan(0);
         // 翼数 × 階数(矩形 1 翼、L/T 2 翼)
         expect(walls.length % b.floors).toBe(0);
@@ -204,9 +224,13 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
       for (const b of general(model)) {
-        // 張り出し部屋の小屋根(waterfront)は骨格の屋根数検査の対象外(契約)
+        // 張り出し部屋の小屋根(waterfront)・裏庭 shed の屋根(backyard)は
+        // 骨格の屋根数検査の対象外(契約)
         const roofs = b.parts.filter(
-          (p) => (p.type === "gable" || p.type === "hip") && !isWaterfront(p),
+          (p) =>
+            (p.type === "gable" || p.type === "hip") &&
+            !isWaterfront(p) &&
+            !isBackyard(p),
         );
         // 複合(L/T)は翼ごとの gable、それ以外は 1 部品
         expect(roofs.length).toBe(b.roof.type === "compound" ? 2 : 1);
@@ -265,6 +289,17 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+      // グループ帯の判定用(契約 (12)): groupId → 同一グループの全区画
+      const parcelsByGroup = new Map<string, WorldModel["parcels"]>();
+      for (const p of model.parcels) {
+        if (!p.groupId) continue;
+        let bucket = parcelsByGroup.get(p.groupId);
+        if (!bucket) {
+          bucket = [];
+          parcelsByGroup.set(p.groupId, bucket);
+        }
+        bucket.push(p);
+      }
       for (const b of general(model)) {
         // ジェッティのある建物は上階壁・屋根・開口が張り出しぶんさらに出る
         const limit = b.parts.some((p) => p.type === "jetty") ? 1.2 : 0.9;
@@ -274,6 +309,46 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
           // (契約「水辺建築の拡張」。test/waterfront.test.ts で検証)
           if (isWaterfront(p)) continue;
           for (const c of partCorners(p)) {
+            if (GROUP_BAND_PART_TYPES.has(p.type)) {
+              // 中庭型の塀(courtyard-wall)はグループのいずれかのメンバー
+              // 区画から 1.2 以内であればよい(契約「中庭型(courtyard)の
+              // 性質」帯制約 (12)。SITE_PART_TYPES の親区画 1.2 帯の
+              // 「グループの複数区画」への一般化)
+              expect(parcel?.groupId).toBeDefined();
+              const groupParcels = parcel?.groupId
+                ? parcelsByGroup.get(parcel.groupId)
+                : undefined;
+              expect(groupParcels).toBeDefined();
+              if (groupParcels) {
+                const minDist = Math.min(
+                  ...groupParcels.map((gp) =>
+                    polygonSignedDistance(c.x, c.z, gp.polygon),
+                  ),
+                );
+                expect(minDist).toBeLessThanOrEqual(1.2);
+              }
+              continue;
+            }
+            if (isBackyard(p)) {
+              // 裏庭(fence 背面・側面 / shed の wall・gable)は
+              // Building.spanParcelIds の全区画のいずれかから 1.2 以内で
+              // あればよい(契約「裏庭の性質」実装補足。連棟の共有裏庭は
+              // 列全体に及ぶため、SITE_PART_TYPES の親区画 1.2 帯を
+              // spanParcelIds の複数区画へ一般化したもの。単棟は
+              // spanParcelIds が長さ 1 のため既存と同じ結果になる)
+              expect(b.spanParcelIds.length).toBeGreaterThan(0);
+              const spanParcels = b.spanParcelIds
+                .map((pid) => parcelById.get(pid))
+                .filter((p): p is WorldModel["parcels"][number] => !!p);
+              expect(spanParcels.length).toBe(b.spanParcelIds.length);
+              const minDist = Math.min(
+                ...spanParcels.map((sp) =>
+                  polygonSignedDistance(c.x, c.z, sp.polygon),
+                ),
+              );
+              expect(minDist).toBeLessThanOrEqual(1.2);
+              continue;
+            }
             if (SITE_PART_TYPES.has(p.type)) {
               // 石垣・外階段は footprint の外・敷地前面帯に収まる(契約)
               expect(parcel).toBeDefined();

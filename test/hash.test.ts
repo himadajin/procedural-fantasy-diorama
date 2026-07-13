@@ -270,15 +270,201 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    9bdacd9a → c9345f90
   //   seed-b {}                    32764980 → d7f9a3ee
   //   seed-b {water:70}            88009bca → c0c7c687
+  //
+  // 計画書 2026-07-12-worldgen-rework-layout.md タスク C2 で更新。意図した変更:
+  // `Parcel.groupId`("block/<roadEdgeId>/<L|R>/<runIndex>")を新設した
+  // (contracts/buildings.md「区画グループとクラスタパターン」)。同一
+  // roadEdgeId・同一側(L/R)でスロット連番が連続して採択された区画の並び
+  // (run)を、採択済み区画からの決定論的な後処理で検出して付与する
+  // (parcels.ts assignGroupIds)。乱数は消費せず、区画の採択・位置・数・
+  // 順序も一切変えない(4 seed × 3 param 組で groupId を除いた区画列が
+  // 変更前とビット同一であることを一時比較で確認済み)。groupId は
+  // WorldModel 直下の Parcel の新規フィールドであり正規化ハッシュの
+  // 直列化対象に加わるため、区画が1件でも存在する組はすべてハッシュが変わる
+  // (フィールドの追加自体が構造差になるため)。本表の全 8 組は区画を持つため
+  // 全組が変わる。
+  // 新旧対応(B6/B7 → C2):
+  //   everdusk-101 {}              d92da4fc → dc90e334
+  //   everdusk-101 {water:0}       50e1727f → 601ffc8c
+  //   everdusk-101 {water:95}      2bff0d52 → 4d4da11e
+  //   everdusk-101 {worldScale:0}  c016779e → 7ac593d7
+  //   everdusk-101 {worldScale:100} 5ad9fb39 → 4d2444f6
+  //   seed-a {}                    c9345f90 → 8b072991
+  //   seed-b {}                    d7f9a3ee → 223287ea
+  //   seed-b {water:70}            c0c7c687 → 55c73d2d
+  //
+  // 計画書 2026-07-12-worldgen-rework-layout.md タスク C3 で更新。意図した変更:
+  // (1) サイズ勾配(contracts/buildings.md「floors の改訂」): floors の算出式に
+  //     urbanity 項を追加した(`floorsBase += 1.1 × smoothstep(0.55, 0.9,
+  //     urbanity(建物位置))`。urbanity は `model.zoning` から footprint 手前の
+  //     center 位置でサンプルする、Phase B 導入の既存 FieldGrid)。クランプ
+  //     上限を「urbanity ≥ 0.75 の一般建物のみ 4、それ以外は従来どおり 3」に
+  //     した(中心建築の 1〜5 階は不変)。
+  // (2) 同型連続の抑制(contracts/buildings.md「同型連続の抑制の設計原理」):
+  //     `Parcel.groupId` のハッシュ + parcel.id 由来のスロット連番から決まる
+  //     決定論的な ±1 符号(`layoutParity`。乱数非消費)を導入し、house の
+  //     L 字抽選確率(`0.35 ± 0.25×parity`)・壁材/屋根材の階層添字の揺らぎ
+  //     (`±0.5×parity` を既存 rng ±0.6 揺らぎに加算)・hip 屋根抽選確率
+  //     (`±0.1×parity`)・roof.pitch(`±1.5°×parity`)へ加算した。いずれも
+  //     隣接建物の生成結果は参照しない(位置由来のみ)。
+  // どちらも乱数消費数・消費順は不変(floors の urbanity 項・parity 変調は
+  // すべて既存の乱数値への加算/クランプ対象の変更のみ)。区画が1件でも存在
+  // する組はすべて生成結果(floors・shape・materials・roof)が変わるため、
+  // 全 8 組のハッシュが変わる(water:0 も区画・建物は生成されるため対象)。
+  // オーケストレーター確認(Settlement 100・3 seed): floors[1/2/3/4] の
+  // 棟数分布は概ね 0/0〜3/123〜219/2、4 階はすべて urbanity ≥ 0.75 の位置
+  // (below75floor4 = 0 を機械確認)。壁材 3 連続の頻度(区画グループ内・
+  // スロット順の長さ3窓)は変調前 29/191(rate 0.152)→ 変調後 17/191
+  // (rate 0.089)で明確に低下した。
+  // 新旧対応(C2 → C3):
+  //   everdusk-101 {}              dc90e334 → f7fac9c2
+  //   everdusk-101 {water:0}       601ffc8c → 804d1da0
+  //   everdusk-101 {water:95}      4d4da11e → a24efad4
+  //   everdusk-101 {worldScale:0}  7ac593d7 → 1e6ad8b1
+  //   everdusk-101 {worldScale:100} 4d2444f6 → 7aec297a
+  //   seed-a {}                    8b072991 → c8729c73
+  //   seed-b {}                    223287ea → c645b0dd
+  //   seed-b {water:70}            55c73d2d → f01a5f6f
+  // C4b(グループ抽選と雁行。計画書 2026-07-12-worldgen-rework-layout.md
+  // タスク C4b。contracts/buildings.md「区画グループとクラスタパターン」
+  // 「雁行(stagger)の性質」)で更新。意図した変更:
+  // (1) 段12「建物」の本番ループの前に、区画グループ(`Parcel.groupId`)
+  //     ごとに `makeRng(seed, "layout/<groupId>")` の固定消費でクラスタ
+  //     パターン(rowhouse/courtyard/stagger/single)を 1 つ抽選する
+  //     (`planGroupLayouts`。契約「抽選消費の先行(13)」により rowhouse 当選・
+  //     courtyard 当選も本タスクでは single として扱う=footprint 生成は
+  //     従来どおり単棟のまま変わらない)。新設ストリームの消費が加わるため、
+  //     区画グループが 1 件でも存在する組(=区画が採択される全組)のハッシュが
+  //     変わる。
+  // (2) 雁行(stagger)当選グループの各建物に、グループ内序数のパリティで
+  //     前面セットバック 0.5 / 2.0 を交互に与え(`frontSetback`)、footprint
+  //     重心まわりの向き揺らぎを従来のランダム揺らぎ(rng 消費値は捨てるが
+  //     消費自体は行い、消費順・消費数は不変)から決定論的な ±4°(頂点変位は
+  //     従来と同じ shiftCap で安全側にクランプ)へ置き換えた
+  //     (waterside/canalside 区画を含むグループは雁行の適格から除外。
+  //     契約 3.4 節(14))。
+  // (3) 連棟の適格判定(役割が house 系に揃うか)のため、`planGroupLayouts`
+  //     内で `"building/<id>"` と同一ラベルの使い捨て rng インスタンスで
+  //     `decideRole` を先読みする。同一ラベルの新規 `makeRng` は独立した
+  //     状態を持つ純関数のため、本番ループの `"building/<id>"` ストリームの
+  //     消費列には影響しない。
+  // いずれも乱数消費順・消費数は「building/<id>」「parcel/<id>」の既存
+  // ストリームでは不変(新設の `"layout/<groupId>"` ストリームの消費のみ
+  // 追加)。全 8 組のハッシュが変わる(区画が生成される全組が対象)。
+  // 実装時スイープで確認: 4 seed(既定 SEEDS + 追加 seed)× Settlement
+  // {50,100} × Prosperity{50,100} のスイープで、雁行(stagger)当選グループが
+  // 各条件で複数出現し、当選グループ内でセットバックが交互(統計的に
+  // 有意な差)になることを確認済み(詳細は本タスクの実装報告を参照)。
+  // 新旧対応(C3 → C4b):
+  //   everdusk-101 {}              f7fac9c2 → 1a247577
+  //   everdusk-101 {water:0}       804d1da0 → 49094d75
+  //   everdusk-101 {water:95}      a24efad4 → 3eec1d88
+  //   everdusk-101 {worldScale:0}  1e6ad8b1 → 363fcd8e
+  //   everdusk-101 {worldScale:100} 7aec297a → 0dad2c84
+  //   seed-a {}                    c8729c73 → e8e1b942
+  //   seed-b {}                    c645b0dd → f9e003fe
+  //   seed-b {water:70}            f01a5f6f → f99be753
+  // C4c(中庭型: 回転・塀・courtyard Plaza。計画書
+  // 2026-07-12-worldgen-rework-layout.md タスク C4c。
+  // contracts/buildings.md「中庭型(courtyard)の性質」「建物部品の性質」)で
+  // 更新。意図した変更:
+  // (1) 中庭型(courtyard)当選グループ(C4b までは単棟同様に扱っていた)を
+  //     実際に組む: 全メンバーの背面セットバックを後退させ(区画の素の
+  //     可住奥行きから決定論的に算出した目標値。役割別サイズ式自体は
+  //     不変)、footprint を矩形へ固定する(L/T 抽選は行い結果を破棄)。
+  // (2) グループ先頭・末尾の建物を、接道正面セットバック線上の点を軸に
+  //     footprint をちょうど 90° 回転する候補へ差し替える(他の建物・
+  //     道路・広場と衝突する場合、またはその建物の役割が waterside の
+  //     場合はフォールバックして従来の単棟のまま残す)。
+  // (3) 扉は wing0 の 4 外壁面のうち、外向き法線が親区画の facing に
+  //     最も近い面へ置く(`expandDetailParts` の `doorFace` 選択則。
+  //     回転していない建物では常に従来の front 面が選ばれるため、
+  //     「扉の外向き=親区画 facing」の既存検証は無傷)。
+  // (4) グループの区画データ(frontEdge・可住奥行き)と確定済み中間メンバー
+  //     の footprint から塀(courtyard-wall。グループ先頭の建物に帰属)と
+  //     courtyard Plaza(id "plaza/courtyard/<groupId>")の外形を導出し、
+  //     帯制約(グループのいずれかの区画から 1.2 以内)を満たすまで間口
+  //     方向を段階的に縮める。満たせない、または最小寸法(幅 6・奥行き
+  //     2.5)を下回る場合はグループ全体を単棟へフォールバックする。
+  // いずれも乱数は消費しない(セットバック・回転・塀・Plaza の導出は
+  // 区画データと確定済み建物からの決定論的な後処理)。中庭型当選グループが
+  // 1 件でも存在する組はハッシュが変わる: everdusk-101 {}・{water:0}・
+  // {water:95}・{worldScale:100}・seed-a {}・seed-b {water:70} の 6 組が
+  // 該当し、{worldScale:0}(世界が小さく長さ3以上のグループが生じない)と
+  // seed-b {}(中庭型が当選しない)の 2 組は不変(実測で確認済み)。
+  // 新旧対応(C4b → C4c):
+  //   everdusk-101 {}              1a247577 → 0091b572
+  //   everdusk-101 {water:0}       49094d75 → 552f861a
+  //   everdusk-101 {water:95}      3eec1d88 → b1584d11
+  //   everdusk-101 {worldScale:0}  363fcd8e → 363fcd8e(不変)
+  //   everdusk-101 {worldScale:100} 0dad2c84 → 2af12dc2
+  //   seed-a {}                    e8e1b942 → 50591329
+  //   seed-b {}                    f9e003fe → f9e003fe(不変)
+  //   seed-b {water:70}            f99be753 → 5c0653a3
+  // C5(連棟(rowhouse)。計画書 2026-07-12-worldgen-rework-layout.md タスク
+  // C5。contracts/buildings.md「連棟(rowhouse)の性質」)で更新。意図した変更:
+  // (1) `Building.spanParcelIds` を新設した(単棟は長さ 1 = [parcelId]、
+  //     連棟は列の全区画 id。先頭 = parcelId)。WorldModel 直下の Building の
+  //     新規フィールドであり正規化ハッシュの直列化対象に加わるため、建物が
+  //     1 棟でも存在する組はすべてハッシュが変わる(フィールドの追加自体が
+  //     構造差になる。groupId 導入時の C2 と同型)。
+  // (2) 連棟(rowhouse)当選グループ(C4b までは単棟同様に扱っていた)を
+  //     実際に合成する: 本番ループがメンバー全員を単棟として生成した後
+  //     (`"building/<id>"` 系ストリームの消費数・消費順は不変)、
+  //     `finalizeRowhouseGroups` が k 区画を貫く帯状矩形の 1 棟へ差し替える。
+  //     footprint(帯状矩形。列の両端のみ通常の側面セットバック)・壁体・
+  //     連続屋根(単一の gable。妻は両端のみ)は乱数を消費せず区画データと
+  //     確定済み先頭区画の建物(役割・階数・素材・基壇高をそのまま流用)から
+  //     導出する。ファサード(住戸ごとの扉 1・窓列・独立採択の煙突+住戸境界の
+  //     分節縦梁)のみ `"building/<compositeId>/details"` の新規インスタンス
+  //     (先頭区画と同一ラベル。メンバー生成が消費した既存インスタンスとは
+  //     独立)を消費する。成立しない場合(帯状矩形が他の建物・道路・広場と
+  //     衝突、寸法が最小値未満、帯制約 1.2 を満たさない)はメンバーを単棟の
+  //     まま残す(決定論的フォールバック)。
+  // `layout/<groupId>` の抽選(消費数・消費順)は C4b から不変(契約 (13))。
+  // 連棟が 1 件でも成立する組はハッシュが変わる: 実装時スイープ(4 seed ×
+  // Settlement/Prosperity 4 組)で連棟当選 103 グループ中 92 成立(最長スパン
+  // 10 区画、成立棟の住戸合計 410)。建物が 1 棟でも存在する組はすべて (1) の
+  // 影響を受けるため、本表の全 8 組が変わる。
+  // 新旧対応(C4c → C5):
+  //   everdusk-101 {}              0091b572 → 781cc8df
+  //   everdusk-101 {water:0}       552f861a → 79b95e14
+  //   everdusk-101 {water:95}      b1584d11 → 2a409626
+  //   everdusk-101 {worldScale:0}  363fcd8e → 2fde376a
+  //   everdusk-101 {worldScale:100} 2af12dc2 → fcce29e5
+  //   seed-a {}                    50591329 → 8462e141
+  //   seed-b {}                    f9e003fe → 69c3c3a1
+  //   seed-b {water:70}            5c0653a3 → 58715b26
+  // C6(裏庭。計画書 2026-07-12-worldgen-rework-layout.md タスク C6。
+  // contracts/buildings.md「裏庭の性質」)で更新。意図した変更: 段12「建物」
+  // が区画背面の帯(建物背面〜区画背面 ≥ 2.5)へ裏庭(fence 3 本+確率で
+  // shed 1 棟)を追加した。単棟・雁行は `buildParcelBuilding` 内で
+  // `"building/<id>"` ストリーム(骨格)の末尾へ追加消費、連棟の共有裏庭は
+  // `finalizeRowhouseGroups` が既存の `"building/<compositeId>/details"`
+  // ストリームの末尾へ追加消費する(骨格・詳細の既存消費順・消費数は不変。
+  // 中庭型グループは裏庭を持たないため乱数消費なし)。裏庭のある建物は
+  // 1 棟でも `parts` 配列が伸びるため、建物が存在する組はすべてハッシュが
+  // 変わる。実装時スイープ(3 seed × Settlement/Prosperity 5 組)で
+  // 一般建物 1534 棟中 44 棟が裏庭を持ち(うち shed 14 棟)、連棟 71 棟中
+  // 1 棟が共有裏庭を持った(採択率・帯条件は提案値。C7 で調整しうる)。
+  // 新旧対応(C5 → C6):
+  //   everdusk-101 {}              781cc8df → ff09a3b8
+  //   everdusk-101 {water:0}       79b95e14 → be687c4f
+  //   everdusk-101 {water:95}      2a409626 → d49389f3
+  //   everdusk-101 {worldScale:0}  2fde376a → 5bed4eb1
+  //   everdusk-101 {worldScale:100} fcce29e5 → c31ee40c
+  //   seed-a {}                    8462e141 → 782cede1
+  //   seed-b {}                    69c3c3a1 → f2ba3256
+  //   seed-b {water:70}            58715b26 → 3b10d92f
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "d92da4fc"],
-    ["everdusk-101", { water: 0 }, "50e1727f"],
-    ["everdusk-101", { water: 95 }, "2bff0d52"],
-    ["everdusk-101", { worldScale: 0 }, "c016779e"],
-    ["everdusk-101", { worldScale: 100 }, "5ad9fb39"],
-    ["seed-a", {}, "c9345f90"],
-    ["seed-b", {}, "d7f9a3ee"],
-    ["seed-b", { water: 70 }, "c0c7c687"],
+    ["everdusk-101", {}, "ff09a3b8"],
+    ["everdusk-101", { water: 0 }, "be687c4f"],
+    ["everdusk-101", { water: 95 }, "d49389f3"],
+    ["everdusk-101", { worldScale: 0 }, "5bed4eb1"],
+    ["everdusk-101", { worldScale: 100 }, "c31ee40c"],
+    ["seed-a", {}, "782cede1"],
+    ["seed-b", {}, "f2ba3256"],
+    ["seed-b", { water: 70 }, "3b10d92f"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

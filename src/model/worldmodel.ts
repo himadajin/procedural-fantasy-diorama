@@ -370,6 +370,12 @@ export interface Parcel {
   waterside: boolean;
   /** 水路沿い(同) */
   canalside: boolean;
+  /**
+   * "block/<roadEdgeId>/<L|R>/<runIndex>"。区画グループ
+   * (同一 edge・同一側でスロット連番が連続する採択区画の並び。Phase C。
+   * contracts/buildings.md「区画グループとクラスタパターン」)
+   */
+  groupId: string;
 }
 
 export type BuildingRole =
@@ -412,8 +418,16 @@ export interface Foundation {
 export interface Building {
   /** "building/<parcelId の parcel/ 以降>"。区画由来で安定 */
   id: string;
-  /** 中心建築は null(centerPlan に立地。PHASE 5a) */
+  /** 中心建築は null(centerPlan に立地。PHASE 5a)。
+   *  一般建物は主区画(連棟は列の先頭。Phase C) */
   parcelId: string | null;
+  /**
+   * 建物が帰属する全区画 id(先頭 = parcelId)。単棟は長さ 1(= [parcelId])、
+   * 連棟は列の全区画(先頭から順)。中心建築は parcelId が null のため
+   * 長さ 0(Phase C。contracts/buildings.md「連棟(rowhouse)の性質」
+   * 「Parcel / Building」節)
+   */
+  spanParcelIds: string[];
   role: BuildingRole;
   /** 矩形/L字/T字。セットバック込み。時計回り・自己交差なし */
   footprint: Polygon;

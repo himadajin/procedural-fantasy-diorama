@@ -269,6 +269,13 @@ interface Network {
 > 「全広場の道路接続保証」「中心前広場の接続路」「roadConvergenceAngle の
 > street 重み 0」は Phase B の決定であり、タスク B4 で実装済み(2026-07-12)。
 
+> **Phase C 註記**(`plans/2026-07-12-worldgen-rework-layout.md`): 下記
+> `"courtyard"` の記述(「段12「建物」の中心建築展開が中庭壁の内側に
+> 追加する」)は、一般建物の中庭型クラスタも追加主体に加える形へ改訂した
+> (中心建築に限らない)。実装はタスク C4c で追いつく(2026-07-13 の
+> 計画改訂で旧 C4 を分割)。それまでコードは
+> 中心建築のみが `"courtyard"` Plaza を追加する。
+
 ```ts
 interface Plaza {
   id: string;
@@ -286,8 +293,12 @@ interface Plaza {
   回避する。`"gate"` は各結界門の内側(中心側)、`"bridgehead"` は橋の袂
   (中心に近い側を優先。採択は watersideRate 駆動の確率)、`"crossing"` は
   主道どうしの交差ノード(確率的)。`"courtyard"` は段12「建物」の
-  中心建築展開(PHASE 5a)が中庭壁の内側に追加する
-  (Parcel / Building 節「中心建築」)
+  中心建築展開(PHASE 5a)**および**一般建物の中庭型クラスタ(Phase C)が
+  中庭壁の内側に追加する(buildings.md「中心建築」節、および
+  「中庭型(courtyard)の性質」節)。中心建築は `id: "plaza/courtyard"`
+  (グループを持たないため単一)、一般建物の中庭型クラスタは
+  `id: "plaza/courtyard/<groupId>"`(2026-07-13 追補。下記「id は由来から
+  安定」参照)を持ち、id 空間が分離しているため衝突しない
 - `polygon` は `position` 中心の不整形 n 角形(時計回り。radius 基準で
   0.88〜1.0 倍の揺らぎ。頂点は radius の円内)
 - 衝突回避: 採択順(center → gate → bridgehead → crossing)で、既採択
@@ -295,10 +306,16 @@ interface Plaza {
   `centerPlan.footprint`、`ground.boundary` との衝突を検査し、回避
   できない候補は縮小し、それでも収まらなければ棄却する
 - `id` は由来から安定(`"plaza/center"`、`"plaza/gate/<gateId>"`、
-  `"plaza/bridgehead/<bridgeId>"`、`"plaza/crossing/<nodeId>"`)
+  `"plaza/bridgehead/<bridgeId>"`、`"plaza/crossing/<nodeId>"`、
+  `"plaza/courtyard"`(中心建築)、`"plaza/courtyard/<groupId>"`
+  (一般建物の中庭型クラスタ。2026-07-13 追補))
 - **全広場の道路接続保証(Phase B。courtyard を除く)**: `"courtyard"` を
   除く全ての広場は、少なくとも 1 本の道路 edge が広場 `polygon` の
-  周長に接するか、内部を通る。`"gate"`(結界門の内側 = 道路との交点
+  周長に接するか、内部を通る。この除外は `kind: "courtyard"` であること
+  のみを基準とし、追加主体(中心建築か一般建物の中庭型クラスタか)を
+  問わない(2026-07-13 追補: 一般建物の中庭型クラスタが追加する
+  `plaza/courtyard/<groupId>` も、既存の中心建築の `plaza/courtyard` と
+  同様にこの保証の対象外とする)。`"gate"`(結界門の内側 = 道路との交点
   近傍)・`"bridgehead"`(橋の袂 = 道路の終端)・`"crossing"`(主道どうしの
   交差ノード上)は原則として構成上これを満たすが、配置後に接触検証を行い、
   外れた場合はアンカー(`"gate"` は門位置、`"bridgehead"` は橋詰めの

@@ -150,7 +150,7 @@ const COMBOS: [string, Partial<Params>][] = SEEDS.flatMap((seed) => [
 ]);
 
 describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
-  it("全建物が扉をちょうど 1 つ持ち、外向きが親区画の facing と一致し、壁面上にある", () => {
+  it("全建物が扉をちょうど 1 つ持ち、外向きが親区画の facing と一致し、壁面上にある(連棟は住戸(スパン区画)ごとに 1。Phase C タスク C5。契約 (13) 過渡期註記)", () => {
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
@@ -161,6 +161,27 @@ describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
         const doors = partsOf(b, "door").filter(
           (p) => p.params?.waterfront !== 1,
         );
+        if (b.spanParcelIds.length > 1) {
+          // 連棟: 住戸(スパン区画)ごとに door がちょうど 1(契約「連棟
+          // (rowhouse)の性質」「Phase C 過渡期註記」)。部品配列順は住戸
+          // (spanParcelIds)の順と一致する
+          expect(doors.length).toBe(b.spanParcelIds.length);
+          for (let i = 0; i < doors.length; i++) {
+            const door = doors[i];
+            const pid = b.spanParcelIds[i];
+            if (!door || !pid) continue;
+            const parcel = parcelById.get(pid);
+            expect(parcel).toBeDefined();
+            if (!parcel) continue;
+            const nx = Math.sin(door.transform.rotation);
+            const nz = Math.cos(door.transform.rotation);
+            const dot =
+              nx * Math.cos(parcel.facing) + nz * Math.sin(parcel.facing);
+            expect(dot).toBeGreaterThan(Math.cos((6 * Math.PI) / 180));
+            expect(openingOnWall(b, door)).toBe(true);
+          }
+          continue;
+        }
         expect(doors.length).toBe(1);
         const door = doors[0];
         if (!door) continue;
@@ -178,6 +199,50 @@ describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
         expect(openingOnWall(b, door)).toBe(true);
       }
     }
+  });
+
+  it("中庭型(courtyard)の 90° 内向きスナップで胴体が回転した建物も、上記の扉検証にそのまま含まれる(Phase C タスク C4c。契約 (10): 判定基準自体は無傷)", () => {
+    // 中庭型が成立しやすい Settlement/Prosperity の組を追加して走査する
+    // (COMBOS はこのテストファイルの既定の組合せのため、ここでは中庭型が
+    // 出やすい組を明示的に追加する)
+    const SWEEP: [string, Partial<Params>][] = [
+      ["everdusk-101", { settlement: 50, prosperity: 50 }],
+      ["everdusk-101", { settlement: 100, prosperity: 100 }],
+      ["seed-a", { settlement: 50, prosperity: 50 }],
+      ["seed-a", { settlement: 100, prosperity: 100 }],
+      ["seed-b", { settlement: 80, prosperity: 90 }],
+    ];
+    let rotatedChecked = 0;
+    for (const [seed, over] of SWEEP) {
+      const model = cached(seed, over);
+      const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+      for (const b of general(model)) {
+        if (!b.parcelId) continue;
+        const parcel = parcelById.get(b.parcelId);
+        if (!parcel) continue;
+        // 胴体が 90° 内向きスナップしている建物のみを対象にする
+        // (facing の差を (-π, π] へ正規化し、±90° に近いかで判定)
+        let diff = (b.facing - parcel.facing) % (2 * Math.PI);
+        if (diff > Math.PI) diff -= 2 * Math.PI;
+        if (diff < -Math.PI) diff += 2 * Math.PI;
+        if (Math.abs(Math.abs(diff) - Math.PI / 2) >= 0.05) continue;
+        rotatedChecked++;
+        // 上記テストと同一の判定(扉ちょうど1つ・外向き=親区画 facing・壁面上)
+        const doors = partsOf(b, "door").filter(
+          (p) => p.params?.waterfront !== 1,
+        );
+        expect(doors.length).toBe(1);
+        const door = doors[0];
+        if (!door) continue;
+        const nx = Math.sin(door.transform.rotation);
+        const nz = Math.cos(door.transform.rotation);
+        const dot = nx * Math.cos(parcel.facing) + nz * Math.sin(parcel.facing);
+        expect(dot).toBeGreaterThan(Math.cos((6 * Math.PI) / 180));
+        expect(openingOnWall(b, door)).toBe(true);
+      }
+    }
+    // 空検証にならない(実際に回転した建物が観測される)
+    expect(rotatedChecked).toBeGreaterThan(0);
   });
 });
 
@@ -236,11 +301,13 @@ describe("building details: 素材階層と木組みの連動", () => {
     let beamBuildings = 0;
     for (const [seed, over] of COMBOS) {
       for (const b of general(cached(seed, over))) {
-        // 水辺拡張の beam(欄干・杭繋ぎ・持ち送り。waterfront)は
-        // 壁材に依らず付く(契約の例外)
+        // 水辺拡張の beam(欄干・杭繋ぎ・持ち送り。waterfront)と連棟の
+        // 住戸境界の分節縦梁(divider)は壁材に依らず付く(契約の例外。
+        // 「連棟(rowhouse)の性質」)
         const hasBeam =
-          partsOf(b, "beam").filter((p) => p.params?.waterfront !== 1).length >
-          0;
+          partsOf(b, "beam").filter(
+            (p) => p.params?.waterfront !== 1 && p.params?.divider !== 1,
+          ).length > 0;
         const hasJetty = partsOf(b, "jetty").length > 0;
         if (hasBeam) beamBuildings++;
         if (hasBeam) expect(b.materials.wall).toBe("plaster");
@@ -377,8 +444,11 @@ describe("building details: 役割による部品構成の差", () => {
           warehouses++;
           // 倉庫は荷入れ口(高い扉)
           if (door) expect(door.transform.scale[1]).toBeCloseTo(2.5, 9);
-          // 石垣は house / hall のみ
-          expect(partsOf(b, "fence").length).toBe(0);
+          // 前面の石垣は house / hall のみ(裏庭の fence(params.backyard=1。
+          // Phase C タスク C6)は役割に依らず付きうるため除く)
+          expect(
+            partsOf(b, "fence").filter((p) => p.params?.backyard !== 1).length,
+          ).toBe(0);
         } else if (door) {
           expect(door.transform.scale[1]).toBeLessThanOrEqual(2.15 + 1e-9);
         }
@@ -395,7 +465,10 @@ describe("building details: 役割による部品構成の差", () => {
           }
         }
         if (b.role === "outskirt" || b.role === "bridgehead") {
-          expect(partsOf(b, "fence").length).toBe(0);
+          // 前面の石垣は house / hall のみ(裏庭の fence は役割に依らない)
+          expect(
+            partsOf(b, "fence").filter((p) => p.params?.backyard !== 1).length,
+          ).toBe(0);
         }
       }
       // hall の窓は house より縦長(役割係数 1.3)

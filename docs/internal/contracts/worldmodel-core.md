@@ -64,6 +64,13 @@ interface WorldModel {
 > スキーマ・算出規則は [network-plaza.md](network-plaza.md)「Density 節
 > zoning」を参照。
 
+> **Phase C 註記**(`plans/2026-07-12-worldgen-rework-layout.md`):
+> `Parcel.groupId` / `Building.spanParcelIds` のスキーマは
+> [buildings.md](buildings.md)「Parcel / Building」節が正であり、本書は
+> 参照のみを持つ(スキーマ定義は buildings.md に 1 箇所だけ置く方針。
+> 本索引冒頭の規約に従う)。実装はタスク C2(groupId)・C5
+> (spanParcelIds)で追いつく。
+
 ### Meta(導出設定。PHASE 2〜)
 
 ```ts
