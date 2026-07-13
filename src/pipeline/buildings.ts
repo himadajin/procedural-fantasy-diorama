@@ -364,6 +364,41 @@ function layoutParity(parcel: Parcel): number {
   return (slot + phase) % 2 === 0 ? 1 : -1;
 }
 
+/** 敷地の接道フレーム・可住寸法(乱数非消費の純幾何。frontSetback の値だけで
+ *  可住奥行きが変わる。段12 本番ループとグループ計画(下記)の両方が使う) */
+interface SiteGeometry {
+  tx: number;
+  tz: number;
+  backX: number;
+  backZ: number;
+  origin: Vec2;
+  usableW: number;
+  usableD: number;
+  center: Vec2;
+}
+
+function siteGeometry(parcel: Parcel, frontSetback: number): SiteGeometry {
+  const [fa, fb] = parcel.frontEdge;
+  const frontage = Math.hypot(fb.x - fa.x, fb.z - fa.z);
+  const depth = frontage > 1e-6 ? polygonArea(parcel.polygon) / frontage : 0;
+  const tx = (fb.x - fa.x) / Math.max(frontage, 1e-6);
+  const tz = (fb.z - fa.z) / Math.max(frontage, 1e-6);
+  const backX = -Math.cos(parcel.facing);
+  const backZ = -Math.sin(parcel.facing);
+  const frontMid = { x: (fa.x + fb.x) / 2, z: (fa.z + fb.z) / 2 };
+  const origin = {
+    x: frontMid.x + backX * frontSetback,
+    z: frontMid.z + backZ * frontSetback,
+  };
+  const usableW = Math.max(2.2, frontage - 2 * SIDE_SETBACK);
+  const usableD = Math.max(2.2, depth - frontSetback - BACK_SETBACK);
+  const center = {
+    x: origin.x + backX * (usableD / 2),
+    z: origin.z + backZ * (usableD / 2),
+  };
+  return { tx, tz, backX, backZ, origin, usableW, usableD, center };
+}
+
 /** 役割ごとの基壇高さ補正 */
 const PLINTH_ROLE_ADJUST: Record<BuildingRole, number> = {
   house: 0,
@@ -441,6 +476,169 @@ function decideRole(
     return "warehouse";
   }
   return "house";
+}
+
+// ============================================================
+// グループ計画(クラスタパターンの抽選)。Phase C タスク C4b。
+// contracts/buildings.md「区画グループとクラスタパターン」節・
+// 3.4 節(13)(14)(計画書 2026-07-12-worldgen-rework-layout.md)。
+// ============================================================
+
+/** クラスタパターン(契約の抽選表)。C4b では rowhouse・courtyard の当選も
+ *  single として扱う(生成は単棟のまま。実装は rowhouse が C5、courtyard が
+ *  C4c で追いつく。契約 3.4 節(13): 抽選消費・条件判定は最終形と同一にして
+ *  先行固定するための意図的な措置であり、仮実装ではない)。 */
+export type ClusterPattern = "single" | "rowhouse" | "courtyard" | "stagger";
+
+/** グループ長の条件(契約の表) */
+const ROWHOUSE_MIN_LEN = 3;
+const COURTYARD_MIN_LEN = 3;
+const COURTYARD_MAX_LEN = 5;
+const STAGGER_MIN_LEN = 2;
+/** 連棟条件: urbanity 下限(契約の表) */
+const ROWHOUSE_URBANITY_MIN = 0.6;
+/**
+ * 中庭型条件「奥行き余裕あり」(契約の表)= グループ内の最小 usableD
+ * (前面・背面セットバック控除後の可住奥行き。既定 frontSetback=0.5 で評価)
+ * が 6 以上(契約「区画グループとクラスタパターン」節の提案値。
+ * C4c / C7 で中庭の実寸と付き合わせて調整しうる)。
+ */
+const COURTYARD_DEPTH_MARGIN = 6;
+
+/** 連棟の採択率(契約の提案値) */
+function rowhouseChance(settle: number): number {
+  return clamp(0.2 + 0.6 * settle, 0, 0.75);
+}
+/** 中庭型の採択率(契約の提案値) */
+function courtyardChance(prosper: number): number {
+  return 0.12 + 0.28 * prosper;
+}
+/** 雁行の採択率(契約の提案値: 上記に外れた残りに 0.45) */
+const STAGGER_CHANCE = 0.45;
+
+/** 雁行の前面セットバック(序数パリティで交互。契約「雁行(stagger)の性質」の提案値) */
+const STAGGER_SETBACK_NEAR = 0.5;
+const STAGGER_SETBACK_FAR = 2.0;
+/** 雁行の向き変調(±4°。同節の提案値) */
+const STAGGER_YAW_DEG = 4;
+
+/** グループ内の 1 区画ぶんの配置計画 */
+export interface ParcelLayout {
+  /** 抽選で当選したパターン(rowhouse/courtyard は C4b 時点では single 同様に扱う) */
+  pattern: ClusterPattern;
+  /** グループ内の位置(0 起点。スロット連番順) */
+  indexInGroup: number;
+  /** グループの長さ */
+  groupSize: number;
+}
+
+/**
+ * 段12「建物」の本番ループの前に、区画グループ(`Parcel.groupId`)ごとに
+ * `makeRng(seed, "layout/<groupId>")` の固定消費でクラスタパターンを
+ * 1 つ抽選する(契約「クラスタパターンの抽選」「抽選消費の先行(13)」)。
+ *
+ * 連棟の適格判定に要る役割(role が house 系に揃うか)は、この時点では
+ * 本抽選も段12 の建物生成も済んでいないため、`"building/<id>"` と同一
+ * ラベルの使い捨ての新規 rng インスタンスで `decideRole` を先読みする
+ * (同一 seed・同一ラベルの `makeRng` は常に同一の分岐を再現する純関数の
+ * ため、後で段12 の本番ループが同じラベルで rng を作り直しても消費列は
+ * 一切影響を受けない。要素独立乱数の規約を壊さない先読み。破棄済みの
+ * 偵察実装で機能実績がある方式)。
+ *
+ * 出力はグループ・区画の反復順に依存しない(model.parcels の走査順が
+ * 変わっても同一結果。乱数消費は `layout/<groupId>` ごとに 1 回のみ)。
+ */
+export function planGroupLayouts(model: WorldModel): Map<string, ParcelLayout> {
+  const { seed, params } = model.meta;
+  const settle = params.settlement / 100;
+  const prosper = params.prosperity / 100;
+  const rowP = rowhouseChance(settle);
+  const courtP = courtyardChance(prosper);
+
+  const groups = new Map<string, Parcel[]>();
+  for (const parcel of model.parcels) {
+    if (!parcel.groupId) continue;
+    let bucket = groups.get(parcel.groupId);
+    if (!bucket) {
+      bucket = [];
+      groups.set(parcel.groupId, bucket);
+    }
+    bucket.push(parcel);
+  }
+
+  const layoutByParcelId = new Map<string, ParcelLayout>();
+  for (const [groupId, members] of groups) {
+    // スロット連番順に並べる(id パース非依存の parcelSlot で再導出。
+    // groups の走査順・bucket 内の挿入順のいずれにも依存しない)
+    members.sort((a, b) => parcelSlot(a) - parcelSlot(b));
+    const n = members.length;
+
+    let allHouse = true;
+    let anyWaterside = false;
+    let urbanitySum = 0;
+    let minUsableD = Infinity;
+    for (const member of members) {
+      if (member.waterside || member.canalside) anyWaterside = true;
+      const geo = siteGeometry(member, FRONT_SETBACK);
+      minUsableD = Math.min(minUsableD, geo.usableD);
+      const density = model.density.final
+        ? sampleFieldGrid(model.density.final, geo.center.x, geo.center.z)
+        : 0;
+      const urbanity = model.zoning
+        ? sampleFieldGrid(model.zoning, geo.center.x, geo.center.z)
+        : 0;
+      urbanitySum += urbanity;
+      const probeId = `building/${member.id.slice("parcel/".length)}`;
+      const probeRng = makeRng(seed, probeId);
+      const predictedRole = decideRole(probeRng, model, member, geo.center, density);
+      if (predictedRole !== "house") allHouse = false;
+    }
+    const avgUrbanity = urbanitySum / n;
+
+    const rowhouseEligible =
+      n >= ROWHOUSE_MIN_LEN &&
+      avgUrbanity >= ROWHOUSE_URBANITY_MIN &&
+      allHouse &&
+      !anyWaterside;
+    const courtyardEligible =
+      n >= COURTYARD_MIN_LEN &&
+      n <= COURTYARD_MAX_LEN &&
+      minUsableD >= COURTYARD_DEPTH_MARGIN;
+    // 3.4 節(14): waterside/canalside を含むグループは雁行の適格から除外する
+    const staggerEligible = n >= STAGGER_MIN_LEN && !anyWaterside;
+
+    // 候補は契約の表の並び順で固定(rowhouse → courtyard → stagger → single)。
+    // 条件を満たさない候補は除外し、`weighted` の内部正規化(重み合計で割る)
+    // に採択率をそのまま渡す(契約:「残る候補の採択率で正規化して抽選する」)
+    const candidates: ClusterPattern[] = [];
+    const weights: number[] = [];
+    let used = 0;
+    if (rowhouseEligible) {
+      candidates.push("rowhouse");
+      weights.push(rowP);
+      used += rowP;
+    }
+    if (courtyardEligible) {
+      candidates.push("courtyard");
+      weights.push(courtP);
+      used += courtP;
+    }
+    if (staggerEligible) {
+      candidates.push("stagger");
+      weights.push(STAGGER_CHANCE);
+      used += STAGGER_CHANCE;
+    }
+    candidates.push("single");
+    weights.push(Math.max(0, 1 - used));
+
+    const rng = makeRng(seed, `layout/${groupId}`);
+    const pattern = rng.weighted(candidates, weights);
+
+    members.forEach((member, i) => {
+      layoutByParcelId.set(member.id, { pattern, indexInGroup: i, groupSize: n });
+    });
+  }
+  return layoutByParcelId;
 }
 
 /**
@@ -1759,6 +1957,9 @@ export function runBuildings(model: WorldModel): void {
   // 水辺拡張(commit 19)の第2パス入力(建物 id → 展開文脈)
   const waterfrontSites = new Map<string, WaterfrontSite>();
   let violations = 0;
+  // グループ計画(クラスタパターンの抽選。Phase C C4b)。段12 の本番ループの
+  // 前に固定消費で決める(契約「抽選消費の先行(13)」)
+  const groupLayouts = planGroupLayouts(model);
 
   for (const parcel of model.parcels) {
     const id = `building/${parcel.id.slice("parcel/".length)}`;
@@ -1766,25 +1967,29 @@ export function runBuildings(model: WorldModel): void {
     // 同型連続の抑制(Phase C。位置由来・乱数非消費。上記 layoutParity)
     const parity = layoutParity(parcel);
 
+    // --- グループ計画(雁行。C4b では rowhouse/courtyard 当選も単棟同様に
+    //     扱う。パリティはグループ内序数の偶奇=契約「序数パリティ」) ---
+    const layout = groupLayouts.get(parcel.id);
+    const stagger =
+      layout && layout.pattern === "stagger"
+        ? { parityEven: layout.indexInGroup % 2 === 0 }
+        : null;
+    const frontSetback = stagger
+      ? stagger.parityEven
+        ? STAGGER_SETBACK_NEAR
+        : STAGGER_SETBACK_FAR
+      : FRONT_SETBACK;
+
     // --- 幾何の下ごしらえ(接道フレーム) ---
-    const [fa, fb] = parcel.frontEdge;
-    const frontage = Math.hypot(fb.x - fa.x, fb.z - fa.z);
-    const depth = frontage > 1e-6 ? polygonArea(parcel.polygon) / frontage : 0;
-    const tx = (fb.x - fa.x) / Math.max(frontage, 1e-6);
-    const tz = (fb.z - fa.z) / Math.max(frontage, 1e-6);
-    let backX = -Math.cos(parcel.facing);
-    let backZ = -Math.sin(parcel.facing);
-    const frontMid = { x: (fa.x + fb.x) / 2, z: (fa.z + fb.z) / 2 };
-    const origin = {
-      x: frontMid.x + backX * FRONT_SETBACK,
-      z: frontMid.z + backZ * FRONT_SETBACK,
-    };
-    const usableW = Math.max(2.2, frontage - 2 * SIDE_SETBACK);
-    const usableD = Math.max(2.2, depth - FRONT_SETBACK - BACK_SETBACK);
-    const center = {
-      x: origin.x + backX * (usableD / 2),
-      z: origin.z + backZ * (usableD / 2),
-    };
+    const geo = siteGeometry(parcel, frontSetback);
+    const tx = geo.tx;
+    const tz = geo.tz;
+    let backX = geo.backX;
+    let backZ = geo.backZ;
+    const origin = geo.origin;
+    const usableW = geo.usableW;
+    const usableD = geo.usableD;
+    const center = geo.center;
     const density = final ? sampleFieldGrid(final, center.x, center.z) : 0;
     const urbanity = model.zoning
       ? sampleFieldGrid(model.zoning, center.x, center.z)
@@ -1862,11 +2067,19 @@ export function runBuildings(model: WorldModel): void {
     for (const v of verts) {
       radius = Math.max(radius, Math.hypot(v.x - cx, v.z - cz));
     }
-    const jitterMax = Math.min(
-      (MAX_JITTER_DEG * Math.PI) / 180,
-      MAX_JITTER_SHIFT / Math.max(radius, 1e-6),
-    );
-    const jitter = rng.range(-1, 1) * (1 - derived.tidiness) * jitterMax;
+    const shiftCap = MAX_JITTER_SHIFT / Math.max(radius, 1e-6);
+    const jitterMax = Math.min((MAX_JITTER_DEG * Math.PI) / 180, shiftCap);
+    // rng の消費順・消費数は雁行の有無に関わらず不変(契約の規約)。雁行
+    // グループは既存の向き揺らぎ(±3°・tidiness 連動)に「加算せず置き換える」
+    // (抽選値は消費するが捨てる)— 序数パリティ由来の決定論的な ±4°
+    // (頂点変位はセットバックと同じ shiftCap で安全側にクランプ)。
+    // 置換の意味論は契約「雁行(stagger)の性質」に明文化済み(加算だと
+    // 最悪 7° になり扉の外向き判定の閾値 cos 6° を超えうるため)
+    const randomJitter = rng.range(-1, 1) * (1 - derived.tidiness) * jitterMax;
+    const jitter = stagger
+      ? (stagger.parityEven ? 1 : -1) *
+        Math.min((STAGGER_YAW_DEG * Math.PI) / 180, shiftCap)
+      : randomJitter;
     const cosJ = Math.cos(jitter);
     const sinJ = Math.sin(jitter);
     const rotate = (p: Vec2): Vec2 => ({
