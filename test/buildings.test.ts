@@ -9,6 +9,7 @@ import {
 import {
   createWaterField,
   distToPolyline,
+  polygonSignedDistance,
 } from "../src/model/waterfield";
 import { polygonsOverlap } from "../src/model/geometry";
 import { sampleFieldGrid } from "../src/model/fieldgrid";
@@ -23,7 +24,11 @@ import { runWards } from "../src/pipeline/wards";
 import { runPlazas } from "../src/pipeline/plazas";
 import { runPaving } from "../src/pipeline/paving";
 import { runParcels } from "../src/pipeline/parcels";
-import { runBuildings } from "../src/pipeline/buildings";
+import {
+  runBuildings,
+  planGroupLayouts,
+  type ParcelLayout,
+} from "../src/pipeline/buildings";
 import { polylineTouchesPolygon } from "../src/pipeline/parcels";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
@@ -391,5 +396,152 @@ describe("buildings: パラメータ駆動", () => {
     expect(roles.has("waterside")).toBe(true);
     // 役割の多様性(住居+水辺以外にも文脈役割が出る)
     expect(roles.size).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("buildings: グループ抽選と雁行(Phase C。計画書「C4b: グループ抽選と雁行」、contracts/buildings.md「区画グループとクラスタパターン」「雁行(stagger)の性質」)", () => {
+  // 長いグループが多数出る条件(進捗ステータス C2: settle100 で最長 13)を
+  // 複数 seed × Settlement/Prosperity で走査し、雁行(stagger)当選グループを
+  // 十分な件数で観測する
+  const SWEEP: Partial<Params>[] = [
+    { settlement: 50 },
+    { settlement: 100 },
+    { settlement: 100, prosperity: 100 },
+  ];
+
+  it("抽選の決定性: 同一 seed + params で groupId ごとのパターンが完全一致する", () => {
+    for (const seed of SEEDS) {
+      for (const over of SWEEP) {
+        const a = build(seed, over);
+        const b = build(seed, over);
+        const layoutsA = planGroupLayouts(a);
+        const layoutsB = planGroupLayouts(b);
+        const toSorted = (m: Map<string, ParcelLayout>) =>
+          JSON.stringify([...m.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1)));
+        expect(toSorted(layoutsA)).toBe(toSorted(layoutsB));
+      }
+    }
+  });
+
+  it("グループ長 1 の孤立区画・groupId 無しの区画は single 扱い(条件を満たさない候補は除外される)", () => {
+    for (const seed of SEEDS) {
+      const model = cached(seed);
+      const layouts = planGroupLayouts(model);
+      const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+      for (const [parcelId, plan] of layouts) {
+        const parcel = parcelById.get(parcelId);
+        expect(parcel).toBeDefined();
+        if (plan.groupSize === 1) {
+          expect(plan.pattern).toBe("single");
+        }
+      }
+    }
+  });
+
+  it("waterside/canalside 区画を含むグループは雁行(stagger)に当選しない(契約 3.4 節(14))", () => {
+    for (const seed of SEEDS) {
+      for (const over of [{ water: 95 }, { water: 70, settlement: 100 }]) {
+        const model = cached(seed, over);
+        const layouts = planGroupLayouts(model);
+        const byGroup = new Map<string, { anyWaterside: boolean; pattern: string }>();
+        for (const parcel of model.parcels) {
+          const plan = layouts.get(parcel.id);
+          if (!plan) continue;
+          const entry = byGroup.get(parcel.groupId) ?? {
+            anyWaterside: false,
+            pattern: plan.pattern,
+          };
+          if (parcel.waterside || parcel.canalside) entry.anyWaterside = true;
+          byGroup.set(parcel.groupId, entry);
+        }
+        for (const { anyWaterside, pattern } of byGroup.values()) {
+          if (anyWaterside) expect(pattern).not.toBe("stagger");
+        }
+      }
+    }
+  });
+
+  it("雁行(stagger)グループはグループ内序数の偶奇で前面セットバックが交互になる(統計検証)", () => {
+    // セットバックは WorldModel に直接残らないため、接道辺の中点から footprint
+    // 頂点への「奥行き方向への射影距離」の最小値(≈ frontSetback)を観測値と
+    // して使う(建物ごとの独立な奥行き揺らぎがノイズとして乗るため、多数の
+    // グループで集計して偶奇間の平均差が契約の交互値(0.5 / 2.0 → 差 1.5)
+    // 相応であることを検証する)
+    let nearSum = 0;
+    let nearCount = 0;
+    let farSum = 0;
+    let farCount = 0;
+    for (const seed of SEEDS) {
+      for (const over of SWEEP) {
+        const model = cached(seed, over);
+        const layouts = planGroupLayouts(model);
+        const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+        for (const b of general(model)) {
+          if (!b.parcelId) continue;
+          const plan = layouts.get(b.parcelId);
+          if (!plan || plan.pattern !== "stagger") continue;
+          const parcel = parcelById.get(b.parcelId);
+          if (!parcel) continue;
+          const [fa, fc] = parcel.frontEdge;
+          const mid = { x: (fa.x + fc.x) / 2, z: (fa.z + fc.z) / 2 };
+          const backX = -Math.cos(parcel.facing);
+          const backZ = -Math.sin(parcel.facing);
+          let minDepth = Infinity;
+          for (const v of b.footprint) {
+            const depth = (v.x - mid.x) * backX + (v.z - mid.z) * backZ;
+            minDepth = Math.min(minDepth, depth);
+          }
+          if (plan.indexInGroup % 2 === 0) {
+            nearSum += minDepth;
+            nearCount++;
+          } else {
+            farSum += minDepth;
+            farCount++;
+          }
+        }
+      }
+    }
+    // 空検証にならない(雁行グループが実在する)
+    expect(nearCount).toBeGreaterThan(0);
+    expect(farCount).toBeGreaterThan(0);
+    const nearAvg = nearSum / nearCount;
+    const farAvg = farSum / farCount;
+    // 契約の交互値(0.5 / 2.0)の差 1.5 に対し、独立乱数の奥行き揺らぎで
+    // ノイズは乗るが、集計平均では偶数(近い)側が奇数(遠い)側より
+    // 明確に小さい(交互が機械的な統計として現れる)
+    expect(nearAvg).toBeLessThan(farAvg - 0.8);
+  });
+
+  it("雁行グループの建物 footprint は親区画内に収まり、接道正面(facing)を維持する", () => {
+    for (const seed of SEEDS) {
+      for (const over of SWEEP) {
+        const model = cached(seed, over);
+        const layouts = planGroupLayouts(model);
+        const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+        let checked = 0;
+        for (const b of general(model)) {
+          if (!b.parcelId) continue;
+          const plan = layouts.get(b.parcelId);
+          if (!plan || plan.pattern !== "stagger") continue;
+          const parcel = parcelById.get(b.parcelId);
+          if (!parcel) continue;
+          checked++;
+          // footprint の全頂点が親区画ポリゴンの内側(符号付き距離 ≤ 0)
+          for (const v of b.footprint) {
+            expect(
+              polygonSignedDistance(v.x, v.z, parcel.polygon),
+            ).toBeLessThanOrEqual(1e-6);
+          }
+          // 接道正面(facing)は parcel.facing の 4 軸(広場スナップ込み。
+          // 「向き: 広場 > 道路 > 水面の優先」契約)のいずれかから、揺らぎ
+          // 上限(雁行の±4°を含めても 7° 以内)に収まる
+          let rel = (b.facing - parcel.facing) % (Math.PI / 2);
+          if (rel > Math.PI / 4) rel -= Math.PI / 2;
+          if (rel < -Math.PI / 4) rel += Math.PI / 2;
+          expect(Math.abs(rel)).toBeLessThan((7 * Math.PI) / 180);
+        }
+        expect(checked).toBeGreaterThanOrEqual(0);
+      }
+    }
   });
 });

@@ -325,15 +325,54 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    8b072991 → c8729c73
   //   seed-b {}                    223287ea → c645b0dd
   //   seed-b {water:70}            55c73d2d → f01a5f6f
+  // C4b(グループ抽選と雁行。計画書 2026-07-12-worldgen-rework-layout.md
+  // タスク C4b。contracts/buildings.md「区画グループとクラスタパターン」
+  // 「雁行(stagger)の性質」)で更新。意図した変更:
+  // (1) 段12「建物」の本番ループの前に、区画グループ(`Parcel.groupId`)
+  //     ごとに `makeRng(seed, "layout/<groupId>")` の固定消費でクラスタ
+  //     パターン(rowhouse/courtyard/stagger/single)を 1 つ抽選する
+  //     (`planGroupLayouts`。契約「抽選消費の先行(13)」により rowhouse 当選・
+  //     courtyard 当選も本タスクでは single として扱う=footprint 生成は
+  //     従来どおり単棟のまま変わらない)。新設ストリームの消費が加わるため、
+  //     区画グループが 1 件でも存在する組(=区画が採択される全組)のハッシュが
+  //     変わる。
+  // (2) 雁行(stagger)当選グループの各建物に、グループ内序数のパリティで
+  //     前面セットバック 0.5 / 2.0 を交互に与え(`frontSetback`)、footprint
+  //     重心まわりの向き揺らぎを従来のランダム揺らぎ(rng 消費値は捨てるが
+  //     消費自体は行い、消費順・消費数は不変)から決定論的な ±4°(頂点変位は
+  //     従来と同じ shiftCap で安全側にクランプ)へ置き換えた
+  //     (waterside/canalside 区画を含むグループは雁行の適格から除外。
+  //     契約 3.4 節(14))。
+  // (3) 連棟の適格判定(役割が house 系に揃うか)のため、`planGroupLayouts`
+  //     内で `"building/<id>"` と同一ラベルの使い捨て rng インスタンスで
+  //     `decideRole` を先読みする。同一ラベルの新規 `makeRng` は独立した
+  //     状態を持つ純関数のため、本番ループの `"building/<id>"` ストリームの
+  //     消費列には影響しない。
+  // いずれも乱数消費順・消費数は「building/<id>」「parcel/<id>」の既存
+  // ストリームでは不変(新設の `"layout/<groupId>"` ストリームの消費のみ
+  // 追加)。全 8 組のハッシュが変わる(区画が生成される全組が対象)。
+  // 実装時スイープで確認: 4 seed(既定 SEEDS + 追加 seed)× Settlement
+  // {50,100} × Prosperity{50,100} のスイープで、雁行(stagger)当選グループが
+  // 各条件で複数出現し、当選グループ内でセットバックが交互(統計的に
+  // 有意な差)になることを確認済み(詳細は本タスクの実装報告を参照)。
+  // 新旧対応(C3 → C4b):
+  //   everdusk-101 {}              f7fac9c2 → 1a247577
+  //   everdusk-101 {water:0}       804d1da0 → 49094d75
+  //   everdusk-101 {water:95}      a24efad4 → 3eec1d88
+  //   everdusk-101 {worldScale:0}  1e6ad8b1 → 363fcd8e
+  //   everdusk-101 {worldScale:100} 7aec297a → 0dad2c84
+  //   seed-a {}                    c8729c73 → e8e1b942
+  //   seed-b {}                    c645b0dd → f9e003fe
+  //   seed-b {water:70}            f01a5f6f → f99be753
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "f7fac9c2"],
-    ["everdusk-101", { water: 0 }, "804d1da0"],
-    ["everdusk-101", { water: 95 }, "a24efad4"],
-    ["everdusk-101", { worldScale: 0 }, "1e6ad8b1"],
-    ["everdusk-101", { worldScale: 100 }, "7aec297a"],
-    ["seed-a", {}, "c8729c73"],
-    ["seed-b", {}, "c645b0dd"],
-    ["seed-b", { water: 70 }, "f01a5f6f"],
+    ["everdusk-101", {}, "1a247577"],
+    ["everdusk-101", { water: 0 }, "49094d75"],
+    ["everdusk-101", { water: 95 }, "3eec1d88"],
+    ["everdusk-101", { worldScale: 0 }, "363fcd8e"],
+    ["everdusk-101", { worldScale: 100 }, "0dad2c84"],
+    ["seed-a", {}, "e8e1b942"],
+    ["seed-b", {}, "f9e003fe"],
+    ["seed-b", { water: 70 }, "f99be753"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
