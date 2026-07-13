@@ -564,6 +564,216 @@ const COURTYARD_SHRINK_STEP_SIZE = 0.6;
  *  この距離以内 */
 const COURTYARD_PARCEL_BAND = 1.2;
 
+// ============================================================
+// 裏庭(backyard)の実装定数(Phase C タスク C6。
+// contracts/buildings.md「裏庭の性質」実装補足の提案値)
+// ============================================================
+/** 帯判定の下限(契約: 建物背面〜区画背面の距離 ≥ 2.5) */
+const BACKYARD_MIN_BAND = 2.5;
+/** 衝突時の段階的な奥行き縮小(中庭型の帯縮小と同じ思想。実装補足) */
+const BACKYARD_SHRINK_STEPS = 4;
+const BACKYARD_SHRINK_STEP = 0.6;
+/** 裏庭の fence(石垣)の高さ帯。前面の低い石垣と同じ範囲を流用(実装補足) */
+const BACKYARD_FENCE_HEIGHT_BASE = 0.42;
+const BACKYARD_FENCE_HEIGHT_JITTER = 0.25;
+/** shed(付属屋)の採択率(提案値。石垣・屋根小窓と同型の式。実装補足) */
+const SHED_RATE_BASE = 0.22;
+const SHED_RATE_DETAIL = 0.35;
+/** shed の幅(契約: 2〜3.2)・奥行き比率(提案値)・下限 */
+const SHED_WIDTH_MIN = 2.0;
+const SHED_WIDTH_MAX = 3.2;
+const SHED_DEPTH_RATIO = 0.85;
+const SHED_MIN_DEPTH = 1.2;
+/** shed と fence(背面)・建物背面との控え(実装補足) */
+const SHED_MARGIN = 0.4;
+
+/** 裏庭の抽選結果(乱数は済み。geometry は乱数を消費しない) */
+interface BackyardDecision {
+  fenceHeight: number;
+  shed: { width: number; lateralT: number } | null;
+}
+
+/**
+ * 裏庭の採否・shed 抽選(契約「裏庭の性質」)。既存 rng ストリームの
+ * **末尾**への固定追加消費のみ(帯が条件を満たさない場合は一切消費しない。
+ * 石垣・屋根小窓など他の条件付き詳細部品と同じ「条件 && rng.chance」の
+ * 流儀)。
+ */
+function rollBackyardDecision(
+  rng: Rng,
+  settle: number,
+  detailAmount: number,
+  bandDepth: number,
+): BackyardDecision | null {
+  if (bandDepth < BACKYARD_MIN_BAND) return null;
+  const backyardRate = clamp(0.35 + 0.35 * (1 - settle), 0, 1);
+  if (!rng.chance(backyardRate)) return null;
+  const fenceHeight =
+    BACKYARD_FENCE_HEIGHT_BASE + BACKYARD_FENCE_HEIGHT_JITTER * rng.next();
+  const shedRate = clamp(SHED_RATE_BASE + SHED_RATE_DETAIL * detailAmount, 0, 1);
+  let shed: { width: number; lateralT: number } | null = null;
+  if (rng.chance(shedRate)) {
+    const width = SHED_WIDTH_MIN + (SHED_WIDTH_MAX - SHED_WIDTH_MIN) * rng.next();
+    const lateralT = rng.range(-1, 1);
+    shed = { width, lateralT };
+  }
+  return { fenceHeight, shed };
+}
+
+/**
+ * 裏庭 1 区画(単棟)/ 1 住戸(連棟)ぶんの帯(間口方向 u0〜u1・素の帯の奥行き
+ * depth)。連棟の共有裏庭は列メンバーの奥行きが区画ごとに異なるため、
+ * 各住戸の実際の帯を「階段状」に個別に持つ(単棟は要素数 1 の配列)。
+ */
+interface BackyardUnit {
+  u0: number;
+  u1: number;
+  depth: number;
+}
+
+/**
+ * 裏庭の fence(背面+両側面)・shed(付属屋)の部品を配置する(乱数非消費。
+ * 決定論)。各 unit(住戸)ごとに実際の帯(depth。連棟は住戸ごとに異なりうる)
+ * の範囲で背面 fence を置く(階段状。契約の帯判定 (12) の一般化と同じ
+ * 「いずれかの区画から 1.2 以内」を各住戸自身の帯に収めることで満たす)。
+ * 両側面 fence は列の両端の unit のみに立てる。全体の帯(cap。最深の unit の
+ * depth から開始)を衝突検査に通し、当たれば段階的に縮小して再試行、
+ * それでも当たる・全 unit が最小帯を下回る場合は裏庭を諦める(空配列)。
+ * `toWorld(u, v)`: u=間口方向(units の u0/u1 と同じ座標系。単棟は中心 0
+ * 対称、連棟は先頭区画 frontEdge 中点原点)・v=接道正面セットバック線からの
+ * 奥行き(建物の背面が v = buildingRearV)。
+ */
+function placeBackyardParts(
+  model: WorldModel,
+  ctx: SiteContext,
+  toWorld: (u: number, v: number) => Vec2,
+  rotU: number,
+  rotV: number,
+  units: readonly BackyardUnit[],
+  buildingRearV: number,
+  ownParcelIds: Set<string>,
+  buildings: readonly Building[],
+  wallMaterial: string,
+  roofMaterial: string,
+  roofPitch: number,
+  decision: BackyardDecision,
+): Part[] {
+  if (units.length === 0) return [];
+  let cap = Math.max(...units.map((u) => u.depth));
+  let effective: { u0: number; u1: number; depth: number }[] = [];
+  for (let step = 0; step <= BACKYARD_SHRINK_STEPS; step++) {
+    if (cap < 0) break;
+    effective = units
+      .map((u) => ({ u0: u.u0, u1: u.u1, depth: Math.min(u.depth, cap) }))
+      .filter((u) => u.depth > 1e-6);
+    if (
+      effective.length > 0 &&
+      Math.max(...effective.map((u) => u.depth)) >= BACKYARD_MIN_BAND
+    ) {
+      const blocked = effective.some((u) => {
+        const v0 = buildingRearV;
+        const v1 = buildingRearV + u.depth;
+        const candidate = ensureClockwise([
+          toWorld(u.u0, v0),
+          toWorld(u.u1, v0),
+          toWorld(u.u1, v1),
+          toWorld(u.u0, v1),
+        ]);
+        return wallRegionBlocked(model, ctx, candidate, ownParcelIds, buildings);
+      });
+      if (!blocked) break;
+    }
+    cap -= BACKYARD_SHRINK_STEP;
+    effective = [];
+  }
+  if (
+    effective.length === 0 ||
+    Math.max(...effective.map((u) => u.depth)) < BACKYARD_MIN_BAND
+  ) {
+    return [];
+  }
+
+  const parts: Part[] = [];
+  const v0 = buildingRearV;
+  const pushFence = (a: Vec2, b: Vec2, rotation: number): void => {
+    const length = Math.hypot(b.x - a.x, b.z - a.z);
+    if (length < 0.5) return;
+    const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+    parts.push({
+      type: "fence",
+      transform: {
+        position: [mid.x, 0, mid.z],
+        rotation,
+        scale: [length, decision.fenceHeight, FENCE_THICKNESS],
+      },
+      materialId: "stone",
+      params: { backyard: 1 },
+    });
+  };
+  // 背面: 住戸(unit)ごとに実際の帯の奥行きで置く(階段状。前面の石垣と
+  // 異なり開口(門)は設けない)
+  for (const u of effective) {
+    pushFence(toWorld(u.u0, v0 + u.depth), toWorld(u.u1, v0 + u.depth), rotU);
+  }
+  // 両側面: 列の両端の unit のみ(内部の住戸境界には立てない)
+  const first = effective[0];
+  const last = effective[effective.length - 1];
+  if (first) {
+    pushFence(toWorld(first.u0, v0), toWorld(first.u0, v0 + first.depth), rotV);
+  }
+  if (last) {
+    pushFence(toWorld(last.u1, v0), toWorld(last.u1, v0 + last.depth), rotV);
+  }
+
+  if (decision.shed) {
+    // shed は最も帯の深い unit に置く(実装補足)
+    let best = effective[0];
+    for (const u of effective) {
+      if (!best || u.depth > best.depth) best = u;
+    }
+    if (best && best.depth - 2 * SHED_MARGIN >= SHED_MIN_DEPTH) {
+      const shedDepth = clamp(
+        decision.shed.width * SHED_DEPTH_RATIO,
+        SHED_MIN_DEPTH,
+        best.depth - 2 * SHED_MARGIN,
+      );
+      const unitWidth = best.u1 - best.u0;
+      const maxLateral = Math.max(
+        0,
+        (unitWidth - decision.shed.width) / 2 - SHED_MARGIN,
+      );
+      const unitMidU = (best.u0 + best.u1) / 2;
+      const centerU = unitMidU + decision.shed.lateralT * maxLateral;
+      const centerV = v0 + SHED_MARGIN + shedDepth / 2;
+      const c = toWorld(centerU, centerV);
+      parts.push({
+        type: "wall",
+        transform: {
+          position: [c.x, 0, c.z],
+          rotation: rotU,
+          scale: [decision.shed.width, FLOOR_HEIGHT, shedDepth],
+        },
+        materialId: wallMaterial,
+        params: { floor: 0, backyard: 1 },
+      });
+      const roofLen = decision.shed.width + 2 * GABLE_END_OVERHANG;
+      const roofSpan = shedDepth + 2 * EAVE_OVERHANG;
+      const roofH = Math.tan((roofPitch * Math.PI) / 180) * (roofSpan / 2);
+      parts.push({
+        type: "gable",
+        transform: {
+          position: [c.x, FLOOR_HEIGHT - ROOF_BASE_SINK, c.z],
+          rotation: rotU,
+          scale: [roofLen, roofH, roofSpan],
+        },
+        materialId: roofMaterial,
+        params: { pitch: roofPitch, backyard: 1 },
+      });
+    }
+  }
+  return parts;
+}
+
 /**
  * 中庭型グループの奥行き基準線(courtyard の奥行き後端。区画データのみから
  * 決定論的に導出する。乱数は消費しない)。グループ内メンバーの素の可住奥行き
@@ -2066,6 +2276,11 @@ interface BuildLayoutOptions {
    *  結果だけ破棄する("building/<id>" の消費順は不変)。forceRectangle との
    *  併用が前提 */
   sizeOverride: { bw: number; bd: number } | null;
+  /** false の場合、裏庭(fence/shed)の帯判定・抽選・配置を一切行わない
+   *  (中庭型グループの全メンバー専用。契約「裏庭の性質」の中庭型除外:
+   *  中庭型は後退セットバックの背面帯を共有の中庭として使うため、同じ帯へ
+   *  個別の裏庭を重ねると courtyard-wall / courtyard Plaza と衝突する) */
+  allowBackyard: boolean;
 }
 
 const SINGLE_BUILD_OPTIONS: BuildLayoutOptions = {
@@ -2075,6 +2290,7 @@ const SINGLE_BUILD_OPTIONS: BuildLayoutOptions = {
   overrideJitter: null,
   rotatePivot: "centroid",
   sizeOverride: null,
+  allowBackyard: true,
 };
 
 /** 段12「建物」1棟ぶんの生成結果(骨格・素材・部品込みの Building と、
@@ -2376,6 +2592,26 @@ function buildParcelBuilding(
       }
     : { kind: "plinth", plinthHeight, overWater: false, bottomY: 0 };
 
+  // --- 裏庭(Phase C タスク C6。契約「裏庭の性質」)。既存 "building/<id>"
+  //     ストリーム(骨格 rng)の末尾への固定追加消費(帯条件を満たさなければ
+  //     一切消費しない)。中庭型グループは opts.allowBackyard=false により
+  //     常にスキップ(courtyard-wall / courtyard Plaza との重複を避ける)。
+  //     連棟の共有裏庭は finalizeRowhouseGroups が別途(合成後の実際の共有
+  //     奥行きから)判定・配置するため、ここでの各メンバー個別の判定結果は
+  //     連棟化されれば破棄される(footprint/parts ごと合成側が再構築する。
+  //     役割・floors 等の他の骨格値と同じ扱い) ---
+  let backyardDecision: BackyardDecision | null = null;
+  const backyardBandDepth = usableD - bd + BACK_SETBACK + opts.backSetbackExtra;
+  if (opts.allowBackyard && !parcel.waterside && !parcel.canalside) {
+    const settle = model.meta.params.settlement / 100;
+    backyardDecision = rollBackyardDecision(
+      rng,
+      settle,
+      derived.detailAmount,
+      backyardBandDepth,
+    );
+  }
+
   // --- 素材と部品展開(commit 13。乱数は派生サブストリーム
   //     "building/<id>/parts" のみ・建物あたり固定消費) ---
   const partsRng = makeRng(seed, `${id}/parts`);
@@ -2413,6 +2649,36 @@ function buildParcelBuilding(
     frontSpan,
     streetNormal,
   );
+
+  // --- 裏庭部品の配置(乱数非消費。上でロールした backyardDecision がある
+  //     場合のみ)。frame は揺らぎ回転前(pre-jitter)の接道フレームを使う
+  //     (帯の奥行き ≥ 2.5 に対し揺らぎの頂点変位は最大 0.5 のため、建物本体
+  //     との衝突余地は十分にある。実装補足) ---
+  if (backyardDecision) {
+    const backyardToWorld = (u: number, v: number): Vec2 => ({
+      x: origin.x + tx * u + preRotateBackX * v,
+      z: origin.z + tz * u + preRotateBackZ * v,
+    });
+    const backyardRotU = -Math.atan2(tz, tx);
+    const backyardRotV = -Math.atan2(preRotateBackZ, preRotateBackX);
+    parts.push(
+      ...placeBackyardParts(
+        model,
+        ctx,
+        backyardToWorld,
+        backyardRotU,
+        backyardRotV,
+        [{ u0: -usableW / 2, u1: usableW / 2, depth: backyardBandDepth }],
+        bd,
+        new Set([parcel.id]),
+        [],
+        materials.wall,
+        materials.roof,
+        pitch,
+        backyardDecision,
+      ),
+    );
+  }
 
   const building: Building = {
     id,
@@ -2686,6 +2952,8 @@ function finalizeCourtyardGroups(
         overrideJitter: bestJitter,
         rotatePivot: "origin",
         sizeOverride: { bw: depthReach, bd: rowLength },
+        // 中庭型の端建物は裏庭を持たない(契約「裏庭の性質」の中庭型除外)
+        allowBackyard: false,
       };
       const candidate = buildParcelBuilding(model, ctx, member, candidateOpts);
       if (candidate.role === "waterside") continue;
@@ -2911,6 +3179,7 @@ const ROWHOUSE_DIVIDER_WIDTH = 0.14;
  */
 function finalizeRowhouseGroups(
   model: WorldModel,
+  ctx: SiteContext,
   buildings: Building[],
   layoutByParcelId: Map<string, ParcelLayout>,
 ): void {
@@ -3255,6 +3524,56 @@ function finalizeRowhouseGroups(
       });
     }
 
+    // --- 裏庭(Phase C タスク C6。契約「裏庭の性質」)。連棟の共有裏庭は
+    //     組成情報(共有奥行き bd・全メンバー)が段12 本番ループの時点では
+    //     未確定のため、ここで判定・配置する。住戸(区画)ごとに実際の帯の
+    //     奥行きが異なりうるため(bd は全メンバーの最小値)、unitSpans の
+    //     各住戸の u 範囲に沿って住戸ごとの帯(depth)を個別に持つ(実装補足:
+    //     階段状。帯制約 (12) を各住戸自身の区画から満たすため)。ロール
+    //     (採否・shed)は列全体で 1 回、帯は住戸ごとの最大値で判定する。
+    //     乱数は既に生成済みの "building/<compositeId>/details" ストリーム
+    //     (detailsRng。ファサード分節・分節縦梁のロール用)の末尾へ追加消費
+    //     する(実装補足: C5 がファサード分節へ専用インスタンスを立てた
+    //     前例と同じ理由による例外) ---
+    const backyardUnits: BackyardUnit[] = unitSpans.map((span, i) => {
+      const m = members[i];
+      const memberUsableD = m ? siteGeometry(m, FRONT_SETBACK).usableD : bd;
+      return {
+        u0: span.u0,
+        u1: span.u1,
+        depth: memberUsableD - bd + BACK_SETBACK,
+      };
+    });
+    const backyardBandDepth = Math.max(...backyardUnits.map((u) => u.depth));
+    const rowBackyardDecision = rollBackyardDecision(
+      detailsRng,
+      model.meta.params.settlement / 100,
+      detail,
+      backyardBandDepth,
+    );
+    if (rowBackyardDecision) {
+      const rotVYard = -Math.atan2(backZ, backX);
+      const ownParcelIds = new Set(members.map((m) => m.id));
+      const otherBuildings = buildings.filter((b) => !ownIds.has(b.id));
+      parts.push(
+        ...placeBackyardParts(
+          model,
+          ctx,
+          toWorld,
+          rotU,
+          rotVYard,
+          backyardUnits,
+          bd,
+          ownParcelIds,
+          otherBuildings,
+          materials.wall,
+          materials.roof,
+          pitch,
+          rowBackyardDecision,
+        ),
+      );
+    }
+
     const composite: Building = {
       id: compositeId,
       parcelId: head.id,
@@ -3392,6 +3711,9 @@ export function runBuildings(model: WorldModel): void {
         ...SINGLE_BUILD_OPTIONS,
         backSetbackExtra: naturalUsableD - targetUsableD,
         forceRectangle: true,
+        // 中庭型メンバーは裏庭を持たない(契約「裏庭の性質」の中庭型除外:
+        // 後退で生まれた背面帯は共有の中庭として使うため)
+        allowBackyard: false,
       };
     }
 
@@ -3422,7 +3744,7 @@ export function runBuildings(model: WorldModel): void {
   //     消費順には触れない。中庭型より前に行う(パターンは互いに排他な
   //     グループへのみ適用されるため順序は本質的に無関係だが、水辺拡張の
   //     第2パスより前に済ませておく) ---
-  finalizeRowhouseGroups(model, buildings, groupLayouts);
+  finalizeRowhouseGroups(model, ctx, buildings, groupLayouts);
 
   // --- Phase C タスク C4c: 中庭型グループの端建物の内向きスナップ・塀
   //     (courtyard-wall)・courtyard Plaza の追記(契約「中庭型(courtyard)
