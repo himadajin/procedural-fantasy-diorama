@@ -36,7 +36,8 @@ const ROOF_IDS = ["thatch", "shingle", "tile", "slate"];
 const TRIM_IDS = ["wood", "stone"];
 const ALL_MATERIAL_IDS = new Set([...WALL_IDS, ...ROOF_IDS, ...TRIM_IDS]);
 /** commit 13 の骨格語彙 + PHASE 4b commit 14 の詳細語彙 +
- *  PHASE 6 commit 19 の水辺拡張語彙(deck) */
+ *  PHASE 6 commit 19 の水辺拡張語彙(deck) +
+ *  Phase C タスク C4c の中庭型語彙(courtyard-wall) */
 const PART_TYPES = new Set([
   "plinth",
   "pile",
@@ -52,9 +53,16 @@ const PART_TYPES = new Set([
   "stair",
   "dormer",
   "deck",
+  "courtyard-wall",
 ]);
-/** 建物本体に付かない部品(敷地前面帯に置かれる。footprint 検査から除く) */
+/** 建物本体に付かない部品(敷地前面帯・中庭型の塀に置かれる。footprint
+ *  検査から除く。courtyard-wall は親区画ではなくグループ帯で検証する
+ *  ため、下記の「部品が footprint から大きくはみ出さない」テストでは
+ *  別扱いにする(契約「中庭型(courtyard)の性質」帯制約 (12)) */
 const SITE_PART_TYPES = new Set(["fence", "stair"]);
+/** グループ帯(1.2)で検証する部品区分(契約 (12): courtyard-wall はグループの
+ *  いずれかのメンバー区画から 1.2 以内であればよい) */
+const GROUP_BAND_PART_TYPES = new Set(["courtyard-wall"]);
 
 /** 水辺拡張部品(commit 19。骨格・詳細の性質検査から契約どおり除く) */
 function isWaterfront(p: Part): boolean {
@@ -265,6 +273,17 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+      // グループ帯の判定用(契約 (12)): groupId → 同一グループの全区画
+      const parcelsByGroup = new Map<string, WorldModel["parcels"]>();
+      for (const p of model.parcels) {
+        if (!p.groupId) continue;
+        let bucket = parcelsByGroup.get(p.groupId);
+        if (!bucket) {
+          bucket = [];
+          parcelsByGroup.set(p.groupId, bucket);
+        }
+        bucket.push(p);
+      }
       for (const b of general(model)) {
         // ジェッティのある建物は上階壁・屋根・開口が張り出しぶんさらに出る
         const limit = b.parts.some((p) => p.type === "jetty") ? 1.2 : 0.9;
@@ -274,6 +293,26 @@ describe("building parts: 部品の整合(建物部品の性質)", () => {
           // (契約「水辺建築の拡張」。test/waterfront.test.ts で検証)
           if (isWaterfront(p)) continue;
           for (const c of partCorners(p)) {
+            if (GROUP_BAND_PART_TYPES.has(p.type)) {
+              // 中庭型の塀(courtyard-wall)はグループのいずれかのメンバー
+              // 区画から 1.2 以内であればよい(契約「中庭型(courtyard)の
+              // 性質」帯制約 (12)。SITE_PART_TYPES の親区画 1.2 帯の
+              // 「グループの複数区画」への一般化)
+              expect(parcel?.groupId).toBeDefined();
+              const groupParcels = parcel?.groupId
+                ? parcelsByGroup.get(parcel.groupId)
+                : undefined;
+              expect(groupParcels).toBeDefined();
+              if (groupParcels) {
+                const minDist = Math.min(
+                  ...groupParcels.map((gp) =>
+                    polygonSignedDistance(c.x, c.z, gp.polygon),
+                  ),
+                );
+                expect(minDist).toBeLessThanOrEqual(1.2);
+              }
+              continue;
+            }
             if (SITE_PART_TYPES.has(p.type)) {
               // 石垣・外階段は footprint の外・敷地前面帯に収まる(契約)
               expect(parcel).toBeDefined();

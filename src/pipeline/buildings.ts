@@ -70,6 +70,7 @@ import {
   type Foundation,
   type Parcel,
   type Part,
+  type Plaza,
   type Polygon,
   type Vec2,
   type WorldModel,
@@ -377,7 +378,11 @@ interface SiteGeometry {
   center: Vec2;
 }
 
-function siteGeometry(parcel: Parcel, frontSetback: number): SiteGeometry {
+function siteGeometry(
+  parcel: Parcel,
+  frontSetback: number,
+  backSetbackExtra = 0,
+): SiteGeometry {
   const [fa, fb] = parcel.frontEdge;
   const frontage = Math.hypot(fb.x - fa.x, fb.z - fa.z);
   const depth = frontage > 1e-6 ? polygonArea(parcel.polygon) / frontage : 0;
@@ -391,7 +396,10 @@ function siteGeometry(parcel: Parcel, frontSetback: number): SiteGeometry {
     z: frontMid.z + backZ * frontSetback,
   };
   const usableW = Math.max(2.2, frontage - 2 * SIDE_SETBACK);
-  const usableD = Math.max(2.2, depth - frontSetback - BACK_SETBACK);
+  const usableD = Math.max(
+    2.2,
+    depth - frontSetback - BACK_SETBACK - backSetbackExtra,
+  );
   const center = {
     x: origin.x + backX * (usableD / 2),
     z: origin.z + backZ * (usableD / 2),
@@ -521,6 +529,57 @@ const STAGGER_SETBACK_NEAR = 0.5;
 const STAGGER_SETBACK_FAR = 2.0;
 /** 雁行の向き変調(±4°。同節の提案値) */
 const STAGGER_YAW_DEG = 4;
+
+// ============================================================
+// 中庭型(courtyard)の実装定数(Phase C タスク C4c。
+// contracts/buildings.md「中庭型(courtyard)の性質」実装補足の提案値)
+// ============================================================
+/**
+ * 建物サイズ式(役割別)の bd = usableD × [0.72, 0.95] 相当の上限
+ * (warehouse 0.9 / waterside ≤0.95 / house 系 ≤0.95。役割は本番ループの
+ * 時点ではまだ決まっていないため、決定論的な後退量の算出には上限側で
+ * 見積もる=安全側)。
+ */
+const COURTYARD_DEPTH_FRACTION_MAX = 0.95;
+/** 端の建物(内向きスナップ)の奥行き(回転後は接道からの奥行きになる)下限・
+ *  塀・Plaza との間の隙間 */
+const COURTYARD_END_DEPTH_MIN = 3.5;
+const COURTYARD_WALL_GAP = 0.6;
+/** 端の建物のグループ内側への長さ(回転後)の下限・上限・可住間口に対する比率 */
+const COURTYARD_END_LENGTH_MIN = 2.5;
+const COURTYARD_END_LENGTH_MAX = 5.5;
+const COURTYARD_END_LENGTH_FRACTION = 0.4;
+/** 塀からさらに内側へ縮めた matrix が courtyard Plaza(契約の内側マージン) */
+const COURTYARD_WALL_INSET = 0.8;
+/** 塀の寸法(一般建物の様式に合わせた控えめな高さ・厚み) */
+const COURTYARD_WALL_HEIGHT = 2.0;
+const COURTYARD_WALL_THICKNESS = 0.4;
+/** 中庭として成立させる最小の幅・奥行き(下回れば単棟へフォールバック) */
+const COURTYARD_MIN_WIDTH = 6;
+const COURTYARD_MIN_DEPTH = 2.5;
+/** 帯制約 (12) を満たすための段階的な縮小の試行回数・1回あたりの縮小量 */
+const COURTYARD_SHRINK_STEPS = 4;
+const COURTYARD_SHRINK_STEP_SIZE = 0.6;
+/** 帯制約 (12): 塀・Plaza の全コーナーはグループのいずれかのメンバー区画から
+ *  この距離以内 */
+const COURTYARD_PARCEL_BAND = 1.2;
+
+/**
+ * 中庭型グループの奥行き基準線(courtyard の奥行き後端。区画データのみから
+ * 決定論的に導出する。乱数は消費しない)。グループ内メンバーの素の可住奥行き
+ * (後退セットバックなし。既定 FRONT_SETBACK で評価)の最小値から、塀との
+ * 隙間 COURTYARD_WALL_GAP を引いたもの。本番ループ(中間メンバーの後退量の
+ * 目標値算出)と finalizeCourtyardGroups(塀・Plaza の外形算出)の双方が
+ * 同じ式を共有する。
+ */
+function courtyardBackLine(members: readonly Parcel[]): number {
+  let vBack = Infinity;
+  for (const m of members) {
+    const site = siteGeometry(m, FRONT_SETBACK);
+    vBack = Math.min(vBack, FRONT_SETBACK + site.usableD);
+  }
+  return vBack - COURTYARD_WALL_GAP;
+}
 
 /** グループ内の 1 区画ぶんの配置計画 */
 export interface ParcelLayout {
@@ -859,6 +918,7 @@ function expandParts(
   derived: Derived,
   rng: Rng,
   frontSpan: { u0: number; u1: number },
+  streetNormal: Vec2,
 ): Part[] {
   const parts: Part[] = [];
   // rotation は Y 軸まわり(ローカル +x → ワールド (cosθ, 0, −sinθ)。契約)
@@ -1042,6 +1102,7 @@ function expandParts(
     doorOffT,
     roofInfo,
     rng,
+    streetNormal,
   });
   return parts;
 }
@@ -1080,6 +1141,12 @@ interface DetailContext {
     height: number;
   } | null;
   rng: Rng;
+  /** 親区画の facing から導いた街路の外向き法線(契約 (10))。扉は wing0 の
+   *  4 exterior faces のうち、これに最も外向き法線が近い面へ置く。
+   *  非回転の建物では常に wing0 の front 面が選ばれる(既存挙動を無傷で
+   *  再現する。front 面法線は jitter 込みでも streetNormal に極めて近く、
+   *  他の面は直交に近いため選択が入れ替わらない) */
+  streetNormal: Vec2;
 }
 
 /** 翼の外壁面(開口・梁を置く面)。翼どうしの接合面は除く(契約) */
@@ -1156,14 +1223,54 @@ function expandDetailParts(parts: Part[], ctx: DetailContext): void {
     role,
     detail,
     rng,
+    streetNormal,
   } = ctx;
 
-  // --- 扉(正面 frontEdge 側に必ず 1 つ。契約) ---
-  // アンカーは張り出し前の正面スパン(接道正面の中央帯に置く)
-  const du0 = ctx.frontSpan.u1 - ctx.frontSpan.u0;
-  const cu0 = (ctx.frontSpan.u0 + ctx.frontSpan.u1) / 2;
-  const frontN = dirWorld(0, -1);
+  // --- 扉(街路側の壁面に必ず 1 つ。契約 (10)) ---
+  // wing0 の 4 外壁面のうち、外向き法線が親区画の facing(streetNormal)に
+  // 最も近い面を選ぶ。回転していない建物は front 面の法線が streetNormal と
+  // ほぼ一致するため常に front が選ばれ(既存挙動を無傷で再現する)、
+  // 中庭型メンバーの 90° 内向きスナップでは front/back が街路と直交するため
+  // left/right のいずれかが選ばれる(契約「中庭型(courtyard)の性質」(10))
+  const doorFaces = exteriorFaces(ctx, 0, 0);
+  let doorFace: WallFace =
+    doorFaces[0] ??
+    ({
+      key: "front",
+      length: w0.u1 - w0.u0,
+      point: (t: number) => toWorld(t, w0.v0),
+      normal: dirWorld(0, -1),
+    } satisfies WallFace);
+  let bestFaceDot = -Infinity;
+  for (const f of doorFaces) {
+    const dot = f.normal.x * streetNormal.x + f.normal.z * streetNormal.z;
+    if (dot > bestFaceDot) {
+      bestFaceDot = dot;
+      doorFace = f;
+    }
+  }
+  const isStreetFront = doorFace.key === "front";
+  // アンカーは front 面のときのみ張り出し前の正面スパンを使う(水上張り出しで
+  // wing0.u0/u1 が伸びても扉が延長部へ寄らないようにする既存挙動)。
+  // それ以外(中庭型メンバーの回転済み胴体)は選択した面自身の座標系を使う
+  // (waterside の端建物は回転対象外のため水上張り出しとは干渉しない)
+  const du0 = isStreetFront
+    ? ctx.frontSpan.u1 - ctx.frontSpan.u0
+    : doorFace.length;
+  const doorPosAt = isStreetFront
+    ? (t: number): Vec2 =>
+        toWorld((ctx.frontSpan.u0 + ctx.frontSpan.u1) / 2 + t, w0.v0)
+    : (t: number): Vec2 => doorFace.point(t);
+  const frontN = doorFace.normal;
   const frontRot = normalRot(frontN);
+  // 面自身の接線方向(front/back は u 方向、left/right は v 方向。契約 (11)
+  // の基準は footprint 多角形からの符号付き距離のため、回転しても部品帯の
+  // 判定は無傷。ここは石垣・外階段の向きの見た目の整合のみに使う)
+  const faceTangent =
+    doorFace.key === "front" || doorFace.key === "back"
+      ? dirWorld(1, 0)
+      : dirWorld(0, 1);
+  const faceRot = tangentRot(faceTangent);
   const doorW = clamp(ctx.doorWRaw, 0.85, Math.max(0.85, du0 - 1.0));
   const doorH = Math.min(
     role === "warehouse" ? 2.5 : 2.15,
@@ -1171,7 +1278,11 @@ function expandDetailParts(parts: Part[], ctx: DetailContext): void {
   );
   const doorMax = Math.max(0, du0 / 2 - doorW / 2 - 0.45);
   const doorOff = clamp(ctx.doorOffT * 0.2 * du0, -doorMax, doorMax);
-  const doorPos = toWorld(cu0 + doorOff, w0.v0);
+  const doorPos = doorPosAt(doorOff);
+  const facePointOffset = (t: number, dist: number): Vec2 => {
+    const p = doorPosAt(t);
+    return { x: p.x + frontN.x * dist, z: p.z + frontN.z * dist };
+  };
   parts.push({
     type: "door",
     transform: {
@@ -1213,10 +1324,12 @@ function expandDetailParts(parts: Part[], ctx: DetailContext): void {
             -usable / 2 + ctx.windowW / 2,
             usable / 2 - ctx.windowW / 2,
           );
-          // 1階正面の扉近傍は空ける(乱数は消費済み)
+          // 扉のある壁面近傍は空ける(乱数は消費済み。契約 (10) により
+          // 扉は wing0 の doorFace 面に置かれる。回転していない建物では
+          // doorFace.key は常に "front")
           if (
             wi === 0 &&
-            face.key === "front" &&
+            face.key === doorFace.key &&
             floor === 0 &&
             Math.abs(t - doorOff) < (doorW + ctx.windowW) / 2 + 0.25
           ) {
@@ -1379,18 +1492,20 @@ function expandDetailParts(parts: Part[], ctx: DetailContext): void {
   ) {
     const fenceH = 0.42 + 0.25 * rng.next();
     const gapHalf = doorW / 2 + 0.7;
+    // 面は常に中心(t=0)対称(front は frontSpan、それ以外は doorFace 自身が
+    // 対称な座標系のため。cu0 相当は常に 0)
     const segs: [number, number][] = [
-      [ctx.frontSpan.u0 + 0.15, cu0 + doorOff - gapHalf],
-      [cu0 + doorOff + gapHalf, ctx.frontSpan.u1 - 0.15],
+      [-du0 / 2 + 0.15, doorOff - gapHalf],
+      [doorOff + gapHalf, du0 / 2 - 0.15],
     ];
     for (const [a, b] of segs) {
       if (b - a < 1.0) continue;
-      const mid = toWorld((a + b) / 2, -FENCE_FRONT_OFFSET);
+      const mid = facePointOffset((a + b) / 2, FENCE_FRONT_OFFSET);
       parts.push({
         type: "fence",
         transform: {
           position: [mid.x, 0, mid.z],
-          rotation: rotU,
+          rotation: faceRot,
           scale: [b - a, fenceH, FENCE_THICKNESS],
         },
         materialId: "stone",
@@ -1924,6 +2039,841 @@ function expandWaterfrontParts(
   }
 }
 
+/**
+ * 段12「建物」の1区画ぶんの生成に与える配置パラメータ(Phase C)。
+ * 乱数は一切消費しない(セットバック・向き・矩形固定の変調のみ)。
+ */
+interface BuildLayoutOptions {
+  frontSetback: number;
+  /** 背面セットバックへの追加分(中庭型グループの全メンバー。契約
+   *  「中庭型(courtyard)の性質」実装補足の後退量。グループの奥行き基準線
+   *  (vBack)から呼び出し側が決定論的に逆算する) */
+  backSetbackExtra: number;
+  /** true の場合、L字・T字の抽選結果を破棄して矩形へ固定する(rng 消費は
+   *  shapeVertices 呼び出しにより通常どおり行われ、結果だけを捨てる) */
+  forceRectangle: boolean;
+  /** null = 通常のランダム揺らぎ(tidiness 連動)をそのまま使う。数値を渡すと
+   *  その値へ**置き換える**(揺らぎの抽選値は消費するが結果は捨てる。
+   *  雁行(stagger)・中庭型の 90° 内向きスナップと同じ意味論) */
+  overrideJitter: number | null;
+  /** 回転の軸。"centroid" = footprint 重心(既存の揺らぎ・雁行と同じ)、
+   *  "origin" = 接道正面セットバック線上の点(中庭型の 90° 内向きスナップ。
+   *  重心回転だと bw≠bd の矩形が道路側へ食み出すため、正面帯上の点を軸に
+   *  回して回転前の背面方向へ bw/2 だけ並進補正する) */
+  rotatePivot: "centroid" | "origin";
+  /** 非 null の場合、役割別のサイズ式(bw/bd)を無視してこの値を使う(中庭型の
+   *  端建物の 90° 回転専用)。widthT/depthT の rng 消費は通常どおり行い、
+   *  結果だけ破棄する("building/<id>" の消費順は不変)。forceRectangle との
+   *  併用が前提 */
+  sizeOverride: { bw: number; bd: number } | null;
+}
+
+const SINGLE_BUILD_OPTIONS: BuildLayoutOptions = {
+  frontSetback: FRONT_SETBACK,
+  backSetbackExtra: 0,
+  forceRectangle: false,
+  overrideJitter: null,
+  rotatePivot: "centroid",
+  sizeOverride: null,
+};
+
+/** 段12「建物」1棟ぶんの生成結果(骨格・素材・部品込みの Building と、
+ *  水辺拡張(第2パス)・中庭型の後処理が必要とする中間情報) */
+interface BuiltParcelResult {
+  building: Building;
+  role: BuildingRole;
+  wing0: Wing | null;
+  frame: WingFrame;
+  waterExtSide: WaterfrontSide | null;
+  foundation: Foundation;
+  floors: number;
+  roofPitch: number;
+}
+
+/**
+ * 1 区画ぶんの建物骨格・素材・部品を生成する(段12「建物」commit 12〜14 の
+ * 本体。従来の段12 本番ループの1反復と同一の計算を、`BuildLayoutOptions`
+ * (セットバック・矩形固定・向きの変調)を入力として切り出したもの)。
+ * `opts` は乱数を消費しない決定論的な変調のみのため、`"building/<id>"` 系の
+ * 消費順・消費数は `opts` の値に依らず一定(同一 parcel・同一 opts の呼び出しは
+ * 常に同一の結果を返す純関数)。中庭型の端建物の内向きスナップ候補生成・
+ * 帯制約超過時のグループ全体フォールバック(単棟への再生成)は、この関数を
+ * 異なる `opts` で複数回呼び出すことで実現する。
+ */
+function buildParcelBuilding(
+  model: WorldModel,
+  ctx: SiteContext,
+  parcel: Parcel,
+  opts: BuildLayoutOptions,
+): BuiltParcelResult {
+  const { seed, derived } = model.meta;
+  const final = model.density.final;
+  const id = `building/${parcel.id.slice("parcel/".length)}`;
+  const rng = makeRng(seed, id);
+  // 同型連続の抑制(Phase C。位置由来・乱数非消費。上記 layoutParity)
+  const parity = layoutParity(parcel);
+
+  // --- 幾何の下ごしらえ(接道フレーム) ---
+  const geo = siteGeometry(parcel, opts.frontSetback, opts.backSetbackExtra);
+  const tx = geo.tx;
+  const tz = geo.tz;
+  let backX = geo.backX;
+  let backZ = geo.backZ;
+  const origin = geo.origin;
+  const usableW = geo.usableW;
+  const usableD = geo.usableD;
+  const center = geo.center;
+  const density = final ? sampleFieldGrid(final, center.x, center.z) : 0;
+  const urbanity = model.zoning
+    ? sampleFieldGrid(model.zoning, center.x, center.z)
+    : 0;
+
+  // --- 役割 ---
+  const role = decideRole(rng, model, parcel, center, density);
+
+  // --- 寸法と形状 ---
+  const widthT = rng.next();
+  const depthT = rng.next();
+  let bw = usableW * (0.82 + 0.18 * widthT);
+  let bd = usableD * (0.72 + 0.23 * depthT);
+  if (role === "warehouse") {
+    bw = usableW * 0.9;
+    bd = usableD * 0.9;
+  } else if (role === "outskirt") {
+    bw *= 0.65;
+    bd *= 0.65;
+  } else if (role === "waterside") {
+    // 水辺建築は敷地の奥行きを使い切り、水面へ寄る
+    bd = usableD * (0.88 + 0.07 * depthT);
+  }
+  bw = clamp(bw, 2.2, usableW);
+  bd = clamp(bd, 2.2, usableD);
+  if (opts.sizeOverride) {
+    // 中庭型の端建物の 90° 回転専用サイズ(実装補足)。widthT/depthT の
+    // rng 消費は上で済んでいるため、ここでは値だけ置き換える
+    bw = opts.sizeOverride.bw;
+    bd = opts.sizeOverride.bd;
+  }
+  // waterside は shapeVertices が矩形を返す(張り出しの合成を単純に保つ。契約)
+  const shaped = shapeVertices(rng, role, bw, bd, parity);
+  let localVerts = shaped.verts;
+  let compound = shaped.compound;
+  let wings = shaped.wings;
+  if (opts.forceRectangle && compound) {
+    // 中庭型は footprint を矩形に固定する(契約「中庭型(courtyard)の性質」)。
+    // L/T 抽選の rng 消費は上の shapeVertices 呼び出しで通常どおり済んでいる
+    // ため、ここでは結果だけ破棄する("building/<id>" の消費順は不変)
+    const w2 = bw / 2;
+    localVerts = [
+      { u: -w2, v: 0 },
+      { u: w2, v: 0 },
+      { u: w2, v: bd },
+      { u: -w2, v: bd },
+    ];
+    compound = false;
+    wings = [{ u0: -w2, u1: w2, v0: 0, v1: bd }];
+  }
+  // 張り出し前の正面スパン(扉・石垣・外階段のアンカー。4b)
+  const fw = wings[0];
+  const frontSpan = fw ? { u0: fw.u0, u1: fw.u1 } : { u0: 0, u1: 0 };
+
+  // ローカル → ワールド
+  let verts: Vec2[] = localVerts.map((lp) => ({
+    x: origin.x + tx * lp.u + backX * lp.v,
+    z: origin.z + tz * lp.u + backZ * lp.v,
+  }));
+
+  // --- 向き: 広場 > 道路 > 水面 の優先 ---
+  let facing = parcel.facing;
+  const plaza = adjacentPlaza(model, parcel);
+  if (plaza) {
+    const toPlaza = Math.atan2(
+      plaza.position.z - center.z,
+      plaza.position.x - center.x,
+    );
+    let best = facing;
+    let bestDot = -Infinity;
+    for (let k = 0; k < 4; k++) {
+      const a = parcel.facing + (k * Math.PI) / 2;
+      const dot = Math.cos(a - toPlaza);
+      if (dot > bestDot) {
+        bestDot = dot;
+        best = a;
+      }
+    }
+    facing = best;
+  }
+
+  // --- 揺らぎ(tidiness 高で減。頂点変位 0.5 以下にクランプ)+
+  //     Phase C の雁行・中庭型の向き変調(乱数非消費) ---
+  let cx = 0;
+  let cz = 0;
+  for (const v of verts) {
+    cx += v.x;
+    cz += v.z;
+  }
+  cx /= verts.length;
+  cz /= verts.length;
+  let radius = 0;
+  for (const v of verts) {
+    radius = Math.max(radius, Math.hypot(v.x - cx, v.z - cz));
+  }
+  const shiftCap = MAX_JITTER_SHIFT / Math.max(radius, 1e-6);
+  const jitterMax = Math.min((MAX_JITTER_DEG * Math.PI) / 180, shiftCap);
+  // rng の消費順・消費数は opts に関わらず不変(契約の規約)。雁行・中庭型は
+  // 既存の向き揺らぎ(±3°・tidiness 連動)に「加算せず置き換える」
+  // (抽選値は消費するが捨てる)
+  const randomJitter = rng.range(-1, 1) * (1 - derived.tidiness) * jitterMax;
+  const jitter = opts.overrideJitter !== null ? opts.overrideJitter : randomJitter;
+  const cosJ = Math.cos(jitter);
+  const sinJ = Math.sin(jitter);
+  // 中庭型の内向きスナップ(rotatePivot "origin")は footprint 重心ではなく
+  // 前面セットバック線上の origin を軸に回す(重心まわりに回すと bw≠bd の
+  // 矩形が道路側へ食み出すため。実装補足参照)
+  const pivot = opts.rotatePivot === "origin" ? origin : { x: cx, z: cz };
+  const rotate = (p: Vec2): Vec2 => ({
+    x: pivot.x + (p.x - pivot.x) * cosJ - (p.z - pivot.z) * sinJ,
+    z: pivot.z + (p.x - pivot.x) * sinJ + (p.z - pivot.z) * cosJ,
+  });
+  verts = verts.map(rotate);
+  facing += jitter;
+  // シフト前(=回転前)の背面方向。中庭型の内向きスナップの並進補正に使う
+  const preRotateBackX = backX;
+  const preRotateBackZ = backZ;
+  const backRot = {
+    x: backX * cosJ - backZ * sinJ,
+    z: backX * sinJ + backZ * cosJ,
+  };
+  backX = backRot.x;
+  backZ = backRot.z;
+  // 揺らぎ回転後のローカルフレーム(部品展開の翼が footprint と同じ変換を共有する)
+  const uDir = { x: tx * cosJ - tz * sinJ, z: tx * sinJ + tz * cosJ };
+  let originRot = rotate(origin);
+  if (opts.rotatePivot === "origin") {
+    // 90° 回転で「間口方向(u=bw、origin を中心に対称)」が奥行き軸へ写ると、
+    // 対称範囲 [-bw/2, bw/2] のまま道路側へ bw/2 食み出す。origin を中心に
+    // [0, bw](内側へ全部)へ揃うよう、回転前の背面方向へ bw/2 だけ並進させる
+    // (乱数非消費)
+    const shiftX = preRotateBackX * (bw / 2);
+    const shiftZ = preRotateBackZ * (bw / 2);
+    verts = verts.map((v) => ({ x: v.x + shiftX, z: v.z + shiftZ }));
+    originRot = { x: originRot.x + shiftX, z: originRot.z + shiftZ };
+  }
+
+  // --- 水上張り出し(waterside × 湖・池) ---
+  // 背面・左右の3辺の中点から水面を探索し、最も近い水面へ向けて
+  // その辺を延長する(正面=接道側は張り出さない)。
+  let overWater = false;
+  let waterExtSide: WaterfrontSide | null = null;
+  if (role === "waterside" && verts.length === 4) {
+    // 矩形の頂点順は [fl, fr, br, bl]
+    const sides: { d: Vec2; a: number; b: number }[] = [
+      { d: { x: backX, z: backZ }, a: 2, b: 3 }, // 背面(br, bl)
+      { d: uDir, a: 1, b: 2 }, // 右側面(fr, br)
+      { d: { x: -uDir.x, z: -uDir.z }, a: 3, b: 0 }, // 左側面(bl, fl)
+    ];
+    let best: { d: Vec2; a: number; b: number; gap: number } | null = null;
+    for (const side of sides) {
+      const va = verts[side.a];
+      const vb = verts[side.b];
+      if (!va || !vb) continue;
+      // 辺の中点と両端(コーナーの斜め先の水面も拾う)から探索する
+      const starts: Vec2[] = [
+        { x: (va.x + vb.x) / 2, z: (va.z + vb.z) / 2 },
+        va,
+        vb,
+      ];
+      for (const s of starts) {
+        for (let g = 0.5; g <= OVERHANG_SEARCH + 1e-9; g += 0.5) {
+          if (ctx.waterBodySdf(s.x + side.d.x * g, s.z + side.d.z * g) < 0) {
+            if (!best || g < best.gap) best = { ...side, gap: g };
+            break;
+          }
+        }
+      }
+    }
+    if (best) {
+      const va = verts[best.a];
+      const vb = verts[best.b];
+      if (va && vb) {
+        const ext = Math.min(best.gap + OVERHANG_INTO_WATER, OVERHANG_MAX);
+        const region: Polygon = ensureClockwise([
+          { x: va.x, z: va.z },
+          { x: va.x + best.d.x * ext, z: va.z + best.d.z * ext },
+          { x: vb.x + best.d.x * ext, z: vb.z + best.d.z * ext },
+          { x: vb.x, z: vb.z },
+        ]);
+        if (!overhangBlocked(model, ctx, region, parcel.id)) {
+          verts[best.a] = {
+            x: va.x + best.d.x * ext,
+            z: va.z + best.d.z * ext,
+          };
+          verts[best.b] = {
+            x: vb.x + best.d.x * ext,
+            z: vb.z + best.d.z * ext,
+          };
+          // 翼(部品展開)にも同じ張り出しを反映する(footprint と一致させる)
+          const wing0 = wings[0];
+          if (wing0) {
+            if (best.a === 2) wing0.v1 += ext; // 背面
+            else if (best.a === 1) wing0.u1 += ext; // 右側面
+            else wing0.u0 -= ext; // 左側面
+          }
+          // 水辺拡張(commit 19)がデッキ・張り出し部屋を付ける面
+          waterExtSide = best.a === 2 ? "back" : best.a === 1 ? "right" : "left";
+        }
+      }
+    }
+  }
+  const footprint = ensureClockwise(verts);
+  for (const v of footprint) {
+    if (ctx.waterBodySdf(v.x, v.z) < 0) overWater = true;
+  }
+
+  // --- 階数(Settlement / Prosperity / 役割 / urbanity。サイズ勾配
+  //     (Phase C。contracts/buildings.md「floors の改訂」)) ---
+  const floorsBase =
+    1.05 +
+    derived.floorsBias +
+    0.4 * derived.detailAmount +
+    FLOORS_ROLE_ADJUST[role] +
+    FLOORS_URBAN_GAIN *
+      smoothstep(FLOORS_URBAN_EDGE0, FLOORS_URBAN_EDGE1, urbanity) +
+    rng.range(-0.3, 0.5);
+  const floorsMax = urbanity >= FLOORS_URBAN_4F_THRESHOLD ? 4 : 3;
+  const floors = clamp(Math.round(floorsBase), 1, floorsMax);
+
+  // --- 屋根(50〜58度。L/T は複合屋根。hip 抽選・pitch は同型抑制の
+  //     序数変調込み) ---
+  const hipRoleP =
+    role === "hall"
+      ? clamp(0.6 + ROOF_HIP_PARITY_WAVE * parity, 0, 1)
+      : clamp(0.2 + ROOF_HIP_PARITY_WAVE * parity, 0, 1);
+  let roofType: Building["roof"]["type"] = "gable";
+  if (compound) roofType = "compound";
+  else if (role === "hall" && rng.chance(hipRoleP)) roofType = "hip";
+  else if (floors >= 2 && rng.chance(hipRoleP)) roofType = "hip";
+  const pitch = clamp(
+    ROOF_PITCH_MIN +
+      (ROOF_PITCH_MAX - ROOF_PITCH_MIN) * rng.next() +
+      ROOF_PITCH_PARITY_WAVE * parity,
+    ROOF_PITCH_MIN,
+    ROOF_PITCH_MAX,
+  );
+
+  // --- 接地(基壇・杭・石基礎。契約の機械判定表現) ---
+  const plinthHeight = clamp(
+    0.15 + 0.55 * derived.detailAmount + PLINTH_ROLE_ADJUST[role],
+    0.1,
+    1.0,
+  );
+  const foundation: Foundation = overWater
+    ? {
+        kind: derived.detailAmount > 0.55 ? "stonebase" : "piles",
+        plinthHeight,
+        overWater: true,
+        bottomY: SHORE_SKIRT_BOTTOM_Y,
+      }
+    : { kind: "plinth", plinthHeight, overWater: false, bottomY: 0 };
+
+  // --- 素材と部品展開(commit 13。乱数は派生サブストリーム
+  //     "building/<id>/parts" のみ・建物あたり固定消費) ---
+  const partsRng = makeRng(seed, `${id}/parts`);
+  const materials = decideMaterials(
+    partsRng,
+    role,
+    derived.wallTier,
+    derived.roofTier,
+    parity,
+  );
+  // 詳細部品(PHASE 4b commit 14)は派生サブストリーム
+  // "building/<id>/details" のみ消費する(骨格・materials の消費は不変)
+  const detailsRng = makeRng(seed, `${id}/details`);
+  const frame: WingFrame = {
+    origin: originRot,
+    u: uDir,
+    v: { x: backX, z: backZ },
+  };
+  // 扉の街路側判定(契約 (10))の基準。回転していても親区画の facing 自体は
+  // 変わらないため、常に parcel.facing から直接導く
+  const streetNormal: Vec2 = {
+    x: Math.cos(parcel.facing),
+    z: Math.sin(parcel.facing),
+  };
+  const parts = expandParts(
+    wings,
+    frame,
+    foundation,
+    floors,
+    { type: roofType, pitch },
+    materials,
+    role,
+    derived,
+    detailsRng,
+    frontSpan,
+    streetNormal,
+  );
+
+  const building: Building = {
+    id,
+    parcelId: parcel.id,
+    role,
+    footprint,
+    facing,
+    floors,
+    roof: { type: roofType, pitch },
+    foundation,
+    materials,
+    parts,
+  };
+
+  return {
+    building,
+    role,
+    wing0: wings[0] ?? null,
+    frame,
+    waterExtSide,
+    foundation,
+    floors,
+    roofPitch: pitch,
+  };
+}
+
+/** 塀セグメントの衝突判定領域(セグメント中心線 ± 厚み/2 の帯状矩形) */
+function wallSegmentRegion(a: Vec2, b: Vec2, thickness: number): Polygon {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const len = Math.hypot(dx, dz) || 1e-6;
+  const nx = (-dz / len) * (thickness / 2);
+  const nz = (dx / len) * (thickness / 2);
+  return ensureClockwise([
+    { x: a.x - nx, z: a.z - nz },
+    { x: b.x - nx, z: b.z - nz },
+    { x: b.x + nx, z: b.z + nz },
+    { x: a.x + nx, z: a.z + nz },
+  ]);
+}
+
+/**
+ * 中庭壁セグメントの衝突検査(契約: 道路・水域・広場・区画。グループ自身の
+ * 区画は除く。建物との重なりは契約に明記は無いが、絵の破綻を避ける安全側の
+ * 追加検査として建物 footprint も見る)。乱数は消費しない。当たる区間
+ * (=このセグメント全体)は呼び出し側が開口として省略する。
+ */
+function wallRegionBlocked(
+  model: WorldModel,
+  ctx: SiteContext,
+  region: Polygon,
+  ownParcelIds: Set<string>,
+  buildings: readonly Building[],
+): boolean {
+  const probes: Vec2[] = [...region];
+  for (let i = 0; i < region.length; i++) {
+    const p = region[i];
+    const q = region[(i + 1) % region.length];
+    if (p && q) probes.push({ x: (p.x + q.x) / 2, z: (p.z + q.z) / 2 });
+  }
+  for (const p of probes) {
+    if (ctx.boundaryInside(p.x, p.z) < 1) return true;
+    if (ctx.canalSdf(p.x, p.z) < 0.3) return true;
+    if (ctx.waterBodySdf(p.x, p.z) < 0.3) return true;
+  }
+  for (const parcel of model.parcels) {
+    if (ownParcelIds.has(parcel.id)) continue;
+    if (polygonsOverlap(region, parcel.polygon)) return true;
+  }
+  for (const edge of model.network.edges) {
+    if (polylineTouchesPolygon(edge.path, region, edge.width / 2 + 0.3)) {
+      return true;
+    }
+  }
+  for (const plaza of model.plazas) {
+    if (polygonsOverlap(region, plaza.polygon)) return true;
+  }
+  for (const b of buildings) {
+    if (polygonsOverlap(region, b.footprint)) return true;
+  }
+  return false;
+}
+
+/**
+ * 中庭型グループ(契約「中庭型(courtyard)の性質」)の後処理。乱数は消費しない
+ * (決定論。`buildParcelBuilding` の再呼び出しはいずれも純関数)。
+ *
+ * 1. 端の建物(グループ先頭・末尾)を、他の建物・道路・広場と衝突しない
+ *    範囲で 90° 内向きスナップの候補へ置き換える(waterside は回転対象外。
+ *    水辺拡張の第2パスとの干渉を避けるため)。
+ * 2. 塀(courtyard-wall)・courtyard Plaza の外形をグループの区画データと
+ *    確定した中間メンバーの footprint から導出し、帯制約 (12) を満たすまで
+ *    間口方向を段階的に縮める。
+ * 3. 2 が最小寸法を下回る、または帯制約を満たせない場合は、グループ全体を
+ *    単棟(single)へ再生成し、塀・Plaza は追加しない。
+ */
+function finalizeCourtyardGroups(
+  model: WorldModel,
+  ctx: SiteContext,
+  buildings: Building[],
+  layoutByParcelId: Map<string, ParcelLayout>,
+): void {
+  const groups = new Map<string, Parcel[]>();
+  for (const parcel of model.parcels) {
+    const layout = layoutByParcelId.get(parcel.id);
+    if (layout?.pattern !== "courtyard") continue;
+    let bucket = groups.get(parcel.groupId);
+    if (!bucket) {
+      bucket = [];
+      groups.set(parcel.groupId, bucket);
+    }
+    bucket.push(parcel);
+  }
+  if (groups.size === 0) return;
+
+  const buildingIdOf = (parcel: Parcel): string =>
+    `building/${parcel.id.slice("parcel/".length)}`;
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < buildings.length; i++) {
+    const b = buildings[i];
+    if (b) indexById.set(b.id, i);
+  }
+
+  for (const [groupId, unsorted] of groups) {
+    const members = [...unsorted].sort(
+      (a, b) => parcelSlot(a) - parcelSlot(b),
+    );
+    const n = members.length;
+    // 契約の適格条件(長さ3〜5)は planGroupLayouts が保証するが、防御的に確認
+    if (n < 3) continue;
+
+    const fallbackToSingle = (): void => {
+      for (const m of members) {
+        const idx = indexById.get(buildingIdOf(m));
+        if (idx === undefined) continue;
+        const rebuilt = buildParcelBuilding(
+          model,
+          ctx,
+          m,
+          SINGLE_BUILD_OPTIONS,
+        );
+        buildings[idx] = rebuilt.building;
+      }
+    };
+
+    // --- グループの基準フレーム(中央寄りのメンバーの接道方位。乱数非消費) ---
+    const refMember = members[Math.floor((n - 1) / 2)];
+    if (!refMember) continue;
+    const [fa, fb] = refMember.frontEdge;
+    const frontage = Math.hypot(fb.x - fa.x, fb.z - fa.z) || 1e-6;
+    const tx = (fb.x - fa.x) / frontage;
+    const tz = (fb.z - fa.z) / frontage;
+    const backX = -Math.cos(refMember.facing);
+    const backZ = -Math.sin(refMember.facing);
+    const projOrigin = { x: (fa.x + fb.x) / 2, z: (fa.z + fb.z) / 2 };
+    const projU = (p: Vec2): number =>
+      (p.x - projOrigin.x) * tx + (p.z - projOrigin.z) * tz;
+    const projV = (p: Vec2): number =>
+      (p.x - projOrigin.x) * backX + (p.z - projOrigin.z) * backZ;
+    const toWorld = (u: number, v: number): Vec2 => ({
+      x: projOrigin.x + tx * u + backX * v,
+      z: projOrigin.z + tz * u + backZ * v,
+    });
+
+    // --- 間口方向の範囲: 全メンバーの区画ポリゴン頂点の投影(タンジェントの
+    //     符号(どちらが「内側」か)に依存しない。内側マージン
+    //     COURTYARD_WALL_GAP。帯制約 (12) を構成的に満たすための基準) ---
+    let uMin = Infinity;
+    let uMax = -Infinity;
+    for (const m of members) {
+      for (const v of m.polygon) {
+        uMin = Math.min(uMin, projU(v));
+        uMax = Math.max(uMax, projU(v));
+      }
+    }
+    uMin += COURTYARD_WALL_GAP;
+    uMax -= COURTYARD_WALL_GAP;
+
+    // --- 奥行きの後端(中庭の奥行き基準線)。区画データのみから導出する
+    //     (本番ループの中間メンバー後退量の目標値算出と同じ式を共有する) ---
+    const vBack = courtyardBackLine(members);
+
+    // --- 奥行きの前端: 中間メンバー(街路向きのまま)の確定済み建物背面の
+    //     投影の最大値。マージン COURTYARD_WALL_GAP だけ後方 ---
+    let vFront = -Infinity;
+    for (let i = 1; i <= n - 2; i++) {
+      const m = members[i];
+      if (!m) continue;
+      const idx = indexById.get(buildingIdOf(m));
+      const b = idx !== undefined ? buildings[idx] : undefined;
+      if (!b) continue;
+      for (const v of b.footprint) vFront = Math.max(vFront, projV(v));
+    }
+    if (!Number.isFinite(vFront)) {
+      fallbackToSingle();
+      continue;
+    }
+    vFront += COURTYARD_WALL_GAP;
+
+    if (
+      uMax - uMin < COURTYARD_MIN_WIDTH ||
+      vBack - vFront < COURTYARD_MIN_DEPTH
+    ) {
+      fallbackToSingle();
+      continue;
+    }
+
+    // --- 端の建物の 90° 内向きスナップ候補(waterside は回転対象外)。
+    //     成功した側は、その建物が実際にグループ内側へ食い込む長さ
+    //     (rowLength)を記録し、courtyard Plaza の内側マージンへ反映する
+    //     (食い込みぶんだけ Plaza を後退させ、Plaza と回転済み建物の
+    //     footprint が重ならないようにする) ---
+    const endReach = { first: 0, last: 0 };
+    const ends: { member: Parcel; isFirst: boolean }[] = [
+      { member: members[0] as Parcel, isFirst: true },
+      { member: members[n - 1] as Parcel, isFirst: false },
+    ];
+    for (const { member, isFirst } of ends) {
+      const idx = indexById.get(buildingIdOf(member));
+      if (idx === undefined) continue;
+      const current = buildings[idx];
+      if (!current || current.role === "waterside") continue;
+
+      // グループ内側の方向(refMember の tx,tz を基準に、先頭は +、末尾は −)
+      const target = {
+        x: (isFirst ? 1 : -1) * tx,
+        z: (isFirst ? 1 : -1) * tz,
+      };
+      const memberSite = siteGeometry(member, FRONT_SETBACK);
+      // 回転後は bw が接道からの奥行きを担う(実装補足): 中庭の奥行き
+      // 基準線まで届かせる
+      const depthReach = clamp(
+        vBack - FRONT_SETBACK,
+        COURTYARD_END_DEPTH_MIN,
+        memberSite.usableD,
+      );
+      // 回転後は bd がグループ内側への長さを担う: 隣接メンバーへの食い込みを
+      // 抑えるため、自区画の可住間口の COURTYARD_END_LENGTH_FRACTION 倍に留める
+      const rowLength = clamp(
+        memberSite.usableW * COURTYARD_END_LENGTH_FRACTION,
+        COURTYARD_END_LENGTH_MIN,
+        COURTYARD_END_LENGTH_MAX,
+      );
+
+      // jitter = ±90° のどちらがグループ内側へ回るかを、回転後に
+      // グループ内側への長さ軸となる方向(元の接線 tx,tz の回転先)と
+      // target の内積で判定する(区画の frontEdge 端点の符号に依存しない)
+      let bestJitter = Math.PI / 2;
+      let bestDot = -Infinity;
+      for (const sign of [1, -1]) {
+        const jitter = sign * (Math.PI / 2);
+        const cosJ = Math.cos(jitter);
+        const sinJ = Math.sin(jitter);
+        const rotatedTangent = {
+          x: memberSite.tx * cosJ - memberSite.tz * sinJ,
+          z: memberSite.tx * sinJ + memberSite.tz * cosJ,
+        };
+        const dot =
+          rotatedTangent.x * target.x + rotatedTangent.z * target.z;
+        if (dot > bestDot) {
+          bestDot = dot;
+          bestJitter = jitter;
+        }
+      }
+
+      const candidateOpts: BuildLayoutOptions = {
+        frontSetback: FRONT_SETBACK,
+        backSetbackExtra: 0,
+        forceRectangle: true,
+        overrideJitter: bestJitter,
+        rotatePivot: "origin",
+        sizeOverride: { bw: depthReach, bd: rowLength },
+      };
+      const candidate = buildParcelBuilding(model, ctx, member, candidateOpts);
+      if (candidate.role === "waterside") continue;
+
+      let blocked = false;
+      for (let j = 0; j < buildings.length && !blocked; j++) {
+        if (j === idx) continue;
+        const other = buildings[j];
+        if (
+          other &&
+          polygonsOverlap(candidate.building.footprint, other.footprint)
+        ) {
+          blocked = true;
+        }
+      }
+      for (const edge of model.network.edges) {
+        if (blocked) break;
+        if (
+          polylineTouchesPolygon(
+            edge.path,
+            candidate.building.footprint,
+            edge.width / 2,
+          )
+        ) {
+          blocked = true;
+        }
+      }
+      for (const p of model.plazas) {
+        if (blocked) break;
+        if (polygonsOverlap(candidate.building.footprint, p.polygon)) {
+          blocked = true;
+        }
+      }
+      if (!blocked) {
+        buildings[idx] = candidate.building;
+        // 実際に確定した footprint のグループ内側への到達点(projU の実測値)。
+        // 回転の軸(origin)は端建物自身の frontEdge 中点であり、グループ全体の
+        // 外周(uMin/uMax。全メンバー頂点の投影)からは離れているため、
+        // rowLength だけからは食い込み量を正しく見積もれない(実測が必要)
+        const reachU = candidate.building.footprint.map((v) => projU(v));
+        if (isFirst) endReach.first = Math.max(...reachU) - uMin;
+        else endReach.last = uMax - Math.min(...reachU);
+      }
+    }
+    // courtyard Plaza の内側マージン(回転済み端建物のグループ内側への
+    // 実測の食い込みぶん+隙間。回転しなかった側は通常の COURTYARD_WALL_INSET
+    // のみ)
+    const insetFirst = Math.max(
+      COURTYARD_WALL_INSET,
+      endReach.first + COURTYARD_WALL_GAP,
+    );
+    const insetLast = Math.max(
+      COURTYARD_WALL_INSET,
+      endReach.last + COURTYARD_WALL_GAP,
+    );
+
+    // --- 帯制約 (12): 塀・Plaza の全コーナーがグループのいずれかのメンバー
+    //     区画から 1.2 以内かを検証し、満たさなければ間口方向を段階的に
+    //     縮める(決定論。乱数は消費しない。Plaza のコーナーは回転済み端建物の
+    //     食い込みぶん(insetFirst/insetLast)を反映した内側マージンで見る) ---
+    let curUMin = uMin;
+    let curUMax = uMax;
+    const plazaVBack = vBack - COURTYARD_WALL_INSET;
+    let bandOk = false;
+    for (let step = 0; step <= COURTYARD_SHRINK_STEPS; step++) {
+      const plazaUMinTry = curUMin + insetFirst;
+      const plazaUMaxTry = curUMax - insetLast;
+      if (
+        curUMax - curUMin < COURTYARD_MIN_WIDTH ||
+        plazaUMaxTry - plazaUMinTry < COURTYARD_MIN_WIDTH ||
+        plazaVBack - vFront < COURTYARD_MIN_DEPTH
+      ) {
+        break;
+      }
+      const corners = [
+        toWorld(curUMin, vFront),
+        toWorld(curUMax, vFront),
+        toWorld(curUMax, vBack),
+        toWorld(curUMin, vBack),
+        toWorld(plazaUMinTry, vFront),
+        toWorld(plazaUMaxTry, vFront),
+        toWorld(plazaUMaxTry, plazaVBack),
+        toWorld(plazaUMinTry, plazaVBack),
+      ];
+      const withinBand = corners.every((c) =>
+        members.some(
+          (m) =>
+            polygonSignedDistance(c.x, c.z, m.polygon) <=
+            COURTYARD_PARCEL_BAND,
+        ),
+      );
+      if (withinBand) {
+        bandOk = true;
+        break;
+      }
+      curUMin += COURTYARD_SHRINK_STEP_SIZE;
+      curUMax -= COURTYARD_SHRINK_STEP_SIZE;
+    }
+    if (!bandOk) {
+      fallbackToSingle();
+      continue;
+    }
+    uMin = curUMin;
+    uMax = curUMax;
+
+    // --- courtyard Plaza の外形(塀からさらに内側マージン。回転済み端建物の
+    //     食い込みぶんを反映)。建物と重なる場合はグループ全体を
+    //     単棟へフォールバックする(寸法は上のループで検証済み) ---
+    const plazaUMin = uMin + insetFirst;
+    const plazaUMax = uMax - insetLast;
+    const plazaPolygon = ensureClockwise([
+      toWorld(plazaUMin, vFront),
+      toWorld(plazaUMax, vFront),
+      toWorld(plazaUMax, plazaVBack),
+      toWorld(plazaUMin, plazaVBack),
+    ]);
+    let plazaBlocked = false;
+    for (const b of buildings) {
+      if (polygonsOverlap(plazaPolygon, b.footprint)) {
+        plazaBlocked = true;
+        break;
+      }
+    }
+    if (plazaBlocked) {
+      fallbackToSingle();
+      continue;
+    }
+
+    const leaderIdx = indexById.get(buildingIdOf(members[0] as Parcel));
+    const leader = leaderIdx !== undefined ? buildings[leaderIdx] : undefined;
+    if (!leader) {
+      fallbackToSingle();
+      continue;
+    }
+    const wallMaterial = STONE_WALLS.has(leader.materials.wall)
+      ? leader.materials.wall
+      : "stone";
+    const rotU = -Math.atan2(tz, tx);
+    const rotV = -Math.atan2(backZ, backX);
+    const ownParcelIds = new Set(members.map((m) => m.id));
+
+    const pushWall = (a: Vec2, b: Vec2, rotation: number): void => {
+      const region = wallSegmentRegion(a, b, COURTYARD_WALL_THICKNESS);
+      if (wallRegionBlocked(model, ctx, region, ownParcelIds, buildings)) {
+        return;
+      }
+      const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+      const length = Math.hypot(b.x - a.x, b.z - a.z);
+      if (length < 0.5) return;
+      leader.parts.push({
+        type: "courtyard-wall",
+        transform: {
+          position: [mid.x, 0, mid.z],
+          rotation,
+          scale: [
+            length + COURTYARD_WALL_THICKNESS,
+            COURTYARD_WALL_HEIGHT,
+            COURTYARD_WALL_THICKNESS,
+          ],
+        },
+        materialId: wallMaterial,
+      });
+    };
+
+    // 開いた3辺(奥+両側)を塀で閉じる(当たる区間は開口として省略。契約)
+    pushWall(toWorld(uMin, vBack), toWorld(uMax, vBack), rotU);
+    pushWall(toWorld(uMin, vFront), toWorld(uMin, vBack), rotV);
+    pushWall(toWorld(uMax, vFront), toWorld(uMax, vBack), rotV);
+
+    // 囲まれた領域に kind:"courtyard" の Plaza を追加(契約: id は
+    // "plaza/courtyard/<groupId>"。道路接続保証の対象外)
+    const position = toWorld(
+      (plazaUMin + plazaUMax) / 2,
+      (vFront + plazaVBack) / 2,
+    );
+    const plaza: Plaza = {
+      id: `plaza/courtyard/${groupId}`,
+      kind: "courtyard",
+      position,
+      radius: Math.hypot(
+        (plazaUMax - plazaUMin) / 2,
+        (plazaVBack - vFront) / 2,
+      ),
+      polygon: plazaPolygon,
+    };
+    model.plazas.push(plaza);
+  }
+}
+
 const DIRT_CHANNEL = ZONE_KINDS.indexOf("dirt");
 const PAVED_CHANNEL = ZONE_KINDS.indexOf("paved");
 
@@ -1951,7 +2901,6 @@ function stampBuildingsZone(model: WorldModel): void {
 /** パイプライン段の実体: buildings(骨格+素材+部品)を埋める */
 export function runBuildings(model: WorldModel): void {
   const { seed, derived } = model.meta;
-  const final = model.density.final;
   const ctx = createSiteContext(model);
   const buildings: Building[] = [];
   // 水辺拡張(commit 19)の第2パス入力(建物 id → 展開文脈)
@@ -1961,315 +2910,103 @@ export function runBuildings(model: WorldModel): void {
   // 前に固定消費で決める(契約「抽選消費の先行(13)」)
   const groupLayouts = planGroupLayouts(model);
 
+  // 中庭型グループの奥行き基準線(vBack)を区画データのみから先に求める
+  // (乱数非消費。中間メンバーの後退セットバックの目標値算出に使う。
+  // finalizeCourtyardGroups の外形算出と同じ式 courtyardBackLine を共有する)
+  const courtyardVBack = new Map<string, number>();
+  {
+    const courtyardGroupMembers = new Map<string, Parcel[]>();
+    for (const parcel of model.parcels) {
+      const layout = groupLayouts.get(parcel.id);
+      if (layout?.pattern !== "courtyard") continue;
+      let bucket = courtyardGroupMembers.get(parcel.groupId);
+      if (!bucket) {
+        bucket = [];
+        courtyardGroupMembers.set(parcel.groupId, bucket);
+      }
+      bucket.push(parcel);
+    }
+    for (const [groupId, members] of courtyardGroupMembers) {
+      courtyardVBack.set(groupId, courtyardBackLine(members));
+    }
+  }
+
   for (const parcel of model.parcels) {
     const id = `building/${parcel.id.slice("parcel/".length)}`;
-    const rng = makeRng(seed, id);
-    // 同型連続の抑制(Phase C。位置由来・乱数非消費。上記 layoutParity)
-    const parity = layoutParity(parcel);
 
-    // --- グループ計画(雁行。C4b では rowhouse/courtyard 当選も単棟同様に
+    // --- グループ計画(雁行・中庭型。C4b では rowhouse 当選も単棟同様に
     //     扱う。パリティはグループ内序数の偶奇=契約「序数パリティ」) ---
     const layout = groupLayouts.get(parcel.id);
-    const stagger =
-      layout && layout.pattern === "stagger"
-        ? { parityEven: layout.indexInGroup % 2 === 0 }
-        : null;
-    const frontSetback = stagger
-      ? stagger.parityEven
-        ? STAGGER_SETBACK_NEAR
-        : STAGGER_SETBACK_FAR
-      : FRONT_SETBACK;
-
-    // --- 幾何の下ごしらえ(接道フレーム) ---
-    const geo = siteGeometry(parcel, frontSetback);
-    const tx = geo.tx;
-    const tz = geo.tz;
-    let backX = geo.backX;
-    let backZ = geo.backZ;
-    const origin = geo.origin;
-    const usableW = geo.usableW;
-    const usableD = geo.usableD;
-    const center = geo.center;
-    const density = final ? sampleFieldGrid(final, center.x, center.z) : 0;
-    const urbanity = model.zoning
-      ? sampleFieldGrid(model.zoning, center.x, center.z)
-      : 0;
-
-    // --- 役割 ---
-    const role = decideRole(rng, model, parcel, center, density);
-
-    // --- 寸法と形状 ---
-    const widthT = rng.next();
-    const depthT = rng.next();
-    let bw = usableW * (0.82 + 0.18 * widthT);
-    let bd = usableD * (0.72 + 0.23 * depthT);
-    if (role === "warehouse") {
-      bw = usableW * 0.9;
-      bd = usableD * 0.9;
-    } else if (role === "outskirt") {
-      bw *= 0.65;
-      bd *= 0.65;
-    } else if (role === "waterside") {
-      // 水辺建築は敷地の奥行きを使い切り、水面へ寄る
-      bd = usableD * (0.88 + 0.07 * depthT);
-    }
-    bw = clamp(bw, 2.2, usableW);
-    bd = clamp(bd, 2.2, usableD);
-    // waterside は shapeVertices が矩形を返す(張り出しの合成を単純に保つ。契約)
-    const { verts: localVerts, compound, wings } = shapeVertices(
-      rng,
-      role,
-      bw,
-      bd,
-      parity,
-    );
-    // 張り出し前の正面スパン(扉・石垣・外階段のアンカー。4b)
-    const fw = wings[0];
-    const frontSpan = fw ? { u0: fw.u0, u1: fw.u1 } : { u0: 0, u1: 0 };
-
-    // ローカル → ワールド
-    let verts: Vec2[] = localVerts.map((lp) => ({
-      x: origin.x + tx * lp.u + backX * lp.v,
-      z: origin.z + tz * lp.u + backZ * lp.v,
-    }));
-
-    // --- 向き: 広場 > 道路 > 水面 の優先 ---
-    let facing = parcel.facing;
-    const plaza = adjacentPlaza(model, parcel);
-    if (plaza) {
-      const toPlaza = Math.atan2(
-        plaza.position.z - center.z,
-        plaza.position.x - center.x,
+    let opts: BuildLayoutOptions = SINGLE_BUILD_OPTIONS;
+    if (layout?.pattern === "stagger") {
+      const parityEven = layout.indexInGroup % 2 === 0;
+      opts = {
+        ...SINGLE_BUILD_OPTIONS,
+        frontSetback: parityEven ? STAGGER_SETBACK_NEAR : STAGGER_SETBACK_FAR,
+        // rng の消費順・消費数は雁行の有無に関わらず不変(契約の規約)。雁行
+        // グループは既存の向き揺らぎ(±3°・tidiness 連動)に
+        // 「加算せず置き換える」(抽選値は消費するが捨てる)—
+        // 序数パリティ由来の決定論的な ±4°。加算だと最悪 7° になり扉の
+        // 外向き判定の閾値 cos 6° を超えうるため(契約「雁行の性質」)
+        overrideJitter:
+          (parityEven ? 1 : -1) * ((STAGGER_YAW_DEG * Math.PI) / 180),
+      };
+    } else if (layout?.pattern === "courtyard") {
+      // 中庭型グループの全メンバーは背面セットバックを後退させ、footprint を
+      // 矩形へ固定する(契約「中庭型(courtyard)の性質」実装補足)。後退量は
+      // 「この区画の役割別サイズ式(bd = usableD × 最大 0.95 相当)で建てても、
+      // グループの奥行き基準線(vBack)の手前に中庭の最小奥行きぶんの
+      // 余地が残る」ように、グループの vBack(区画データのみから決定論的に
+      // 導出済み)から逆算する。役割はこの時点ではまだ決まっていないため、
+      // サイズ式の上限(COURTYARD_DEPTH_FRACTION_MAX)で安全側に見積もる
+      const naturalUsableD = siteGeometry(parcel, FRONT_SETBACK).usableD;
+      const vBack = courtyardVBack.get(parcel.groupId) ?? 0;
+      // courtyard Plaza の奥行きは vFront(中間メンバーの建物背面+GAP)から
+      // plazaVBack(vBack − COURTYARD_WALL_INSET)までなので、両方の余白を
+      // 差し引いて逆算する(finalizeCourtyardGroups の plazaVBack と同じ式)
+      const targetUsableD = clamp(
+        (vBack -
+          COURTYARD_WALL_INSET -
+          FRONT_SETBACK -
+          COURTYARD_MIN_DEPTH -
+          COURTYARD_WALL_GAP) /
+          COURTYARD_DEPTH_FRACTION_MAX,
+        2.2,
+        naturalUsableD,
       );
-      let best = facing;
-      let bestDot = -Infinity;
-      for (let k = 0; k < 4; k++) {
-        const a = parcel.facing + (k * Math.PI) / 2;
-        const dot = Math.cos(a - toPlaza);
-        if (dot > bestDot) {
-          bestDot = dot;
-          best = a;
-        }
-      }
-      facing = best;
+      opts = {
+        ...SINGLE_BUILD_OPTIONS,
+        backSetbackExtra: naturalUsableD - targetUsableD,
+        forceRectangle: true,
+      };
     }
 
-    // --- 揺らぎ(tidiness 高で減。頂点変位 0.5 以下にクランプ) ---
-    let cx = 0;
-    let cz = 0;
-    for (const v of verts) {
-      cx += v.x;
-      cz += v.z;
-    }
-    cx /= verts.length;
-    cz /= verts.length;
-    let radius = 0;
-    for (const v of verts) {
-      radius = Math.max(radius, Math.hypot(v.x - cx, v.z - cz));
-    }
-    const shiftCap = MAX_JITTER_SHIFT / Math.max(radius, 1e-6);
-    const jitterMax = Math.min((MAX_JITTER_DEG * Math.PI) / 180, shiftCap);
-    // rng の消費順・消費数は雁行の有無に関わらず不変(契約の規約)。雁行
-    // グループは既存の向き揺らぎ(±3°・tidiness 連動)に「加算せず置き換える」
-    // (抽選値は消費するが捨てる)— 序数パリティ由来の決定論的な ±4°
-    // (頂点変位はセットバックと同じ shiftCap で安全側にクランプ)。
-    // 置換の意味論は契約「雁行(stagger)の性質」に明文化済み(加算だと
-    // 最悪 7° になり扉の外向き判定の閾値 cos 6° を超えうるため)
-    const randomJitter = rng.range(-1, 1) * (1 - derived.tidiness) * jitterMax;
-    const jitter = stagger
-      ? (stagger.parityEven ? 1 : -1) *
-        Math.min((STAGGER_YAW_DEG * Math.PI) / 180, shiftCap)
-      : randomJitter;
-    const cosJ = Math.cos(jitter);
-    const sinJ = Math.sin(jitter);
-    const rotate = (p: Vec2): Vec2 => ({
-      x: cx + (p.x - cx) * cosJ - (p.z - cz) * sinJ,
-      z: cz + (p.x - cx) * sinJ + (p.z - cz) * cosJ,
-    });
-    verts = verts.map(rotate);
-    facing += jitter;
-    const backRot = {
-      x: backX * cosJ - backZ * sinJ,
-      z: backX * sinJ + backZ * cosJ,
-    };
-    backX = backRot.x;
-    backZ = backRot.z;
-    // 揺らぎ回転後のローカルフレーム(部品展開の翼が footprint と同じ変換を共有する)
-    const uDir = { x: tx * cosJ - tz * sinJ, z: tx * sinJ + tz * cosJ };
-    const originRot = rotate(origin);
-
-    // --- 水上張り出し(waterside × 湖・池) ---
-    // 背面・左右の3辺の中点から水面を探索し、最も近い水面へ向けて
-    // その辺を延長する(正面=接道側は張り出さない)。
-    let overWater = false;
-    let waterExtSide: WaterfrontSide | null = null;
-    if (role === "waterside" && verts.length === 4) {
-      // 矩形の頂点順は [fl, fr, br, bl]
-      const sides: { d: Vec2; a: number; b: number }[] = [
-        { d: { x: backX, z: backZ }, a: 2, b: 3 }, // 背面(br, bl)
-        { d: uDir, a: 1, b: 2 }, // 右側面(fr, br)
-        { d: { x: -uDir.x, z: -uDir.z }, a: 3, b: 0 }, // 左側面(bl, fl)
-      ];
-      let best: { d: Vec2; a: number; b: number; gap: number } | null = null;
-      for (const side of sides) {
-        const va = verts[side.a];
-        const vb = verts[side.b];
-        if (!va || !vb) continue;
-        // 辺の中点と両端(コーナーの斜め先の水面も拾う)から探索する
-        const starts: Vec2[] = [
-          { x: (va.x + vb.x) / 2, z: (va.z + vb.z) / 2 },
-          va,
-          vb,
-        ];
-        for (const s of starts) {
-          for (let g = 0.5; g <= OVERHANG_SEARCH + 1e-9; g += 0.5) {
-            if (ctx.waterBodySdf(s.x + side.d.x * g, s.z + side.d.z * g) < 0) {
-              if (!best || g < best.gap) best = { ...side, gap: g };
-              break;
-            }
-          }
-        }
-      }
-      if (best) {
-        const va = verts[best.a];
-        const vb = verts[best.b];
-        if (va && vb) {
-          const ext = Math.min(best.gap + OVERHANG_INTO_WATER, OVERHANG_MAX);
-          const region: Polygon = ensureClockwise([
-            { x: va.x, z: va.z },
-            { x: va.x + best.d.x * ext, z: va.z + best.d.z * ext },
-            { x: vb.x + best.d.x * ext, z: vb.z + best.d.z * ext },
-            { x: vb.x, z: vb.z },
-          ]);
-          if (!overhangBlocked(model, ctx, region, parcel.id)) {
-            verts[best.a] = {
-              x: va.x + best.d.x * ext,
-              z: va.z + best.d.z * ext,
-            };
-            verts[best.b] = {
-              x: vb.x + best.d.x * ext,
-              z: vb.z + best.d.z * ext,
-            };
-            // 翼(部品展開)にも同じ張り出しを反映する(footprint と一致させる)
-            const wing0 = wings[0];
-            if (wing0) {
-              if (best.a === 2) wing0.v1 += ext; // 背面
-              else if (best.a === 1) wing0.u1 += ext; // 右側面
-              else wing0.u0 -= ext; // 左側面
-            }
-            // 水辺拡張(commit 19)がデッキ・張り出し部屋を付ける面
-            waterExtSide = best.a === 2 ? "back" : best.a === 1 ? "right" : "left";
-          }
-        }
-      }
-    }
-    const footprint = ensureClockwise(verts);
-    for (const v of footprint) {
-      if (ctx.waterBodySdf(v.x, v.z) < 0) overWater = true;
-    }
-
-    // --- 階数(Settlement / Prosperity / 役割 / urbanity。サイズ勾配
-    //     (Phase C。contracts/buildings.md「floors の改訂」)) ---
-    const floorsBase =
-      1.05 +
-      derived.floorsBias +
-      0.4 * derived.detailAmount +
-      FLOORS_ROLE_ADJUST[role] +
-      FLOORS_URBAN_GAIN *
-        smoothstep(FLOORS_URBAN_EDGE0, FLOORS_URBAN_EDGE1, urbanity) +
-      rng.range(-0.3, 0.5);
-    const floorsMax = urbanity >= FLOORS_URBAN_4F_THRESHOLD ? 4 : 3;
-    const floors = clamp(Math.round(floorsBase), 1, floorsMax);
-
-    // --- 屋根(50〜58度。L/T は複合屋根。hip 抽選・pitch は同型抑制の
-    //     序数変調込み) ---
-    const hipRoleP =
-      role === "hall"
-        ? clamp(0.6 + ROOF_HIP_PARITY_WAVE * parity, 0, 1)
-        : clamp(0.2 + ROOF_HIP_PARITY_WAVE * parity, 0, 1);
-    let roofType: Building["roof"]["type"] = "gable";
-    if (compound) roofType = "compound";
-    else if (role === "hall" && rng.chance(hipRoleP)) roofType = "hip";
-    else if (floors >= 2 && rng.chance(hipRoleP)) roofType = "hip";
-    const pitch = clamp(
-      ROOF_PITCH_MIN +
-        (ROOF_PITCH_MAX - ROOF_PITCH_MIN) * rng.next() +
-        ROOF_PITCH_PARITY_WAVE * parity,
-      ROOF_PITCH_MIN,
-      ROOF_PITCH_MAX,
-    );
-
-    // --- 接地(基壇・杭・石基礎。契約の機械判定表現) ---
-    const plinthHeight = clamp(
-      0.15 + 0.55 * derived.detailAmount + PLINTH_ROLE_ADJUST[role],
-      0.1,
-      1.0,
-    );
-    const foundation: Foundation = overWater
-      ? {
-          kind: derived.detailAmount > 0.55 ? "stonebase" : "piles",
-          plinthHeight,
-          overWater: true,
-          bottomY: SHORE_SKIRT_BOTTOM_Y,
-        }
-      : { kind: "plinth", plinthHeight, overWater: false, bottomY: 0 };
-
-    // --- 素材と部品展開(commit 13。乱数は派生サブストリーム
-    //     "building/<id>/parts" のみ・建物あたり固定消費) ---
-    const partsRng = makeRng(seed, `${id}/parts`);
-    const materials = decideMaterials(
-      partsRng,
-      role,
-      derived.wallTier,
-      derived.roofTier,
-      parity,
-    );
-    // 詳細部品(PHASE 4b commit 14)は派生サブストリーム
-    // "building/<id>/details" のみ消費する(骨格・materials の消費は不変)
-    const detailsRng = makeRng(seed, `${id}/details`);
-    const parts = expandParts(
-      wings,
-      { origin: originRot, u: uDir, v: { x: backX, z: backZ } },
-      foundation,
-      floors,
-      { type: roofType, pitch },
-      materials,
-      role,
-      derived,
-      detailsRng,
-      frontSpan,
-    );
-
-    buildings.push({
-      id,
-      parcelId: parcel.id,
-      role,
-      footprint,
-      facing,
-      floors,
-      roof: { type: roofType, pitch },
-      foundation,
-      materials,
-      parts,
-    });
+    const result = buildParcelBuilding(model, ctx, parcel, opts);
+    buildings.push(result.building);
 
     // 水辺拡張(commit 19)の文脈を収集(展開は全一般建物の確定後の
     // 第2パス。デッキが後続建物の footprint と重ならないことを保証する)
-    const wing0 = wings[0];
-    if (role === "waterside" && wing0) {
+    if (result.role === "waterside" && result.wing0) {
       waterfrontSites.set(id, {
         parcel,
-        frame: { origin: originRot, u: uDir, v: { x: backX, z: backZ } },
-        wing: wing0,
-        extSide: waterExtSide,
-        foundation,
-        floors,
-        roofPitch: pitch,
-        materials,
-        parts,
+        frame: result.frame,
+        wing: result.wing0,
+        extSide: result.waterExtSide,
+        foundation: result.foundation,
+        floors: result.floors,
+        roofPitch: result.roofPitch,
+        materials: result.building.materials,
+        parts: result.building.parts,
       });
     }
   }
+
+  // --- Phase C タスク C4c: 中庭型グループの端建物の内向きスナップ・塀
+  //     (courtyard-wall)・courtyard Plaza の追記(契約「中庭型(courtyard)
+  //     の性質」)。乱数は消費しない(決定論)。水辺拡張の第2パスより前に
+  //     行う(courtyard 端建物が waterside の場合は回転を試みず waterfrontSites
+  //     の内容もそのまま有効なため、フォールバックの入れ替えとは衝突しない) ---
+  finalizeCourtyardGroups(model, ctx, buildings, groupLayouts);
 
   // --- 水辺建築の拡張(PHASE 6 commit 19。contracts/buildings.md
   //     「水辺建築の拡張」)。乱数は "building/<id>/waterfront" のみ消費 ---

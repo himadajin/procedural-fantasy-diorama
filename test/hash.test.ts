@@ -364,15 +364,52 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    c8729c73 → e8e1b942
   //   seed-b {}                    c645b0dd → f9e003fe
   //   seed-b {water:70}            f01a5f6f → f99be753
+  // C4c(中庭型: 回転・塀・courtyard Plaza。計画書
+  // 2026-07-12-worldgen-rework-layout.md タスク C4c。
+  // contracts/buildings.md「中庭型(courtyard)の性質」「建物部品の性質」)で
+  // 更新。意図した変更:
+  // (1) 中庭型(courtyard)当選グループ(C4b までは単棟同様に扱っていた)を
+  //     実際に組む: 全メンバーの背面セットバックを後退させ(区画の素の
+  //     可住奥行きから決定論的に算出した目標値。役割別サイズ式自体は
+  //     不変)、footprint を矩形へ固定する(L/T 抽選は行い結果を破棄)。
+  // (2) グループ先頭・末尾の建物を、接道正面セットバック線上の点を軸に
+  //     footprint をちょうど 90° 回転する候補へ差し替える(他の建物・
+  //     道路・広場と衝突する場合、またはその建物の役割が waterside の
+  //     場合はフォールバックして従来の単棟のまま残す)。
+  // (3) 扉は wing0 の 4 外壁面のうち、外向き法線が親区画の facing に
+  //     最も近い面へ置く(`expandDetailParts` の `doorFace` 選択則。
+  //     回転していない建物では常に従来の front 面が選ばれるため、
+  //     「扉の外向き=親区画 facing」の既存検証は無傷)。
+  // (4) グループの区画データ(frontEdge・可住奥行き)と確定済み中間メンバー
+  //     の footprint から塀(courtyard-wall。グループ先頭の建物に帰属)と
+  //     courtyard Plaza(id "plaza/courtyard/<groupId>")の外形を導出し、
+  //     帯制約(グループのいずれかの区画から 1.2 以内)を満たすまで間口
+  //     方向を段階的に縮める。満たせない、または最小寸法(幅 6・奥行き
+  //     2.5)を下回る場合はグループ全体を単棟へフォールバックする。
+  // いずれも乱数は消費しない(セットバック・回転・塀・Plaza の導出は
+  // 区画データと確定済み建物からの決定論的な後処理)。中庭型当選グループが
+  // 1 件でも存在する組はハッシュが変わる: everdusk-101 {}・{water:0}・
+  // {water:95}・{worldScale:100}・seed-a {}・seed-b {water:70} の 6 組が
+  // 該当し、{worldScale:0}(世界が小さく長さ3以上のグループが生じない)と
+  // seed-b {}(中庭型が当選しない)の 2 組は不変(実測で確認済み)。
+  // 新旧対応(C4b → C4c):
+  //   everdusk-101 {}              1a247577 → 0091b572
+  //   everdusk-101 {water:0}       49094d75 → 552f861a
+  //   everdusk-101 {water:95}      3eec1d88 → b1584d11
+  //   everdusk-101 {worldScale:0}  363fcd8e → 363fcd8e(不変)
+  //   everdusk-101 {worldScale:100} 0dad2c84 → 2af12dc2
+  //   seed-a {}                    e8e1b942 → 50591329
+  //   seed-b {}                    f9e003fe → f9e003fe(不変)
+  //   seed-b {water:70}            f99be753 → 5c0653a3
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "1a247577"],
-    ["everdusk-101", { water: 0 }, "49094d75"],
-    ["everdusk-101", { water: 95 }, "3eec1d88"],
+    ["everdusk-101", {}, "0091b572"],
+    ["everdusk-101", { water: 0 }, "552f861a"],
+    ["everdusk-101", { water: 95 }, "b1584d11"],
     ["everdusk-101", { worldScale: 0 }, "363fcd8e"],
-    ["everdusk-101", { worldScale: 100 }, "0dad2c84"],
-    ["seed-a", {}, "e8e1b942"],
+    ["everdusk-101", { worldScale: 100 }, "2af12dc2"],
+    ["seed-a", {}, "50591329"],
     ["seed-b", {}, "f9e003fe"],
-    ["seed-b", { water: 70 }, "f99be753"],
+    ["seed-b", { water: 70 }, "5c0653a3"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

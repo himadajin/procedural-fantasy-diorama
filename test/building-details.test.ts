@@ -179,6 +179,50 @@ describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
       }
     }
   });
+
+  it("中庭型(courtyard)の 90° 内向きスナップで胴体が回転した建物も、上記の扉検証にそのまま含まれる(Phase C タスク C4c。契約 (10): 判定基準自体は無傷)", () => {
+    // 中庭型が成立しやすい Settlement/Prosperity の組を追加して走査する
+    // (COMBOS はこのテストファイルの既定の組合せのため、ここでは中庭型が
+    // 出やすい組を明示的に追加する)
+    const SWEEP: [string, Partial<Params>][] = [
+      ["everdusk-101", { settlement: 50, prosperity: 50 }],
+      ["everdusk-101", { settlement: 100, prosperity: 100 }],
+      ["seed-a", { settlement: 50, prosperity: 50 }],
+      ["seed-a", { settlement: 100, prosperity: 100 }],
+      ["seed-b", { settlement: 80, prosperity: 90 }],
+    ];
+    let rotatedChecked = 0;
+    for (const [seed, over] of SWEEP) {
+      const model = cached(seed, over);
+      const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+      for (const b of general(model)) {
+        if (!b.parcelId) continue;
+        const parcel = parcelById.get(b.parcelId);
+        if (!parcel) continue;
+        // 胴体が 90° 内向きスナップしている建物のみを対象にする
+        // (facing の差を (-π, π] へ正規化し、±90° に近いかで判定)
+        let diff = (b.facing - parcel.facing) % (2 * Math.PI);
+        if (diff > Math.PI) diff -= 2 * Math.PI;
+        if (diff < -Math.PI) diff += 2 * Math.PI;
+        if (Math.abs(Math.abs(diff) - Math.PI / 2) >= 0.05) continue;
+        rotatedChecked++;
+        // 上記テストと同一の判定(扉ちょうど1つ・外向き=親区画 facing・壁面上)
+        const doors = partsOf(b, "door").filter(
+          (p) => p.params?.waterfront !== 1,
+        );
+        expect(doors.length).toBe(1);
+        const door = doors[0];
+        if (!door) continue;
+        const nx = Math.sin(door.transform.rotation);
+        const nz = Math.cos(door.transform.rotation);
+        const dot = nx * Math.cos(parcel.facing) + nz * Math.sin(parcel.facing);
+        expect(dot).toBeGreaterThan(Math.cos((6 * Math.PI) / 180));
+        expect(openingOnWall(b, door)).toBe(true);
+      }
+    }
+    // 空検証にならない(実際に回転した建物が観測される)
+    expect(rotatedChecked).toBeGreaterThan(0);
+  });
 });
 
 describe("building details: 窓(壁面上・少なく大きく)", () => {

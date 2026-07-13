@@ -204,8 +204,13 @@ describe("center: 基本契約(contracts「中心建築」)", () => {
         const b = center(model);
         for (const plaza of model.plazas) {
           if (plaza.kind !== "courtyard") continue;
-          courtyards++;
-          expect(plaza.id).toBe("plaza/courtyard");
+          // 中心建築の中庭は id "plaza/courtyard"(単一)。一般建物の中庭型
+          // クラスタ(Phase C タスク C4c)は id "plaza/courtyard/<groupId>"
+          // を持ち、id 空間が分離しているため中心建築の courtyard 検証とは
+          // 区別する(契約「中庭型(courtyard)の性質」・network-plaza.md
+          // 「Plaza」節)。いずれも中心建築 footprint とは重ならないはず
+          if (plaza.id === "plaza/courtyard") courtyards++;
+          else expect(plaza.id).toMatch(/^plaza\/courtyard\/block\//);
           expect(polygonsOverlap(plaza.polygon, b.footprint)).toBe(false);
         }
       }
