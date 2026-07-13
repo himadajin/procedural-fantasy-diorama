@@ -401,15 +401,49 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    e8e1b942 → 50591329
   //   seed-b {}                    f9e003fe → f9e003fe(不変)
   //   seed-b {water:70}            f99be753 → 5c0653a3
+  // C5(連棟(rowhouse)。計画書 2026-07-12-worldgen-rework-layout.md タスク
+  // C5。contracts/buildings.md「連棟(rowhouse)の性質」)で更新。意図した変更:
+  // (1) `Building.spanParcelIds` を新設した(単棟は長さ 1 = [parcelId]、
+  //     連棟は列の全区画 id。先頭 = parcelId)。WorldModel 直下の Building の
+  //     新規フィールドであり正規化ハッシュの直列化対象に加わるため、建物が
+  //     1 棟でも存在する組はすべてハッシュが変わる(フィールドの追加自体が
+  //     構造差になる。groupId 導入時の C2 と同型)。
+  // (2) 連棟(rowhouse)当選グループ(C4b までは単棟同様に扱っていた)を
+  //     実際に合成する: 本番ループがメンバー全員を単棟として生成した後
+  //     (`"building/<id>"` 系ストリームの消費数・消費順は不変)、
+  //     `finalizeRowhouseGroups` が k 区画を貫く帯状矩形の 1 棟へ差し替える。
+  //     footprint(帯状矩形。列の両端のみ通常の側面セットバック)・壁体・
+  //     連続屋根(単一の gable。妻は両端のみ)は乱数を消費せず区画データと
+  //     確定済み先頭区画の建物(役割・階数・素材・基壇高をそのまま流用)から
+  //     導出する。ファサード(住戸ごとの扉 1・窓列・独立採択の煙突+住戸境界の
+  //     分節縦梁)のみ `"building/<compositeId>/details"` の新規インスタンス
+  //     (先頭区画と同一ラベル。メンバー生成が消費した既存インスタンスとは
+  //     独立)を消費する。成立しない場合(帯状矩形が他の建物・道路・広場と
+  //     衝突、寸法が最小値未満、帯制約 1.2 を満たさない)はメンバーを単棟の
+  //     まま残す(決定論的フォールバック)。
+  // `layout/<groupId>` の抽選(消費数・消費順)は C4b から不変(契約 (13))。
+  // 連棟が 1 件でも成立する組はハッシュが変わる: 実装時スイープ(4 seed ×
+  // Settlement/Prosperity 4 組)で連棟当選 103 グループ中 92 成立(最長スパン
+  // 10 区画、成立棟の住戸合計 410)。建物が 1 棟でも存在する組はすべて (1) の
+  // 影響を受けるため、本表の全 8 組が変わる。
+  // 新旧対応(C4c → C5):
+  //   everdusk-101 {}              0091b572 → 781cc8df
+  //   everdusk-101 {water:0}       552f861a → 79b95e14
+  //   everdusk-101 {water:95}      b1584d11 → 2a409626
+  //   everdusk-101 {worldScale:0}  363fcd8e → 2fde376a
+  //   everdusk-101 {worldScale:100} 2af12dc2 → fcce29e5
+  //   seed-a {}                    50591329 → 8462e141
+  //   seed-b {}                    f9e003fe → 69c3c3a1
+  //   seed-b {water:70}            5c0653a3 → 58715b26
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "0091b572"],
-    ["everdusk-101", { water: 0 }, "552f861a"],
-    ["everdusk-101", { water: 95 }, "b1584d11"],
-    ["everdusk-101", { worldScale: 0 }, "363fcd8e"],
-    ["everdusk-101", { worldScale: 100 }, "2af12dc2"],
-    ["seed-a", {}, "50591329"],
-    ["seed-b", {}, "f9e003fe"],
-    ["seed-b", { water: 70 }, "5c0653a3"],
+    ["everdusk-101", {}, "781cc8df"],
+    ["everdusk-101", { water: 0 }, "79b95e14"],
+    ["everdusk-101", { water: 95 }, "2a409626"],
+    ["everdusk-101", { worldScale: 0 }, "2fde376a"],
+    ["everdusk-101", { worldScale: 100 }, "fcce29e5"],
+    ["seed-a", {}, "8462e141"],
+    ["seed-b", {}, "69c3c3a1"],
+    ["seed-b", { water: 70 }, "58715b26"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
