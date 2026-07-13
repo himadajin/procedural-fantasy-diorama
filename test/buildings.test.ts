@@ -984,4 +984,27 @@ describe("buildings: 裏庭(backyard)(Phase C。計画書「C6: 裏庭」、cont
     // 空検証にならない(連棟の共有裏庭が実際に成立する条件であることの確認)
     expect(rowhouseWithBackyard).toBeGreaterThan(0);
   });
+
+  it("密集地(settle100)でも裏庭が一定割合成立する(Phase C 追補 T1: 帯確保の奥行き絞り再生成)", () => {
+    // C7 検収記録: settle100 の裏庭発生率は 0.5%(帯 2.5 が浅い区画で
+    // ほぼ成立しない)。T1(奥行き絞りの再生成)後の実測は settle100 の
+    // 代表3 seed × Prosperity{0,50,100} 合算で 13.8%(契約「単棟・雁行の
+    // 帯確保」実装補足)。10% 大きく下回らない値としてここでは 10% を
+    // 下限とする
+    let total = 0;
+    let withYard = 0;
+    for (const seed of SEEDS) {
+      for (const prosperity of [0, 50, 100]) {
+        const model = cached(seed, { settlement: 100, prosperity });
+        for (const b of general(model)) {
+          total++;
+          if (backyardFences(b).length > 0 || shedWalls(b).length > 0) {
+            withYard++;
+          }
+        }
+      }
+    }
+    expect(total).toBeGreaterThan(0);
+    expect(withYard / total).toBeGreaterThanOrEqual(0.1);
+  });
 });

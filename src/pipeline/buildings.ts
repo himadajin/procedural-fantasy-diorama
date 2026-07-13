@@ -587,6 +587,24 @@ const SHED_MIN_DEPTH = 1.2;
 /** shed と fence(背面)・建物背面との控え(実装補足) */
 const SHED_MARGIN = 0.4;
 
+// ============================================================
+// 裏庭の帯確保(奥行き絞りの再生成。Phase C 追補タスク T1。
+// contracts/buildings.md「裏庭の性質」実装補足の 2026-07-13 追補の提案値)
+// ============================================================
+/** 目標帯(提案値。shed(最小奥行き1.2+マージン0.4×2)と塀が余裕を持って
+ *  収まる最小十分量) */
+const BACKYARD_TARGET_BAND = 2.9;
+/** 奥行き絞りの上限(元の建物奥行きに対する割合)。計画書 3.1節の提案値
+ *  25% では settle100 実測 4.9%(完了条件 ≥10% 未達)だったため、
+ *  settle100 スイープの実測に基づき 32% へ調整した(実測 13.8%。契約
+ *  「単棟・雁行の帯確保」実装補足に追記済み) */
+const BACKYARD_REGEN_SHRINK_MAX_FRACTION = 0.32;
+/** 線形近似(band(extra) ≈ band0 + extra × bd0/usableD0)がクランプ
+ *  (usableD・bd の下限2.2)でずれた場合の補正刻み・最大反復回数
+ *  (決定論的な段階的増分。中庭型・裏庭衝突の段階的縮小と同じ思想) */
+const BACKYARD_REGEN_CORRECTION_STEP = 0.15;
+const BACKYARD_REGEN_CORRECTION_STEPS = 6;
+
 /** 裏庭の抽選結果(乱数は済み。geometry は乱数を消費しない) */
 interface BackyardDecision {
   fenceHeight: number;
@@ -2304,6 +2322,10 @@ interface BuiltParcelResult {
   foundation: Foundation;
   floors: number;
   roofPitch: number;
+  /** 建物の実奥行き(bd。裏庭の帯確保パス(T1)が絞り量を逆算するために使う) */
+  bd: number;
+  /** 裏庭の帯判定式の結果(裏庭の採否によらず常に計算する。T1 実装補足) */
+  backyardBandDepth: number;
 }
 
 /**
@@ -2703,6 +2725,8 @@ function buildParcelBuilding(
     foundation,
     floors,
     roofPitch: pitch,
+    bd,
+    backyardBandDepth,
   };
 }
 
@@ -3607,6 +3631,91 @@ function finalizeRowhouseGroups(
   }
 }
 
+/**
+ * 単棟・雁行の裏庭帯確保(奥行き絞りの再生成。Phase C 追補タスク T1。
+ * contracts/buildings.md「裏庭の性質」実装補足の 2026-07-13 追補)。
+ *
+ * `candidates`(本番ループが収集した区画ごとの opts・実奥行き bd・帯
+ * bandDepth)のうち帯が目標 `BACKYARD_TARGET_BAND`(2.9)に満たない建物を
+ * 対象に、`buildParcelBuilding` を背面追加セットバック(`backSetbackExtra`)
+ * 付きで再呼び出しして奥行きを絞り、目標帯を満たす裏庭を確保する。
+ *
+ * 絞り量は band(extra) ≈ band0 + extra × (bd0/usableD0) の線形近似
+ * (usableD0 = band0 + bd0 − BACK_SETBACK。opts.backSetbackExtra=0 の
+ * 帯判定式の変形)から逆算し、クランプ(usableD・bd の下限2.2)でずれる
+ * 場合のみ段階的に補正する。絞りは元の建物奥行きの
+ * `BACKYARD_REGEN_SHRINK_MAX_FRACTION`(32%)を上限とし、上限まで
+ * 絞っても目標帯に届かない、または再生成後に裏庭(fence)が実際には
+ * 成立しない(抽選が外れる・衝突検査で断念する)場合は、絞りを適用せず
+ * 元の(絞りなしの)建物のまま残す(決定論的フォールバック。小さすぎる
+ * 家を意味なく作らないため)。
+ *
+ * 乱数は消費しない(`buildParcelBuilding` の再呼び出しはいずれも同一
+ * ラベルの新規 RNG インスタンスの純関数呼び出し。中庭型・連棟の finalize
+ * パスと同じ流儀)。処理順序は候補どうしで独立(建物ごとに完結する)。
+ */
+function finalizeBackyardBandGrowth(
+  model: WorldModel,
+  ctx: SiteContext,
+  buildings: Building[],
+  candidates: Map<string, { opts: BuildLayoutOptions; bd: number; bandDepth: number }>,
+): void {
+  if (candidates.size === 0) return;
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < buildings.length; i++) {
+    const b = buildings[i];
+    if (b) indexById.set(b.id, i);
+  }
+  const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+
+  for (const [parcelId, info] of candidates) {
+    if (info.bandDepth >= BACKYARD_TARGET_BAND) continue; // 既に目標帯を満たす
+    const parcel = parcelById.get(parcelId);
+    if (!parcel) continue;
+    const buildingId = `building/${parcelId.slice("parcel/".length)}`;
+    const idx = indexById.get(buildingId);
+    if (idx === undefined) continue;
+
+    const bd0 = info.bd;
+    const band0 = info.bandDepth;
+    const cap = bd0 * BACKYARD_REGEN_SHRINK_MAX_FRACTION;
+    const usableD0 = band0 + bd0 - BACK_SETBACK;
+    const bdFactor = usableD0 > 1e-6 ? bd0 / usableD0 : 1;
+
+    let extra = clamp(
+      (BACKYARD_TARGET_BAND - band0) / Math.max(bdFactor, 1e-6),
+      0,
+      cap,
+    );
+    let candidate = buildParcelBuilding(model, ctx, parcel, {
+      ...info.opts,
+      backSetbackExtra: extra,
+    });
+    // 線形近似がクランプでずれた場合の段階的補正(決定論。最大数回で収束)
+    for (
+      let step = 0;
+      candidate.backyardBandDepth < BACKYARD_TARGET_BAND &&
+      extra < cap - 1e-9 &&
+      step < BACKYARD_REGEN_CORRECTION_STEPS;
+      step++
+    ) {
+      extra = Math.min(cap, extra + BACKYARD_REGEN_CORRECTION_STEP);
+      candidate = buildParcelBuilding(model, ctx, parcel, {
+        ...info.opts,
+        backSetbackExtra: extra,
+      });
+    }
+
+    if (candidate.backyardBandDepth < BACKYARD_TARGET_BAND) continue; // 断念(現行どおり)
+    const hasBackyard = candidate.building.parts.some(
+      (p) => p.type === "fence" && p.params?.backyard === 1,
+    );
+    if (!hasBackyard) continue; // 絞っても裏庭が成立しない場合は絞らない
+
+    buildings[idx] = candidate.building;
+  }
+}
+
 const DIRT_CHANNEL = ZONE_KINDS.indexOf("dirt");
 const PAVED_CHANNEL = ZONE_KINDS.indexOf("paved");
 
@@ -3638,6 +3747,13 @@ export function runBuildings(model: WorldModel): void {
   const buildings: Building[] = [];
   // 水辺拡張(commit 19)の第2パス入力(建物 id → 展開文脈)
   const waterfrontSites = new Map<string, WaterfrontSite>();
+  // 裏庭の帯確保(奥行き絞りの再生成。Phase C 追補タスク T1)の第2パス入力
+  // (区画 id → 本番ループで使った opts・実奥行き bd・帯 bandDepth。単棟・
+  // 雁行の waterside/canalside を除く非中庭・非連棟建物のみ収集する)
+  const backyardBandCandidates = new Map<
+    string,
+    { opts: BuildLayoutOptions; bd: number; bandDepth: number }
+  >();
   let violations = 0;
   // グループ計画(クラスタパターンの抽選。Phase C C4b)。段12 の本番ループの
   // 前に固定消費で決める(契約「抽選消費の先行(13)」)
@@ -3720,6 +3836,25 @@ export function runBuildings(model: WorldModel): void {
     const result = buildParcelBuilding(model, ctx, parcel, opts);
     buildings.push(result.building);
 
+    // 裏庭の帯確保(T1)の候補収集: 単棟・雁行(中庭型・連棟は対象外。
+    // 中庭型は allowBackyard=false で裏庭を持たない設計、連棟は
+    // finalizeRowhouseGroups が別途合成後の共有奥行きで判定するため)かつ
+    // waterside/canalside でない区画(帯判定・抽選そのものが非適用)のみ
+    // 収集する
+    if (
+      (layout?.pattern === "single" ||
+        layout?.pattern === "stagger" ||
+        !layout) &&
+      !parcel.waterside &&
+      !parcel.canalside
+    ) {
+      backyardBandCandidates.set(parcel.id, {
+        opts,
+        bd: result.bd,
+        bandDepth: result.backyardBandDepth,
+      });
+    }
+
     // 水辺拡張(commit 19)の文脈を収集(展開は全一般建物の確定後の
     // 第2パス。デッキが後続建物の footprint と重ならないことを保証する)
     if (result.role === "waterside" && result.wing0) {
@@ -3752,6 +3887,13 @@ export function runBuildings(model: WorldModel): void {
   //     行う(courtyard 端建物が waterside の場合は回転を試みず waterfrontSites
   //     の内容もそのまま有効なため、フォールバックの入れ替えとは衝突しない) ---
   finalizeCourtyardGroups(model, ctx, buildings, groupLayouts);
+
+  // --- Phase C 追補タスク T1: 単棟・雁行の裏庭帯確保(奥行き絞りの
+  //     再生成。契約「裏庭の性質」実装補足の 2026-07-13 追補)。中庭型・
+  //     連棟の finalize より後で行う(それらは既に候補から除外済みのため
+  //     順序は本質的に無関係だが、group 単位の再構成が済んだ状態の
+  //     buildings 配列に対して building 単位で置き換えるほうが単純) ---
+  finalizeBackyardBandGrowth(model, ctx, buildings, backyardBandCandidates);
 
   // --- 水辺建築の拡張(PHASE 6 commit 19。contracts/buildings.md
   //     「水辺建築の拡張」)。乱数は "building/<id>/waterfront" のみ消費 ---
