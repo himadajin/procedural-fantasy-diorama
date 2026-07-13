@@ -444,8 +444,11 @@ describe("building details: 役割による部品構成の差", () => {
           warehouses++;
           // 倉庫は荷入れ口(高い扉)
           if (door) expect(door.transform.scale[1]).toBeCloseTo(2.5, 9);
-          // 石垣は house / hall のみ
-          expect(partsOf(b, "fence").length).toBe(0);
+          // 前面の石垣は house / hall のみ(裏庭の fence(params.backyard=1。
+          // Phase C タスク C6)は役割に依らず付きうるため除く)
+          expect(
+            partsOf(b, "fence").filter((p) => p.params?.backyard !== 1).length,
+          ).toBe(0);
         } else if (door) {
           expect(door.transform.scale[1]).toBeLessThanOrEqual(2.15 + 1e-9);
         }
@@ -462,7 +465,10 @@ describe("building details: 役割による部品構成の差", () => {
           }
         }
         if (b.role === "outskirt" || b.role === "bridgehead") {
-          expect(partsOf(b, "fence").length).toBe(0);
+          // 前面の石垣は house / hall のみ(裏庭の fence は役割に依らない)
+          expect(
+            partsOf(b, "fence").filter((p) => p.params?.backyard !== 1).length,
+          ).toBe(0);
         }
       }
       // hall の窓は house より縦長(役割係数 1.3)

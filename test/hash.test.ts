@@ -435,15 +435,36 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    50591329 → 8462e141
   //   seed-b {}                    f9e003fe → 69c3c3a1
   //   seed-b {water:70}            5c0653a3 → 58715b26
+  // C6(裏庭。計画書 2026-07-12-worldgen-rework-layout.md タスク C6。
+  // contracts/buildings.md「裏庭の性質」)で更新。意図した変更: 段12「建物」
+  // が区画背面の帯(建物背面〜区画背面 ≥ 2.5)へ裏庭(fence 3 本+確率で
+  // shed 1 棟)を追加した。単棟・雁行は `buildParcelBuilding` 内で
+  // `"building/<id>"` ストリーム(骨格)の末尾へ追加消費、連棟の共有裏庭は
+  // `finalizeRowhouseGroups` が既存の `"building/<compositeId>/details"`
+  // ストリームの末尾へ追加消費する(骨格・詳細の既存消費順・消費数は不変。
+  // 中庭型グループは裏庭を持たないため乱数消費なし)。裏庭のある建物は
+  // 1 棟でも `parts` 配列が伸びるため、建物が存在する組はすべてハッシュが
+  // 変わる。実装時スイープ(3 seed × Settlement/Prosperity 5 組)で
+  // 一般建物 1534 棟中 44 棟が裏庭を持ち(うち shed 14 棟)、連棟 71 棟中
+  // 1 棟が共有裏庭を持った(採択率・帯条件は提案値。C7 で調整しうる)。
+  // 新旧対応(C5 → C6):
+  //   everdusk-101 {}              781cc8df → ff09a3b8
+  //   everdusk-101 {water:0}       79b95e14 → be687c4f
+  //   everdusk-101 {water:95}      2a409626 → d49389f3
+  //   everdusk-101 {worldScale:0}  2fde376a → 5bed4eb1
+  //   everdusk-101 {worldScale:100} fcce29e5 → c31ee40c
+  //   seed-a {}                    8462e141 → 782cede1
+  //   seed-b {}                    69c3c3a1 → f2ba3256
+  //   seed-b {water:70}            58715b26 → 3b10d92f
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "781cc8df"],
-    ["everdusk-101", { water: 0 }, "79b95e14"],
-    ["everdusk-101", { water: 95 }, "2a409626"],
-    ["everdusk-101", { worldScale: 0 }, "2fde376a"],
-    ["everdusk-101", { worldScale: 100 }, "fcce29e5"],
-    ["seed-a", {}, "8462e141"],
-    ["seed-b", {}, "69c3c3a1"],
-    ["seed-b", { water: 70 }, "58715b26"],
+    ["everdusk-101", {}, "ff09a3b8"],
+    ["everdusk-101", { water: 0 }, "be687c4f"],
+    ["everdusk-101", { water: 95 }, "d49389f3"],
+    ["everdusk-101", { worldScale: 0 }, "5bed4eb1"],
+    ["everdusk-101", { worldScale: 100 }, "c31ee40c"],
+    ["seed-a", {}, "782cede1"],
+    ["seed-b", {}, "f2ba3256"],
+    ["seed-b", { water: 70 }, "3b10d92f"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
