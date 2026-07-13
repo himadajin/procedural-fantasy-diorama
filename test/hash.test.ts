@@ -456,15 +456,44 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    8462e141 → 782cede1
   //   seed-b {}                    69c3c3a1 → f2ba3256
   //   seed-b {water:70}            58715b26 → 3b10d92f
+  //
+  // T1(裏庭の帯確保。奥行き絞りの再生成。計画書
+  // 2026-07-13-worldgen-rework-tuning.md タスク T1。contracts/buildings.md
+  // 「裏庭の性質」実装補足「単棟・雁行の帯確保」)で更新。意図した変更:
+  // 単棟・雁行の建物のうち裏庭の帯が目標 BACKYARD_TARGET_BAND(2.9)に
+  // 満たない(下限 2.5 未満で裏庭ロール自体が未実行の建物を含む)ものを、
+  // 段12 本番ループの直後の後処理パス finalizeBackyardBandGrowth が
+  // buildParcelBuilding を背面追加セットバック付きで再呼び出しし、奥行きを
+  // 絞った単棟として再生成する(絞り上限は元の建物奥行きの32%。値の調整に
+  // ついては buildings.ts の BACKYARD_REGEN_SHRINK_MAX_FRACTION のコメント
+  // 参照)。再生成後に裏庭(fence)が実際に成立した建物のみ差し替える(乱数は
+  // 追加消費しないが、絞りにより帯が初めて下限を上回る建物では
+  // 建物自身の "building/<id>" ストリーム内で裏庭ロールが新たに実行される
+  // ため、その建物の parts が伸びる)。裏庭を新たに獲得する建物が1棟でも
+  // 存在する組はハッシュが変わるため、本表の全8組が変わる。中庭型・連棟は
+  // 対象外(連棟の共有裏庭は従来どおり finalizeRowhouseGroups が判定する)。
+  // 実測(3 seed × Settlement{0,50,100} × Prosperity{0,50,100} の27条件):
+  // settle0 発生率 30.16%→63.49%、settle50 11.90%→34.99%、
+  // settle100 0.66%→13.79%(完了条件 ≥10% を達成)。絞りを適用した建物
+  // 387 件・平均絞り量 1.21(最大 1.88)。
+  // 新旧対応(C6 → T1):
+  //   everdusk-101 {}              ff09a3b8 → 9ba7191a
+  //   everdusk-101 {water:0}       be687c4f → 8333c340
+  //   everdusk-101 {water:95}      d49389f3 → d22e5515
+  //   everdusk-101 {worldScale:0}  5bed4eb1 → aad21a5a
+  //   everdusk-101 {worldScale:100} c31ee40c → 9202570a
+  //   seed-a {}                    782cede1 → 9d5b26ea
+  //   seed-b {}                    f2ba3256 → 83000cd2
+  //   seed-b {water:70}            3b10d92f → 9f347408
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "ff09a3b8"],
-    ["everdusk-101", { water: 0 }, "be687c4f"],
-    ["everdusk-101", { water: 95 }, "d49389f3"],
-    ["everdusk-101", { worldScale: 0 }, "5bed4eb1"],
-    ["everdusk-101", { worldScale: 100 }, "c31ee40c"],
-    ["seed-a", {}, "782cede1"],
-    ["seed-b", {}, "f2ba3256"],
-    ["seed-b", { water: 70 }, "3b10d92f"],
+    ["everdusk-101", {}, "9ba7191a"],
+    ["everdusk-101", { water: 0 }, "8333c340"],
+    ["everdusk-101", { water: 95 }, "d22e5515"],
+    ["everdusk-101", { worldScale: 0 }, "aad21a5a"],
+    ["everdusk-101", { worldScale: 100 }, "9202570a"],
+    ["seed-a", {}, "9d5b26ea"],
+    ["seed-b", {}, "83000cd2"],
+    ["seed-b", { water: 70 }, "9f347408"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
