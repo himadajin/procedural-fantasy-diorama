@@ -191,6 +191,53 @@ runPipeline(seed: string, params: Params, opts?: {
   `?debug=1` のときのみ表示する(PHASE 7 commit 22 で統合済み。
   下記「描画プリセット・LOD・デバッグ表示」)。
 
+## ギャラリー生成エントリ(`src/pipeline/`。`../plans/2026-07-14-gallery.md` G1 以降で実装)
+
+ギャラリー(`../specs/design.md`「ギャラリー(語彙の単体鑑賞)」節)は、
+`runPipeline` と並ぶ**第二の正式な生成エントリ**を持つ。名称・シグネチャは
+実装時に確定するが、本節の契約は実装に先行して固定する
+(`../specs/implementation-spec.md`「1.11 ギャラリー」節も参照)。
+
+**入力**: 対象id(下記)、seed、関連パラメータ(造形に効くもののみの
+部分 Params。省略項目は `../specs/design.md` の既定値50を補う)。
+
+**対象idの体系**: `<種別>/<名前>` の形の安定な文字列とする。由来
+(建物の role 等)から一意に定まり、実装の変更で揺れない体系とする。
+
+- MVP(本計画のG1で実装): 一般建物の全 role — `building/house`、
+  `building/waterside`、`building/bridgehead`、`building/hall`、
+  `building/warehouse`、`building/outskirt`(`model/worldmodel.ts` の
+  `BuildingRole` から `"center"` を除いた6 role。中心建築はワールドの
+  唯一の主中心を表す特別な役割のため、MVPでは対象に含めない)。
+- 将来の拡張(本計画のG0では実装しない。対象対応表に行を足すのみで
+  成立させる): 中心建築 `center`、施設 `facility/<kind>`(Phase D。
+  `../plans/2026-07-14-worldgen-rework-facilities.md`)。
+- 対象idは URL(`../specs/implementation-spec.md`「1.11 ギャラリー」節)の
+  `?gallery=<対象id>` にそのまま使う。
+
+**極小ワールドの合成規約**: `createEmptyWorldModel(seed, params)` で
+空の WorldModel を作り、対象を1体生成するために必要な最小限のフィールド
+(平坦な地面1枚、区画1枚など)だけを直接上書きして合成する。本番の
+パイプライン段(`pipeline/derive` 等、上記「パイプライン段契約」節)を
+順に実行する必要はなく、対象の生成に必要なフィールドの素の合成でよい。
+
+**本番の生成関数と `buildWorld` のみを呼ぶ制約(本契約の核心)**:
+合成した極小 WorldModel に対しては、本番の生成関数(一般建物であれば
+`buildParcelBuilding` と、区画コンテキストを作る `createSiteContext`。
+将来の対象では対応する本番の生成関数)のみを呼んで対象を1体生成する。
+表示は本番の `buildWorld`(`src/mesh/`)をそのまま使う。ギャラリー専用の
+造形ロジック・専用のメッシュ生成・専用の描画コードを新設することを
+禁止する(本番の絵と乖離させないため。`../plans/2026-07-14-gallery.md`
+3.1節)。ギャラリー固有のコードは、極小モデルの合成・UI・URL状態の
+範囲に限る。three非依存(上記「モジュール境界規則」に従う)。
+
+**出力**: 正規化ハッシュ(上記「WorldModel 正規化ハッシュ」節と同一定義)を
+`summary.hash` へ格納した、本物の WorldModel(極小だが `runPipeline` の
+出力と同じ型)を返す。ワールド側の既存スナップショット(代表 seed×params
+組のハッシュ)には追加しない。決定性は「同一入力2回で完全一致」の
+性質テストで保証し、ギャラリー固有の固定スナップショット表は作らない
+(`../specs/implementation-spec.md`「1.11 ギャラリー」節「検証方針」)。
+
 ## 描画プリセット・LOD・デバッグ表示(viewer / ui。PHASE 7 commit 22)
 
 モバイル性能の確保は**表示側のみ**で行う(implementation-spec 8章、
