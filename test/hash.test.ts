@@ -518,15 +518,33 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    9d5b26ea → 9d5b26ea(不変)
   //   seed-b {}                    83000cd2 → b832272a
   //   seed-b {water:70}            9f347408 → 9f347408(不変)
+  //
+  // 計画書 2026-07-13-worldgen-rework-tuning.md タスク T3(階数分布の再配分)
+  // で更新。意図した変更: buildings.ts の floors 算出式(floorsBase)の
+  // 係数を再配分した(contracts/buildings.md「floors の改訂」T3 追補)。
+  // C7 実測で settle100 の floors 分布が 3 階 89% に偏っていたため、
+  // 基準定数 1.05→0.5・urbanity 項係数 1.1→1.7・揺らぎ項を非対称
+  // [-0.3,0.5] → 対称 [-0.65,0.65] へ変更した(乱数消費数・順序は不変。
+  // rng.range の引数のみの変更)。floors は全建物で共通に算出されるため、
+  // 8 組すべてのハッシュが変わる。
+  // 新旧対応(T2 → T3):
+  //   everdusk-101 {}               1bbf4203 → ff09b628
+  //   everdusk-101 {water:0}        012c27e7 → 8fe1e5e2
+  //   everdusk-101 {water:95}       d22e5515 → 0443ad8d
+  //   everdusk-101 {worldScale:0}   aad21a5a → 6ecaca07
+  //   everdusk-101 {worldScale:100} 978ed67e → 52e0c8e7
+  //   seed-a {}                     9d5b26ea → 94790fdf
+  //   seed-b {}                     b832272a → c682f116
+  //   seed-b {water:70}             9f347408 → bfa32c09
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "1bbf4203"],
-    ["everdusk-101", { water: 0 }, "012c27e7"],
-    ["everdusk-101", { water: 95 }, "d22e5515"],
-    ["everdusk-101", { worldScale: 0 }, "aad21a5a"],
-    ["everdusk-101", { worldScale: 100 }, "978ed67e"],
-    ["seed-a", {}, "9d5b26ea"],
-    ["seed-b", {}, "b832272a"],
-    ["seed-b", { water: 70 }, "9f347408"],
+    ["everdusk-101", {}, "ff09b628"],
+    ["everdusk-101", { water: 0 }, "8fe1e5e2"],
+    ["everdusk-101", { water: 95 }, "0443ad8d"],
+    ["everdusk-101", { worldScale: 0 }, "6ecaca07"],
+    ["everdusk-101", { worldScale: 100 }, "52e0c8e7"],
+    ["seed-a", {}, "94790fdf"],
+    ["seed-b", {}, "c682f116"],
+    ["seed-b", { water: 70 }, "bfa32c09"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

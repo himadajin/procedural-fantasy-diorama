@@ -327,13 +327,22 @@ const FLOORS_ROLE_ADJUST: Record<BuildingRole, number> = {
 
 // --- サイズ勾配(市街中心の一般建物を 4 階まで許容。Phase C。
 //     contracts/buildings.md「floors の改訂」) ---
-/** urbanity 項の係数(提案値) */
-const FLOORS_URBAN_GAIN = 1.1;
-/** urbanity 正規化 smoothstep の下端・上端(提案値) */
+/** floorsBase の基準定数(2026-07-14 追補。計画書
+ * 2026-07-13-worldgen-rework-tuning.md タスク T3。C7 実測で settle100 の
+ * 3 階偏重(89%)が判明したため、下記 urbanity 項係数・揺らぎ幅とあわせて
+ * 再配分した値) */
+const FLOORS_BASE = 0.5;
+/** urbanity 項の係数(2026-07-14 T3 再配分値) */
+const FLOORS_URBAN_GAIN = 1.7;
+/** urbanity 正規化 smoothstep の下端・上端(提案値。T3 では不変) */
 const FLOORS_URBAN_EDGE0 = 0.55;
 const FLOORS_URBAN_EDGE1 = 0.9;
-/** この urbanity 以上の建物のみ floors 上限 4(それ以外は上限 3。提案値) */
+/** この urbanity 以上の建物のみ floors 上限 4(それ以外は上限 3。提案値。
+ * T3 でも構造として不変) */
 const FLOORS_URBAN_4F_THRESHOLD = 0.75;
+/** floorsBase の乱数揺らぎの片側幅(2026-07-14 T3 再配分値。中央 0 の対称
+ * 揺らぎへ変更。旧: 非対称 [-0.3, 0.5](中心 +0.1)) */
+const FLOORS_NOISE_HALF_RANGE = 0.65;
 
 // --- 同型連続の抑制(位置由来の決定論的変調。Phase C。乱数非消費。
 //     contracts/buildings.md「同型連続の抑制の設計原理」) ---
@@ -2638,13 +2647,13 @@ function buildParcelBuilding(
   // --- 階数(Settlement / Prosperity / 役割 / urbanity。サイズ勾配
   //     (Phase C。contracts/buildings.md「floors の改訂」)) ---
   const floorsBase =
-    1.05 +
+    FLOORS_BASE +
     derived.floorsBias +
     0.4 * derived.detailAmount +
     FLOORS_ROLE_ADJUST[role] +
     FLOORS_URBAN_GAIN *
       smoothstep(FLOORS_URBAN_EDGE0, FLOORS_URBAN_EDGE1, urbanity) +
-    rng.range(-0.3, 0.5);
+    rng.range(-FLOORS_NOISE_HALF_RANGE, FLOORS_NOISE_HALF_RANGE);
   const floorsMax = urbanity >= FLOORS_URBAN_4F_THRESHOLD ? 4 : 3;
   const floors = clamp(Math.round(floorsBase), 1, floorsMax);
 
