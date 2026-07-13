@@ -456,15 +456,95 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                    8462e141 → 782cede1
   //   seed-b {}                    69c3c3a1 → f2ba3256
   //   seed-b {water:70}            58715b26 → 3b10d92f
+  //
+  // T1(裏庭の帯確保。奥行き絞りの再生成。計画書
+  // 2026-07-13-worldgen-rework-tuning.md タスク T1。contracts/buildings.md
+  // 「裏庭の性質」実装補足「単棟・雁行の帯確保」)で更新。意図した変更:
+  // 単棟・雁行の建物のうち裏庭の帯が目標 BACKYARD_TARGET_BAND(2.9)に
+  // 満たない(下限 2.5 未満で裏庭ロール自体が未実行の建物を含む)ものを、
+  // 段12 本番ループの直後の後処理パス finalizeBackyardBandGrowth が
+  // buildParcelBuilding を背面追加セットバック付きで再呼び出しし、奥行きを
+  // 絞った単棟として再生成する(絞り上限は元の建物奥行きの32%。値の調整に
+  // ついては buildings.ts の BACKYARD_REGEN_SHRINK_MAX_FRACTION のコメント
+  // 参照)。再生成後に裏庭(fence)が実際に成立した建物のみ差し替える(乱数は
+  // 追加消費しないが、絞りにより帯が初めて下限を上回る建物では
+  // 建物自身の "building/<id>" ストリーム内で裏庭ロールが新たに実行される
+  // ため、その建物の parts が伸びる)。裏庭を新たに獲得する建物が1棟でも
+  // 存在する組はハッシュが変わるため、本表の全8組が変わる。中庭型・連棟は
+  // 対象外(連棟の共有裏庭は従来どおり finalizeRowhouseGroups が判定する)。
+  // 実測(3 seed × Settlement{0,50,100} × Prosperity{0,50,100} の27条件):
+  // settle0 発生率 30.16%→63.49%、settle50 11.90%→34.99%、
+  // settle100 0.66%→13.79%(完了条件 ≥10% を達成)。絞りを適用した建物
+  // 387 件・平均絞り量 1.21(最大 1.88)。
+  // 新旧対応(C6 → T1):
+  //   everdusk-101 {}              ff09a3b8 → 9ba7191a
+  //   everdusk-101 {water:0}       be687c4f → 8333c340
+  //   everdusk-101 {water:95}      d49389f3 → d22e5515
+  //   everdusk-101 {worldScale:0}  5bed4eb1 → aad21a5a
+  //   everdusk-101 {worldScale:100} c31ee40c → 9202570a
+  //   seed-a {}                    782cede1 → 9d5b26ea
+  //   seed-b {}                    f2ba3256 → 83000cd2
+  //   seed-b {water:70}            3b10d92f → 9f347408
+  //
+  // T2(中庭型の適格緩和。計画書 2026-07-13-worldgen-rework-tuning.md
+  // タスク T2+3.2 節追補。contracts/buildings.md「区画グループとクラスタ
+  // パターン」節)で更新。意図した変更:
+  // (1) 中庭型の適格条件の緩和: グループ長 3〜5→3〜6、minUsableD 6→5。
+  // (2) 適格条件への「囲いの成立見込み」事前判定の追加(3.2 節追補):
+  //     グループの区画データのみから囲いの内側奥行きの見込みを見積もり
+  //     (乱数非消費・順序非依存。式は契約と buildings.ts の
+  //     courtyardEnclosureFeasible)、最小奥行き 2.5 に構造的に届かない
+  //     グループを抽選の候補から外す。事前判定なしでは settle100 の当選が
+  //     ほぼ全て降格の空振りとなり、抽選の重みを占有して連棟の成立を
+  //     毀損していた(54 条件実測: 184→146 棟)。
+  // (3) 採択率 `0.12+0.28×prosper` → `0.20+0.60×prosper`(事前判定と
+  //     セットで、連棟の完了条件(基準の 95%)内で中庭成立を最大化)。
+  // 中庭型の当選・成立が変わるグループが 1 つでも生じる seed×params の
+  // 組はハッシュが変わる(中庭型メンバーは footprint の後退・回転・
+  // courtyard-wall・courtyard Plaza が単棟と異なるため)。降格側(囲いの
+  // 帯 1.2・最小寸法)・雁行/連棟/裏庭の判定基準は無傷(読み替え表どおり)。
+  // 実測(6 seed × Settlement{0,50,100} × Prosperity{0,50,100} の54条件):
+  // 中庭当選 20→37、成立(courtyard Plaza 成立)14→29、降格 8 件
+  // (破綻なし)、連棟成立 184→177 棟(基準の 96.2%)。事前判定による
+  // 除外は 192 グループ(うち settle100 が 183)。完了条件(3.2 節追補:
+  // 中庭成立 ≥22 かつ 連棟成立 ≥ 基準の 95% = 175)を達成。8 組中 4 組は
+  // 該当 seed の乱数列上たまたま中庭型の当選・成立が変わらなかったため不変。
+  // 新旧対応(T1 → T2):
+  //   everdusk-101 {}              9ba7191a → 1bbf4203
+  //   everdusk-101 {water:0}       8333c340 → 012c27e7
+  //   everdusk-101 {water:95}      d22e5515 → d22e5515(不変)
+  //   everdusk-101 {worldScale:0}  aad21a5a → aad21a5a(不変)
+  //   everdusk-101 {worldScale:100} 9202570a → 978ed67e
+  //   seed-a {}                    9d5b26ea → 9d5b26ea(不変)
+  //   seed-b {}                    83000cd2 → b832272a
+  //   seed-b {water:70}            9f347408 → 9f347408(不変)
+  //
+  // 計画書 2026-07-13-worldgen-rework-tuning.md タスク T3(階数分布の再配分)
+  // で更新。意図した変更: buildings.ts の floors 算出式(floorsBase)の
+  // 係数を再配分した(contracts/buildings.md「floors の改訂」T3 追補)。
+  // C7 実測で settle100 の floors 分布が 3 階 89% に偏っていたため、
+  // 基準定数 1.05→0.5・urbanity 項係数 1.1→1.7・揺らぎ項を非対称
+  // [-0.3,0.5] → 対称 [-0.65,0.65] へ変更した(乱数消費数・順序は不変。
+  // rng.range の引数のみの変更)。floors は全建物で共通に算出されるため、
+  // 8 組すべてのハッシュが変わる。
+  // 新旧対応(T2 → T3):
+  //   everdusk-101 {}               1bbf4203 → ff09b628
+  //   everdusk-101 {water:0}        012c27e7 → 8fe1e5e2
+  //   everdusk-101 {water:95}       d22e5515 → 0443ad8d
+  //   everdusk-101 {worldScale:0}   aad21a5a → 6ecaca07
+  //   everdusk-101 {worldScale:100} 978ed67e → 52e0c8e7
+  //   seed-a {}                     9d5b26ea → 94790fdf
+  //   seed-b {}                     b832272a → c682f116
+  //   seed-b {water:70}             9f347408 → bfa32c09
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "ff09a3b8"],
-    ["everdusk-101", { water: 0 }, "be687c4f"],
-    ["everdusk-101", { water: 95 }, "d49389f3"],
-    ["everdusk-101", { worldScale: 0 }, "5bed4eb1"],
-    ["everdusk-101", { worldScale: 100 }, "c31ee40c"],
-    ["seed-a", {}, "782cede1"],
-    ["seed-b", {}, "f2ba3256"],
-    ["seed-b", { water: 70 }, "3b10d92f"],
+    ["everdusk-101", {}, "ff09b628"],
+    ["everdusk-101", { water: 0 }, "8fe1e5e2"],
+    ["everdusk-101", { water: 95 }, "0443ad8d"],
+    ["everdusk-101", { worldScale: 0 }, "6ecaca07"],
+    ["everdusk-101", { worldScale: 100 }, "52e0c8e7"],
+    ["seed-a", {}, "94790fdf"],
+    ["seed-b", {}, "c682f116"],
+    ["seed-b", { water: 70 }, "bfa32c09"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

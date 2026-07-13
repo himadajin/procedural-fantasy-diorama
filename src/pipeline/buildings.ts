@@ -327,13 +327,22 @@ const FLOORS_ROLE_ADJUST: Record<BuildingRole, number> = {
 
 // --- サイズ勾配(市街中心の一般建物を 4 階まで許容。Phase C。
 //     contracts/buildings.md「floors の改訂」) ---
-/** urbanity 項の係数(提案値) */
-const FLOORS_URBAN_GAIN = 1.1;
-/** urbanity 正規化 smoothstep の下端・上端(提案値) */
+/** floorsBase の基準定数(2026-07-14 追補。計画書
+ * 2026-07-13-worldgen-rework-tuning.md タスク T3。C7 実測で settle100 の
+ * 3 階偏重(89%)が判明したため、下記 urbanity 項係数・揺らぎ幅とあわせて
+ * 再配分した値) */
+const FLOORS_BASE = 0.5;
+/** urbanity 項の係数(2026-07-14 T3 再配分値) */
+const FLOORS_URBAN_GAIN = 1.7;
+/** urbanity 正規化 smoothstep の下端・上端(提案値。T3 では不変) */
 const FLOORS_URBAN_EDGE0 = 0.55;
 const FLOORS_URBAN_EDGE1 = 0.9;
-/** この urbanity 以上の建物のみ floors 上限 4(それ以外は上限 3。提案値) */
+/** この urbanity 以上の建物のみ floors 上限 4(それ以外は上限 3。提案値。
+ * T3 でも構造として不変) */
 const FLOORS_URBAN_4F_THRESHOLD = 0.75;
+/** floorsBase の乱数揺らぎの片側幅(2026-07-14 T3 再配分値。中央 0 の対称
+ * 揺らぎへ変更。旧: 非対称 [-0.3, 0.5](中心 +0.1)) */
+const FLOORS_NOISE_HALF_RANGE = 0.65;
 
 // --- 同型連続の抑制(位置由来の決定論的変調。Phase C。乱数非消費。
 //     contracts/buildings.md「同型連続の抑制の設計原理」) ---
@@ -501,25 +510,48 @@ export type ClusterPattern = "single" | "rowhouse" | "courtyard" | "stagger";
 /** グループ長の条件(契約の表) */
 const ROWHOUSE_MIN_LEN = 3;
 const COURTYARD_MIN_LEN = 3;
-const COURTYARD_MAX_LEN = 5;
+/**
+ * 中庭型条件「グループ長」上限(契約の表。2026-07-13 追補。計画書
+ * `plans/2026-07-13-worldgen-rework-tuning.md` タスク T2)。旧値 5 は
+ * C7 実測(中庭当選 18/54 条件)で希少すぎたため 6 へ緩和した。
+ */
+const COURTYARD_MAX_LEN = 6;
 const STAGGER_MIN_LEN = 2;
 /** 連棟条件: urbanity 下限(契約の表) */
 const ROWHOUSE_URBANITY_MIN = 0.6;
 /**
  * 中庭型条件「奥行き余裕あり」(契約の表)= グループ内の最小 usableD
  * (前面・背面セットバック控除後の可住奥行き。既定 frontSetback=0.5 で評価)
- * が 6 以上(契約「区画グループとクラスタパターン」節の提案値。
- * C4c / C7 で中庭の実寸と付き合わせて調整しうる)。
+ * が 5 以上(2026-07-13 追補。計画書
+ * `plans/2026-07-13-worldgen-rework-tuning.md` タスク T2)。旧値 6 は
+ * C7 実測で中庭型の当選が希少すぎたため緩和した。降格側(囲いの帯 1.2・
+ * 最小寸法)はこの緩和と無関係のまま変更しない。
  */
-const COURTYARD_DEPTH_MARGIN = 6;
+const COURTYARD_DEPTH_MARGIN = 5;
 
 /** 連棟の採択率(契約の提案値) */
 function rowhouseChance(settle: number): number {
   return clamp(0.2 + 0.6 * settle, 0, 0.75);
 }
-/** 中庭型の採択率(契約の提案値) */
+/**
+ * 中庭型の採択率(2026-07-13〜14 追補。計画書
+ * `plans/2026-07-13-worldgen-rework-tuning.md` 3.2 節+追補)。旧式
+ * `0.12 + 0.28 × prosper` は C7 実測で中庭型の当選が希少すぎたため緩和した。
+ *
+ * この採択率は「囲いの成立見込み」の事前判定
+ * (courtyardEnclosureFeasible。3.2 節追補)とセットで決めた値:
+ * 事前判定なしでは、settle100 の当選グループがほぼ構造的に降格して
+ * 抽選の重みだけを占有し、連棟(中核語彙)の成立を単調に毀損した
+ * (54 条件実測: 連棟成立 C7 基準 184 棟 → 本レートで 146 棟)。
+ * 事前判定の導入後は構造的空振りが消え、本レートでも連棟成立 177 棟
+ * (基準の 96.2% ≥ 完了条件 95%)・中庭成立 29(≥ 22)を満たす。
+ * 事前判定つきの計測で計画書 3.2 節の当初提案値 `0.15+0.35×prosper` は
+ * 中庭成立 22・連棟 181、本レートは中庭成立 29・連棟 177 で、いずれも
+ * 完了条件を満たすが「連棟の制約内で中庭成立を最大化」する本レートを
+ * 採用した(3.2 節追補の指示)。
+ */
 function courtyardChance(prosper: number): number {
-  return 0.12 + 0.28 * prosper;
+  return 0.2 + 0.6 * prosper;
 }
 /** 雁行の採択率(契約の提案値: 上記に外れた残りに 0.45) */
 const STAGGER_CHANCE = 0.45;
@@ -557,6 +589,15 @@ const COURTYARD_WALL_THICKNESS = 0.4;
 /** 中庭として成立させる最小の幅・奥行き(下回れば単棟へフォールバック) */
 const COURTYARD_MIN_WIDTH = 6;
 const COURTYARD_MIN_DEPTH = 2.5;
+/**
+ * 中間メンバーの目標可住奥行き(後退量の逆算式)の下限クランプ。
+ * siteGeometry の usableD 下限・役割別サイズ式の bw/bd 下限(いずれも 2.2)
+ * と同じ「最小の家」の床値。囲いの成立見込みの事前判定
+ * (courtyardEnclosureFeasible)はこのクランプが**かからない**ことを
+ * 適格条件とする(2026-07-14 追補。かかるグループは内側奥行きが
+ * 構造的に COURTYARD_MIN_DEPTH を下回る)。
+ */
+const COURTYARD_MEMBER_USABLE_MIN = 2.2;
 /** 帯制約 (12) を満たすための段階的な縮小の試行回数・1回あたりの縮小量 */
 const COURTYARD_SHRINK_STEPS = 4;
 const COURTYARD_SHRINK_STEP_SIZE = 0.6;
@@ -586,6 +627,24 @@ const SHED_DEPTH_RATIO = 0.85;
 const SHED_MIN_DEPTH = 1.2;
 /** shed と fence(背面)・建物背面との控え(実装補足) */
 const SHED_MARGIN = 0.4;
+
+// ============================================================
+// 裏庭の帯確保(奥行き絞りの再生成。Phase C 追補タスク T1。
+// contracts/buildings.md「裏庭の性質」実装補足の 2026-07-13 追補の提案値)
+// ============================================================
+/** 目標帯(提案値。shed(最小奥行き1.2+マージン0.4×2)と塀が余裕を持って
+ *  収まる最小十分量) */
+const BACKYARD_TARGET_BAND = 2.9;
+/** 奥行き絞りの上限(元の建物奥行きに対する割合)。計画書 3.1節の提案値
+ *  25% では settle100 実測 4.9%(完了条件 ≥10% 未達)だったため、
+ *  settle100 スイープの実測に基づき 32% へ調整した(実測 13.8%。契約
+ *  「単棟・雁行の帯確保」実装補足に追記済み) */
+const BACKYARD_REGEN_SHRINK_MAX_FRACTION = 0.32;
+/** 線形近似(band(extra) ≈ band0 + extra × bd0/usableD0)がクランプ
+ *  (usableD・bd の下限2.2)でずれた場合の補正刻み・最大反復回数
+ *  (決定論的な段階的増分。中庭型・裏庭衝突の段階的縮小と同じ思想) */
+const BACKYARD_REGEN_CORRECTION_STEP = 0.15;
+const BACKYARD_REGEN_CORRECTION_STEPS = 6;
 
 /** 裏庭の抽選結果(乱数は済み。geometry は乱数を消費しない) */
 interface BackyardDecision {
@@ -791,6 +850,38 @@ function courtyardBackLine(members: readonly Parcel[]): number {
   return vBack - COURTYARD_WALL_GAP;
 }
 
+/**
+ * 中庭型の適格条件「囲いの成立見込み」の事前判定(2026-07-14 追補。計画書
+ * `plans/2026-07-13-worldgen-rework-tuning.md` 3.2 節追補。契約
+ * 「区画グループとクラスタパターン」節)。
+ *
+ * グループの区画データのみから(乱数非消費・順序非依存)、囲いの内側
+ * 奥行きが COURTYARD_MIN_DEPTH(2.5)に届く見込みを判定する。判定式は
+ * 中間メンバーの後退量の逆算式(runBuildings の targetUsableD)の
+ * 下限クランプ(COURTYARD_MEMBER_USABLE_MIN = 2.2)が**かからない**こと:
+ * クランプがかからなければ、役割別サイズ式の奥行き上限
+ * (COURTYARD_DEPTH_FRACTION_MAX = 0.95)で建てても plaza 奥行き
+ * (plazaVBack − vFront)がちょうど COURTYARD_MIN_DEPTH 残ることが
+ * 逆算式の構成から保証される。クランプがかかるグループは、後退させても
+ * 建物背面が vBack に寄り切れず、内側奥行きが構造的に 2.5 を下回る
+ * (T2 差し戻しの実測で settle100 の当選グループがほぼ全て
+ * vBack − vFront = 2.3〜2.4 で降格していた構造)。
+ * 等価な閉形式: minUsableD ≥ COURTYARD_MEMBER_USABLE_MIN ×
+ * COURTYARD_DEPTH_FRACTION_MAX + COURTYARD_WALL_INSET +
+ * COURTYARD_MIN_DEPTH + 2 × COURTYARD_WALL_GAP(= 6.59)。
+ */
+function courtyardEnclosureFeasible(members: readonly Parcel[]): boolean {
+  const vBack = courtyardBackLine(members);
+  const targetUsableDUnclamped =
+    (vBack -
+      COURTYARD_WALL_INSET -
+      FRONT_SETBACK -
+      COURTYARD_MIN_DEPTH -
+      COURTYARD_WALL_GAP) /
+    COURTYARD_DEPTH_FRACTION_MAX;
+  return targetUsableDUnclamped >= COURTYARD_MEMBER_USABLE_MIN;
+}
+
 /** グループ内の 1 区画ぶんの配置計画 */
 export interface ParcelLayout {
   /** 抽選で当選したパターン(rowhouse/courtyard は C4b 時点では single 同様に扱う) */
@@ -869,10 +960,13 @@ export function planGroupLayouts(model: WorldModel): Map<string, ParcelLayout> {
       avgUrbanity >= ROWHOUSE_URBANITY_MIN &&
       allHouse &&
       !anyWaterside;
+    // 囲いの成立見込みの事前判定(2026-07-14 追補)は区画データのみから
+    // 決定論的に評価する(courtyardEnclosureFeasible。乱数非消費・順序非依存)
     const courtyardEligible =
       n >= COURTYARD_MIN_LEN &&
       n <= COURTYARD_MAX_LEN &&
-      minUsableD >= COURTYARD_DEPTH_MARGIN;
+      minUsableD >= COURTYARD_DEPTH_MARGIN &&
+      courtyardEnclosureFeasible(members);
     // 3.4 節(14): waterside/canalside を含むグループは雁行の適格から除外する
     const staggerEligible = n >= STAGGER_MIN_LEN && !anyWaterside;
 
@@ -2304,6 +2398,10 @@ interface BuiltParcelResult {
   foundation: Foundation;
   floors: number;
   roofPitch: number;
+  /** 建物の実奥行き(bd。裏庭の帯確保パス(T1)が絞り量を逆算するために使う) */
+  bd: number;
+  /** 裏庭の帯判定式の結果(裏庭の採否によらず常に計算する。T1 実装補足) */
+  backyardBandDepth: number;
 }
 
 /**
@@ -2549,13 +2647,13 @@ function buildParcelBuilding(
   // --- 階数(Settlement / Prosperity / 役割 / urbanity。サイズ勾配
   //     (Phase C。contracts/buildings.md「floors の改訂」)) ---
   const floorsBase =
-    1.05 +
+    FLOORS_BASE +
     derived.floorsBias +
     0.4 * derived.detailAmount +
     FLOORS_ROLE_ADJUST[role] +
     FLOORS_URBAN_GAIN *
       smoothstep(FLOORS_URBAN_EDGE0, FLOORS_URBAN_EDGE1, urbanity) +
-    rng.range(-0.3, 0.5);
+    rng.range(-FLOORS_NOISE_HALF_RANGE, FLOORS_NOISE_HALF_RANGE);
   const floorsMax = urbanity >= FLOORS_URBAN_4F_THRESHOLD ? 4 : 3;
   const floors = clamp(Math.round(floorsBase), 1, floorsMax);
 
@@ -2703,6 +2801,8 @@ function buildParcelBuilding(
     foundation,
     floors,
     roofPitch: pitch,
+    bd,
+    backyardBandDepth,
   };
 }
 
@@ -3607,6 +3707,91 @@ function finalizeRowhouseGroups(
   }
 }
 
+/**
+ * 単棟・雁行の裏庭帯確保(奥行き絞りの再生成。Phase C 追補タスク T1。
+ * contracts/buildings.md「裏庭の性質」実装補足の 2026-07-13 追補)。
+ *
+ * `candidates`(本番ループが収集した区画ごとの opts・実奥行き bd・帯
+ * bandDepth)のうち帯が目標 `BACKYARD_TARGET_BAND`(2.9)に満たない建物を
+ * 対象に、`buildParcelBuilding` を背面追加セットバック(`backSetbackExtra`)
+ * 付きで再呼び出しして奥行きを絞り、目標帯を満たす裏庭を確保する。
+ *
+ * 絞り量は band(extra) ≈ band0 + extra × (bd0/usableD0) の線形近似
+ * (usableD0 = band0 + bd0 − BACK_SETBACK。opts.backSetbackExtra=0 の
+ * 帯判定式の変形)から逆算し、クランプ(usableD・bd の下限2.2)でずれる
+ * 場合のみ段階的に補正する。絞りは元の建物奥行きの
+ * `BACKYARD_REGEN_SHRINK_MAX_FRACTION`(32%)を上限とし、上限まで
+ * 絞っても目標帯に届かない、または再生成後に裏庭(fence)が実際には
+ * 成立しない(抽選が外れる・衝突検査で断念する)場合は、絞りを適用せず
+ * 元の(絞りなしの)建物のまま残す(決定論的フォールバック。小さすぎる
+ * 家を意味なく作らないため)。
+ *
+ * 乱数は消費しない(`buildParcelBuilding` の再呼び出しはいずれも同一
+ * ラベルの新規 RNG インスタンスの純関数呼び出し。中庭型・連棟の finalize
+ * パスと同じ流儀)。処理順序は候補どうしで独立(建物ごとに完結する)。
+ */
+function finalizeBackyardBandGrowth(
+  model: WorldModel,
+  ctx: SiteContext,
+  buildings: Building[],
+  candidates: Map<string, { opts: BuildLayoutOptions; bd: number; bandDepth: number }>,
+): void {
+  if (candidates.size === 0) return;
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < buildings.length; i++) {
+    const b = buildings[i];
+    if (b) indexById.set(b.id, i);
+  }
+  const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
+
+  for (const [parcelId, info] of candidates) {
+    if (info.bandDepth >= BACKYARD_TARGET_BAND) continue; // 既に目標帯を満たす
+    const parcel = parcelById.get(parcelId);
+    if (!parcel) continue;
+    const buildingId = `building/${parcelId.slice("parcel/".length)}`;
+    const idx = indexById.get(buildingId);
+    if (idx === undefined) continue;
+
+    const bd0 = info.bd;
+    const band0 = info.bandDepth;
+    const cap = bd0 * BACKYARD_REGEN_SHRINK_MAX_FRACTION;
+    const usableD0 = band0 + bd0 - BACK_SETBACK;
+    const bdFactor = usableD0 > 1e-6 ? bd0 / usableD0 : 1;
+
+    let extra = clamp(
+      (BACKYARD_TARGET_BAND - band0) / Math.max(bdFactor, 1e-6),
+      0,
+      cap,
+    );
+    let candidate = buildParcelBuilding(model, ctx, parcel, {
+      ...info.opts,
+      backSetbackExtra: extra,
+    });
+    // 線形近似がクランプでずれた場合の段階的補正(決定論。最大数回で収束)
+    for (
+      let step = 0;
+      candidate.backyardBandDepth < BACKYARD_TARGET_BAND &&
+      extra < cap - 1e-9 &&
+      step < BACKYARD_REGEN_CORRECTION_STEPS;
+      step++
+    ) {
+      extra = Math.min(cap, extra + BACKYARD_REGEN_CORRECTION_STEP);
+      candidate = buildParcelBuilding(model, ctx, parcel, {
+        ...info.opts,
+        backSetbackExtra: extra,
+      });
+    }
+
+    if (candidate.backyardBandDepth < BACKYARD_TARGET_BAND) continue; // 断念(現行どおり)
+    const hasBackyard = candidate.building.parts.some(
+      (p) => p.type === "fence" && p.params?.backyard === 1,
+    );
+    if (!hasBackyard) continue; // 絞っても裏庭が成立しない場合は絞らない
+
+    buildings[idx] = candidate.building;
+  }
+}
+
 const DIRT_CHANNEL = ZONE_KINDS.indexOf("dirt");
 const PAVED_CHANNEL = ZONE_KINDS.indexOf("paved");
 
@@ -3638,6 +3823,13 @@ export function runBuildings(model: WorldModel): void {
   const buildings: Building[] = [];
   // 水辺拡張(commit 19)の第2パス入力(建物 id → 展開文脈)
   const waterfrontSites = new Map<string, WaterfrontSite>();
+  // 裏庭の帯確保(奥行き絞りの再生成。Phase C 追補タスク T1)の第2パス入力
+  // (区画 id → 本番ループで使った opts・実奥行き bd・帯 bandDepth。単棟・
+  // 雁行の waterside/canalside を除く非中庭・非連棟建物のみ収集する)
+  const backyardBandCandidates = new Map<
+    string,
+    { opts: BuildLayoutOptions; bd: number; bandDepth: number }
+  >();
   let violations = 0;
   // グループ計画(クラスタパターンの抽選。Phase C C4b)。段12 の本番ループの
   // 前に固定消費で決める(契約「抽選消費の先行(13)」)
@@ -3704,7 +3896,7 @@ export function runBuildings(model: WorldModel): void {
           COURTYARD_MIN_DEPTH -
           COURTYARD_WALL_GAP) /
           COURTYARD_DEPTH_FRACTION_MAX,
-        2.2,
+        COURTYARD_MEMBER_USABLE_MIN,
         naturalUsableD,
       );
       opts = {
@@ -3719,6 +3911,25 @@ export function runBuildings(model: WorldModel): void {
 
     const result = buildParcelBuilding(model, ctx, parcel, opts);
     buildings.push(result.building);
+
+    // 裏庭の帯確保(T1)の候補収集: 単棟・雁行(中庭型・連棟は対象外。
+    // 中庭型は allowBackyard=false で裏庭を持たない設計、連棟は
+    // finalizeRowhouseGroups が別途合成後の共有奥行きで判定するため)かつ
+    // waterside/canalside でない区画(帯判定・抽選そのものが非適用)のみ
+    // 収集する
+    if (
+      (layout?.pattern === "single" ||
+        layout?.pattern === "stagger" ||
+        !layout) &&
+      !parcel.waterside &&
+      !parcel.canalside
+    ) {
+      backyardBandCandidates.set(parcel.id, {
+        opts,
+        bd: result.bd,
+        bandDepth: result.backyardBandDepth,
+      });
+    }
 
     // 水辺拡張(commit 19)の文脈を収集(展開は全一般建物の確定後の
     // 第2パス。デッキが後続建物の footprint と重ならないことを保証する)
@@ -3752,6 +3963,13 @@ export function runBuildings(model: WorldModel): void {
   //     行う(courtyard 端建物が waterside の場合は回転を試みず waterfrontSites
   //     の内容もそのまま有効なため、フォールバックの入れ替えとは衝突しない) ---
   finalizeCourtyardGroups(model, ctx, buildings, groupLayouts);
+
+  // --- Phase C 追補タスク T1: 単棟・雁行の裏庭帯確保(奥行き絞りの
+  //     再生成。契約「裏庭の性質」実装補足の 2026-07-13 追補)。中庭型・
+  //     連棟の finalize より後で行う(それらは既に候補から除外済みのため
+  //     順序は本質的に無関係だが、group 単位の再構成が済んだ状態の
+  //     buildings 配列に対して building 単位で置き換えるほうが単純) ---
+  finalizeBackyardBandGrowth(model, ctx, buildings, backyardBandCandidates);
 
   // --- 水辺建築の拡張(PHASE 6 commit 19。contracts/buildings.md
   //     「水辺建築の拡張」)。乱数は "building/<id>/waterfront" のみ消費 ---
