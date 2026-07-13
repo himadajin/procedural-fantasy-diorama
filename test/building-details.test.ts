@@ -150,7 +150,7 @@ const COMBOS: [string, Partial<Params>][] = SEEDS.flatMap((seed) => [
 ]);
 
 describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
-  it("全建物が扉をちょうど 1 つ持ち、外向きが親区画の facing と一致し、壁面上にある", () => {
+  it("全建物が扉をちょうど 1 つ持ち、外向きが親区画の facing と一致し、壁面上にある(連棟は住戸(スパン区画)ごとに 1。Phase C タスク C5。契約 (13) 過渡期註記)", () => {
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
@@ -161,6 +161,27 @@ describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
         const doors = partsOf(b, "door").filter(
           (p) => p.params?.waterfront !== 1,
         );
+        if (b.spanParcelIds.length > 1) {
+          // 連棟: 住戸(スパン区画)ごとに door がちょうど 1(契約「連棟
+          // (rowhouse)の性質」「Phase C 過渡期註記」)。部品配列順は住戸
+          // (spanParcelIds)の順と一致する
+          expect(doors.length).toBe(b.spanParcelIds.length);
+          for (let i = 0; i < doors.length; i++) {
+            const door = doors[i];
+            const pid = b.spanParcelIds[i];
+            if (!door || !pid) continue;
+            const parcel = parcelById.get(pid);
+            expect(parcel).toBeDefined();
+            if (!parcel) continue;
+            const nx = Math.sin(door.transform.rotation);
+            const nz = Math.cos(door.transform.rotation);
+            const dot =
+              nx * Math.cos(parcel.facing) + nz * Math.sin(parcel.facing);
+            expect(dot).toBeGreaterThan(Math.cos((6 * Math.PI) / 180));
+            expect(openingOnWall(b, door)).toBe(true);
+          }
+          continue;
+        }
         expect(doors.length).toBe(1);
         const door = doors[0];
         if (!door) continue;
@@ -280,11 +301,13 @@ describe("building details: 素材階層と木組みの連動", () => {
     let beamBuildings = 0;
     for (const [seed, over] of COMBOS) {
       for (const b of general(cached(seed, over))) {
-        // 水辺拡張の beam(欄干・杭繋ぎ・持ち送り。waterfront)は
-        // 壁材に依らず付く(契約の例外)
+        // 水辺拡張の beam(欄干・杭繋ぎ・持ち送り。waterfront)と連棟の
+        // 住戸境界の分節縦梁(divider)は壁材に依らず付く(契約の例外。
+        // 「連棟(rowhouse)の性質」)
         const hasBeam =
-          partsOf(b, "beam").filter((p) => p.params?.waterfront !== 1).length >
-          0;
+          partsOf(b, "beam").filter(
+            (p) => p.params?.waterfront !== 1 && p.params?.divider !== 1,
+          ).length > 0;
         const hasJetty = partsOf(b, "jetty").length > 0;
         if (hasBeam) beamBuildings++;
         if (hasBeam) expect(b.materials.wall).toBe("plaster");

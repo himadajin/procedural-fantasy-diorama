@@ -849,6 +849,7 @@ export function expandCenterBuilding(
   return {
     id: "building/center",
     parcelId: null,
+    spanParcelIds: [],
     role: "center",
     footprint,
     facing,

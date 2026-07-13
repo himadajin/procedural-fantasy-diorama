@@ -2417,6 +2417,7 @@ function buildParcelBuilding(
   const building: Building = {
     id,
     parcelId: parcel.id,
+    spanParcelIds: [parcel.id],
     role,
     footprint,
     facing,
@@ -2874,6 +2875,419 @@ function finalizeCourtyardGroups(
   }
 }
 
+// ============================================================
+// 連棟(rowhouse)の合成。Phase C タスク C5(計画書 4 章「C5: 連棟(長屋)」)。
+// contracts/buildings.md「連棟(rowhouse)の性質」+ 実装補足(下記)。
+// ============================================================
+
+/** 列の両端の側面セットバック(通常の単棟と同じ SIDE_SETBACK を列の外周にのみ
+ *  適用する。内部の区画境界にはセットバックを設けない=帯状矩形。実装補足) */
+const ROWHOUSE_END_INSET = SIDE_SETBACK;
+/** 成立の最小寸法(下回ればグループ全体を単棟のまま残す。契約の中庭型
+ *  フォールバックと同じ思想の安全弁。実装補足) */
+const ROWHOUSE_MIN_TOTAL_WIDTH = 6;
+const ROWHOUSE_MIN_DEPTH = 2.2;
+/** 導出した帯状矩形の全コーナーがメンバー区画から収まるべき帯(courtyard の
+ *  帯制約 (12) と同じ 1.2。曲線道路での逸脱を防ぐ安全弁。実装補足) */
+const ROWHOUSE_PARCEL_BAND = 1.2;
+/** 住戸境界の分節縦梁(既存 beam 部品)の太さ(見付け) */
+const ROWHOUSE_DIVIDER_WIDTH = 0.14;
+
+/**
+ * 連棟(rowhouse)当選グループを、k 区画を貫く帯状矩形の 1 棟へ合成する
+ * (契約「連棟(rowhouse)の性質」)。本番ループはグループの全メンバーを
+ * 既に単棟として生成済み(`SINGLE_BUILD_OPTIONS`。メンバーの
+ * `"building/<id>"` 系ストリームの消費数・消費順は雁行・中庭型と同じ規約で
+ * 不変)。本関数はその結果(役割・階数・素材・基壇高)を**そのまま流用**し、
+ * 骨格(帯状矩形の footprint・壁体・連続屋根)は乱数を一切消費せず区画データと
+ * 確定済みメンバー建物から決定論的に導出する。ファサードの分節(住戸ごとの
+ * 扉・窓列・煙突)のみ、契約の慣例どおり `"building/<compositeId>/details"`
+ * の新規インスタンス(先頭区画の建物 id と同一ラベル。既存メンバー生成が
+ * 消費した別インスタンスとは独立)を消費する。
+ *
+ * 成立しない場合(帯状矩形が他の建物・道路・広場と衝突する、寸法が
+ * 最小値を下回る、帯制約 (12) を満たさない等)は、メンバーを本番ループが
+ * 生成した単棟のまま変更しない(決定論的フォールバック。乱数は消費しない)。
+ */
+function finalizeRowhouseGroups(
+  model: WorldModel,
+  buildings: Building[],
+  layoutByParcelId: Map<string, ParcelLayout>,
+): void {
+  const groups = new Map<string, Parcel[]>();
+  for (const parcel of model.parcels) {
+    const layout = layoutByParcelId.get(parcel.id);
+    if (layout?.pattern !== "rowhouse") continue;
+    let bucket = groups.get(parcel.groupId);
+    if (!bucket) {
+      bucket = [];
+      groups.set(parcel.groupId, bucket);
+    }
+    bucket.push(parcel);
+  }
+  if (groups.size === 0) return;
+
+  const { seed, derived } = model.meta;
+  const buildingIdOf = (parcel: Parcel): string =>
+    `building/${parcel.id.slice("parcel/".length)}`;
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < buildings.length; i++) {
+    const b = buildings[i];
+    if (b) indexById.set(b.id, i);
+  }
+  const removeIds = new Set<string>();
+  const replace = new Map<string, Building>();
+
+  for (const [, unsorted] of groups) {
+    const members = [...unsorted].sort((a, b) => parcelSlot(a) - parcelSlot(b));
+    const n = members.length;
+    if (n < ROWHOUSE_MIN_LEN) continue; // 防御的に確認(契約: グループ長 ≥ 3)
+
+    const head = members[0];
+    if (!head) continue;
+    const headIdx = indexById.get(buildingIdOf(head));
+    const headBuilding = headIdx !== undefined ? buildings[headIdx] : undefined;
+    if (!headBuilding) continue;
+
+    // 全メンバーが実際に house として生成されているか(防御的に確認。
+    // 契約: 連棟の適格条件「role が house 系に揃う」は planGroupLayouts が
+    // 事前判定するが、本番ループの実際の結果でも再確認してから合成する)
+    let allHouse = true;
+    for (const m of members) {
+      const idx = indexById.get(buildingIdOf(m));
+      const b = idx !== undefined ? buildings[idx] : undefined;
+      if (!b || b.role !== "house") {
+        allHouse = false;
+        break;
+      }
+    }
+    if (!allHouse) continue;
+
+    // --- 基準フレーム(先頭区画の接道方位。乱数非消費) ---
+    const [fa, fb] = head.frontEdge;
+    const frontage = Math.hypot(fb.x - fa.x, fb.z - fa.z) || 1e-6;
+    const tx = (fb.x - fa.x) / frontage;
+    const tz = (fb.z - fa.z) / frontage;
+    const backX = -Math.cos(head.facing);
+    const backZ = -Math.sin(head.facing);
+    const projOrigin = { x: (fa.x + fb.x) / 2, z: (fa.z + fb.z) / 2 };
+    const projU = (p: Vec2): number =>
+      (p.x - projOrigin.x) * tx + (p.z - projOrigin.z) * tz;
+    const toWorld = (u: number, v: number): Vec2 => ({
+      x: projOrigin.x + tx * u + backX * v,
+      z: projOrigin.z + tz * u + backZ * v,
+    });
+
+    // --- 間口方向の範囲: 全メンバーの frontEdge 頂点の投影(内側マージンは
+    //     通常の側面セットバック。列の両端にのみ適用する) ---
+    let uMinRaw = Infinity;
+    let uMaxRaw = -Infinity;
+    for (const m of members) {
+      for (const p of m.frontEdge) {
+        uMinRaw = Math.min(uMinRaw, projU(p));
+        uMaxRaw = Math.max(uMaxRaw, projU(p));
+      }
+    }
+    const uMin = uMinRaw + ROWHOUSE_END_INSET;
+    const uMax = uMaxRaw - ROWHOUSE_END_INSET;
+    const totalW = uMax - uMin;
+
+    // --- 奥行き: 全メンバーの素の可住奥行きの最小値(帯状矩形が全区画に
+    //     収まることを保証する) ---
+    let bd = Infinity;
+    for (const m of members) {
+      bd = Math.min(bd, siteGeometry(m, FRONT_SETBACK).usableD);
+    }
+
+    const ridgeAlongU = totalW >= bd;
+    if (
+      totalW < ROWHOUSE_MIN_TOTAL_WIDTH ||
+      bd < ROWHOUSE_MIN_DEPTH ||
+      !ridgeAlongU
+    ) {
+      continue; // メンバーは本番ループが生成した単棟のまま(フォールバック)
+    }
+
+    const footprint = ensureClockwise([
+      toWorld(uMin, 0),
+      toWorld(uMax, 0),
+      toWorld(uMax, bd),
+      toWorld(uMin, bd),
+    ]);
+
+    // --- 衝突検査(他の建物・道路・広場。メンバー自身は除く) ---
+    const ownIds = new Set(members.map((m) => buildingIdOf(m)));
+    let blocked = false;
+    for (const b of buildings) {
+      if (ownIds.has(b.id)) continue;
+      if (polygonsOverlap(footprint, b.footprint)) {
+        blocked = true;
+        break;
+      }
+    }
+    for (const edge of model.network.edges) {
+      if (blocked) break;
+      if (polylineTouchesPolygon(edge.path, footprint, edge.width / 2)) {
+        blocked = true;
+      }
+    }
+    for (const plaza of model.plazas) {
+      if (blocked) break;
+      if (polygonsOverlap(footprint, plaza.polygon)) blocked = true;
+    }
+    // 帯状矩形の全コーナーがいずれかのメンバー区画の近傍(1.2 帯)にあるか
+    // (courtyard の帯制約 (12) と同じ流儀。曲線道路での逸脱を防ぐ安全弁)
+    if (!blocked) {
+      for (const c of footprint) {
+        const minDist = Math.min(
+          ...members.map((m) => polygonSignedDistance(c.x, c.z, m.polygon)),
+        );
+        if (minDist > ROWHOUSE_PARCEL_BAND) {
+          blocked = true;
+          break;
+        }
+      }
+    }
+    if (blocked) continue; // フォールバック(メンバーは単棟のまま)
+
+    // --- 骨格(単一の帯状矩形 = 1 翼。壁体・屋根は既存単棟と同じ幾何規約。
+    //     役割・階数・素材・基壇高は先頭区画の確定済み建物をそのまま流用する
+    //     =乱数は一切追加消費しない) ---
+    const floors = headBuilding.floors;
+    const materials = headBuilding.materials;
+    const pitch = headBuilding.roof.pitch;
+    const foundation: Foundation = {
+      kind: "plinth",
+      plinthHeight: headBuilding.foundation.plinthHeight,
+      overWater: false,
+      bottomY: 0,
+    };
+    const plinthTop = foundation.plinthHeight;
+    const plinthMaterial = materials.wall === "ashlar" ? "ashlar" : "stone";
+    const rotU = -Math.atan2(tz, tx);
+    const cCenter = toWorld((uMin + uMax) / 2, bd / 2);
+    const frontNormal = { x: -backX, z: -backZ };
+    const doorRot = Math.atan2(frontNormal.x, frontNormal.z);
+
+    const parts: Part[] = [];
+    parts.push({
+      type: "plinth",
+      transform: {
+        position: [cCenter.x, 0, cCenter.z],
+        rotation: rotU,
+        scale: [totalW + 2 * PLINTH_OUTSET, plinthTop, bd + 2 * PLINTH_OUTSET],
+      },
+      materialId: plinthMaterial,
+    });
+    for (let i = 0; i < floors; i++) {
+      parts.push({
+        type: "wall",
+        transform: {
+          position: [cCenter.x, plinthTop + i * FLOOR_HEIGHT, cCenter.z],
+          rotation: rotU,
+          scale: [totalW, FLOOR_HEIGHT, bd],
+        },
+        materialId: materials.wall,
+        params: { floor: i },
+      });
+    }
+    // 連続屋根(棟通し。妻は列の両端のみ=1 部品の gable。契約)
+    const roofLength = totalW + 2 * GABLE_END_OVERHANG;
+    const span = bd + 2 * EAVE_OVERHANG;
+    const roofHeight = Math.tan((pitch * Math.PI) / 180) * (span / 2);
+    const roofBaseY = plinthTop + floors * FLOOR_HEIGHT - ROOF_BASE_SINK;
+    parts.push({
+      type: "gable",
+      transform: {
+        position: [cCenter.x, roofBaseY, cCenter.z],
+        rotation: rotU,
+        scale: [roofLength, roofHeight, span],
+      },
+      materialId: materials.roof,
+      params: { pitch },
+    });
+
+    // --- ファサードの分節(住戸ごとに扉 1・窓列・煙突。境界に分節縦梁) ---
+    const compositeId = buildingIdOf(head);
+    const detailsRng = makeRng(seed, `${compositeId}/details`);
+    const detail = derived.detailAmount;
+    const [dw0, dw1] = DOOR_ROLE_WIDTH.house;
+    const windowH = clamp(
+      (1.2 + 0.35 * detail) * WINDOW_ROLE_HEIGHT.house,
+      0.9,
+      1.85,
+    );
+    const densityF = clamp(0.35 + 0.6 * detail, 0, 1) * WINDOW_ROLE_COUNT.house;
+    const doorH = Math.min(2.15, FLOOR_HEIGHT - 0.5);
+
+    const unitSpans = members.map((m) => {
+      let mMin = Infinity;
+      let mMax = -Infinity;
+      for (const p of m.frontEdge) {
+        mMin = Math.min(mMin, projU(p));
+        mMax = Math.max(mMax, projU(p));
+      }
+      return {
+        u0: clamp(mMin, uMin, uMax),
+        u1: clamp(mMax, uMin, uMax),
+      };
+    });
+
+    for (let ui = 0; ui < n; ui++) {
+      const unit = unitSpans[ui];
+      if (!unit) continue;
+      const width = Math.max(0.1, unit.u1 - unit.u0);
+      const uMid = (unit.u0 + unit.u1) / 2;
+
+      // 扉(住戸ごとに 1)
+      const doorW = clamp(
+        dw0 + (dw1 - dw0) * detailsRng.next(),
+        0.85,
+        Math.max(0.85, width - 1.0),
+      );
+      const doorOffT = detailsRng.range(-1, 1);
+      const doorMax = Math.max(0, width / 2 - doorW / 2 - 0.45);
+      const doorOff = clamp(doorOffT * 0.2 * width, -doorMax, doorMax);
+      const doorU = uMid + doorOff;
+      const doorPos = toWorld(doorU, 0);
+      parts.push({
+        type: "door",
+        transform: {
+          position: [doorPos.x, plinthTop, doorPos.z],
+          rotation: doorRot,
+          scale: [doorW, doorH, DOOR_DEPTH],
+        },
+        materialId: "wood",
+      });
+
+      // 窓(前面。扉近傍(1階のみ)を空ける)
+      const windowW = 0.95 + 0.35 * detailsRng.next();
+      const usable = width - 2 * WINDOW_MARGIN;
+      const slots = Math.floor(usable / (windowW + WINDOW_GAP));
+      if (slots > 0) {
+        const countRoll = detailsRng.next();
+        const wn = Math.min(
+          slots,
+          Math.max(0, Math.round(slots * densityF + (countRoll - 0.5) * 0.8)),
+        );
+        for (let floor = 0; floor < floors; floor++) {
+          const y = plinthTop + floor * FLOOR_HEIGHT + WINDOW_SILL;
+          for (let i = 0; i < wn; i++) {
+            const t0 = unit.u0 + WINDOW_MARGIN + (i + 0.5) * (usable / wn);
+            const jit = detailsRng.range(-1, 1) * (1 - detail) * 0.5;
+            const t = clamp(
+              t0 + jit,
+              unit.u0 + windowW / 2,
+              unit.u1 - windowW / 2,
+            );
+            if (
+              floor === 0 &&
+              Math.abs(t - doorU) < (doorW + windowW) / 2 + 0.25
+            ) {
+              continue;
+            }
+            const p = toWorld(t, 0);
+            parts.push({
+              type: "window",
+              transform: {
+                position: [p.x, y, p.z],
+                rotation: doorRot,
+                scale: [windowW, windowH, WINDOW_DEPTH],
+              },
+              materialId: materials.trim,
+            });
+          }
+        }
+      }
+
+      // 煙突(住戸ごとに独立採択。棟線(v = bd/2)上、住戸の間口内に収める)
+      if (
+        detailsRng.chance(clamp(CHIMNEY_ROLE_P.house + 0.55 * detail, 0, 0.95))
+      ) {
+        const chimneyW = CHIMNEY_BASE_WIDTH * CHIMNEY_OVERSIZE;
+        const margin = Math.max(
+          chimneyW / 2 + 0.2,
+          detailsRng.range(0.15, 0.4) * width,
+        );
+        const side = detailsRng.chance(0.5) ? 1 : -1;
+        const topExtra = detailsRng.range(CHIMNEY_TOP_MIN, CHIMNEY_TOP_MAX);
+        const along = side * Math.max(0, width / 2 - margin);
+        const ridgePos = toWorld(uMid + along, bd / 2);
+        const baseY = plinthTop + floors * FLOOR_HEIGHT - 0.3;
+        const topY = roofBaseY + roofHeight + topExtra;
+        parts.push({
+          type: "chimney",
+          transform: {
+            position: [ridgePos.x, baseY, ridgePos.z],
+            rotation: rotU,
+            scale: [chimneyW, topY - baseY, chimneyW],
+          },
+          materialId: plinthMaterial,
+        });
+      }
+    }
+
+    // 住戸境界の分節縦梁(既存 beam 部品。前面壁を通し高さで縦断する)
+    for (let ui = 1; ui < n; ui++) {
+      const prev = unitSpans[ui - 1];
+      const curr = unitSpans[ui];
+      if (!prev || !curr) continue;
+      const boundaryU = (prev.u1 + curr.u0) / 2;
+      const p = toWorld(boundaryU, 0);
+      const off = BEAM_DEPTH / 2 + 0.01;
+      parts.push({
+        type: "beam",
+        transform: {
+          position: [
+            p.x + frontNormal.x * off,
+            plinthTop,
+            p.z + frontNormal.z * off,
+          ],
+          rotation: rotU,
+          scale: [ROWHOUSE_DIVIDER_WIDTH, floors * FLOOR_HEIGHT, BEAM_DEPTH],
+        },
+        materialId: "wood",
+        // 住戸境界の分節縦梁は壁材(plaster 帯)に依らず通す(契約「連棟
+        // (rowhouse)の性質」)。木組み表現の梁(plaster 連動)・水辺拡張の梁
+        // (waterfront)と区別する目印(実装補足。materials.md「素材階層と
+        // 部品の連動」の waterfront 例外と同じ流儀)
+        params: { divider: 1 },
+      });
+    }
+
+    const composite: Building = {
+      id: compositeId,
+      parcelId: head.id,
+      spanParcelIds: members.map((m) => m.id),
+      role: "house",
+      footprint,
+      facing: head.facing,
+      floors,
+      roof: { type: "gable", pitch },
+      foundation,
+      materials,
+      parts,
+    };
+    replace.set(compositeId, composite);
+    for (let i = 1; i < n; i++) {
+      const m = members[i];
+      if (m) removeIds.add(buildingIdOf(m));
+    }
+  }
+
+  if (removeIds.size === 0 && replace.size === 0) return;
+  for (let i = buildings.length - 1; i >= 0; i--) {
+    const b = buildings[i];
+    if (!b) continue;
+    if (removeIds.has(b.id)) {
+      buildings.splice(i, 1);
+      continue;
+    }
+    const rep = replace.get(b.id);
+    if (rep) buildings[i] = rep;
+  }
+}
+
 const DIRT_CHANNEL = ZONE_KINDS.indexOf("dirt");
 const PAVED_CHANNEL = ZONE_KINDS.indexOf("paved");
 
@@ -3000,6 +3414,15 @@ export function runBuildings(model: WorldModel): void {
       });
     }
   }
+
+  // --- Phase C タスク C5: 連棟(rowhouse)当選グループを k 区画 1 棟へ合成する
+  //     (契約「連棟(rowhouse)の性質」)。乱数はファサード分節の
+  //     "building/<compositeId>/details" 新規インスタンスのみ消費し、
+  //     メンバーの骨格生成(上のループ)が消費した各ストリームの消費数・
+  //     消費順には触れない。中庭型より前に行う(パターンは互いに排他な
+  //     グループへのみ適用されるため順序は本質的に無関係だが、水辺拡張の
+  //     第2パスより前に済ませておく) ---
+  finalizeRowhouseGroups(model, buildings, groupLayouts);
 
   // --- Phase C タスク C4c: 中庭型グループの端建物の内向きスナップ・塀
   //     (courtyard-wall)・courtyard Plaza の追記(契約「中庭型(courtyard)
