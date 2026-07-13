@@ -227,6 +227,32 @@ describe("buildings: 骨格データの性質", () => {
     expect(sawFloor4).toBeGreaterThan(0);
   });
 
+  it("階数分布の再配分(2026-07-14 T3): settle100 の 2/3/4 階比率が目標帯に収まる", () => {
+    // 計画書 2026-07-13-worldgen-rework-tuning.md 3.3節・4章「T3」。
+    // C7 実測(settle100 で 3 階 89%)の偏重を是正した係数再配分の検証。
+    // 代表 3 seed × Prosperity{0,50,100} 合算(C7 と同一の計測手法)。
+    const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    let total = 0;
+    for (const seed of SEEDS) {
+      for (const prosperity of [0, 50, 100]) {
+        const model = cached(seed, { settlement: 100, prosperity });
+        for (const b of general(model)) {
+          counts[b.floors] = (counts[b.floors] ?? 0) + 1;
+          total++;
+        }
+      }
+    }
+    expect(total).toBeGreaterThan(0);
+    const ratio = (n: number) => n / total;
+    // 目標帯(計画書 3.3節・4章「T3」の完了条件。提案帯)
+    expect(ratio(counts[2] ?? 0)).toBeGreaterThanOrEqual(0.1);
+    expect(ratio(counts[2] ?? 0)).toBeLessThanOrEqual(0.25);
+    expect(ratio(counts[3] ?? 0)).toBeGreaterThanOrEqual(0.6);
+    expect(ratio(counts[3] ?? 0)).toBeLessThanOrEqual(0.8);
+    expect(ratio(counts[4] ?? 0)).toBeGreaterThanOrEqual(0.05);
+    expect(ratio(counts[4] ?? 0)).toBeLessThanOrEqual(0.15);
+  });
+
   it("footprint は時計回り(shoelace 符号負)・自己交差なし(頂点数 4〜8)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed);
