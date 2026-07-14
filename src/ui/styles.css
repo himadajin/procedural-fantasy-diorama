@@ -562,7 +562,9 @@ button {
   [data-sheet="half"] .pfd-title,
   [data-sheet="half"] .pfd-sliders,
   [data-sheet="half"] .pfd-summary,
-  [data-sheet="half"] .pfd-hairline {
+  [data-sheet="half"] .pfd-hairline,
+  [data-sheet="half"] .pfd-gallery-target-row,
+  [data-sheet="half"] .pfd-gallery-actions .pfd-ghost-btn {
     display: none;
   }
 

@@ -35,7 +35,7 @@ const SLIDERS: SliderDef[] = [
     key: "prosperity",
     name: "Prosperity / 繁栄度",
     description:
-      "建物の整備度、素材の上質さ、屋根・窓・道・広場の見栄え、広場に並ぶ市場の屋台や井戸、風車の現れやすさに影響する。",
+      "建物の整備度、素材の上質さ、屋根・窓・梁・道・広場の見栄え、広場に並ぶ市場の屋台や井戸、風車の現れやすさに影響する。",
   },
   {
     key: "water",
@@ -45,12 +45,13 @@ const SLIDERS: SliderDef[] = [
   {
     key: "arcana",
     name: "Arcana / 魔法の濃さ",
-    description: "結界、魔導塔、魔法灯、発光する紋様や浮遊要素の現れやすさに影響する。",
+    description:
+      "魔導塔、結界門、聖域、魔法灯、発光する紋様や水晶、小さな浮遊要素の現れやすさに影響する。最低値では魔法要素が消え、素朴な中世風の集落になる。",
   },
   {
     key: "monumentality",
     name: "Monumentality / 中心建築の格",
-    description: "中心建築の大きさと存在感、周辺の広場や道の集まり方に影響する。",
+    description: "中心建築の大きさ、格、存在感、周辺の広場や道の集まり方に影響する。",
   },
 ];
 
