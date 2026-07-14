@@ -8,12 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import {
   createWaterField,
   distToPolyline,
@@ -21,19 +16,6 @@ import {
   polygonArea,
   polygonSignedDistance,
 } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
-import { runParcels } from "../src/pipeline/parcels";
-import { runBuildings } from "../src/pipeline/buildings";
-import { runLanes } from "../src/pipeline/lanes";
 import { runFacilities } from "../src/pipeline/facilities";
 import {
   GRASS_MAX,
@@ -43,37 +25,13 @@ import {
 } from "../src/pipeline/vegetation";
 import { buildVegetation, treeLumps } from "../src/mesh/vegetation";
 import { buildWorld } from "../src/mesh/build";
+import { buildUpTo, makeCached } from "./helpers";
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  runBuildings(model);
-  runLanes(model);
-  runFacilities(model);
-  runVegetation(model);
-  return model;
+  return buildUpTo(runVegetation, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
 /** trees + shrubs の全配置点 */
 function allPoints(model: WorldModel): { x: number; z: number }[] {
@@ -92,21 +50,7 @@ describe("段15 植生: 決定性", () => {
 
   it("段15 は vegetation 以外のフィールドに触れない", () => {
     const model = cached("everdusk-101");
-    const before = createEmptyWorldModel("everdusk-101", DEFAULT_PARAMS);
-    runDerive(before);
-    runGround(before);
-    runWater(before);
-    runSiting(before);
-    runNetwork(before);
-    runCanals(before);
-    runDensity(before);
-    runWards(before);
-    runPlazas(before);
-    runPaving(before);
-    runParcels(before);
-    runBuildings(before);
-    runLanes(before);
-    runFacilities(before);
+    const before = buildUpTo(runFacilities, "everdusk-101");
     const beforeJson = JSON.stringify({ ...before, vegetation: null });
     expect(JSON.stringify({ ...model, vegetation: null })).toBe(beforeJson);
   });

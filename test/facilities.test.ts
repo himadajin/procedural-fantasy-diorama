@@ -6,8 +6,6 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
   type Facility,
   type Params,
   type Part,
@@ -17,57 +15,20 @@ import { distToPolyline, polygonSignedDistance } from "../src/model/waterfield";
 import { ensureClockwise, polygonsOverlap } from "../src/model/geometry";
 import { sampleFieldGrid } from "../src/model/fieldgrid";
 import { createWaterField, waterBodies } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
-import { runParcels } from "../src/pipeline/parcels";
-import {
-  runBuildings,
-  waterfrontClaimedRegions,
-} from "../src/pipeline/buildings";
+import { waterfrontClaimedRegions } from "../src/pipeline/buildings";
 import { runLanes } from "../src/pipeline/lanes";
 import {
   buildFarmlandFacility,
   plazaInflowAzimuths,
   runFacilities,
 } from "../src/pipeline/facilities";
+import { buildUpTo, makeCached } from "./helpers";
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  runBuildings(model);
-  runLanes(model);
-  runFacilities(model);
-  return model;
+  return buildUpTo(runFacilities, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
 /** 部品の回転込みの xz 4 隅(帯検証と同じ保守的な見積もり)。
  * canopy はローカル z 0〜+1 の非対称レンジ(契約「施設部品の語彙」) */
@@ -186,23 +147,7 @@ describe("段14 施設: 帯検証・衝突(契約「衝突・帯検証則」)", 
 
   it("段14 は facilities 以外のフィールドに触れない", () => {
     const model = cached("everdusk-101", { settlement: 0 });
-    const before = createEmptyWorldModel("everdusk-101", {
-      ...DEFAULT_PARAMS,
-      settlement: 0,
-    });
-    runDerive(before);
-    runGround(before);
-    runWater(before);
-    runSiting(before);
-    runNetwork(before);
-    runCanals(before);
-    runDensity(before);
-    runWards(before);
-    runPlazas(before);
-    runPaving(before);
-    runParcels(before);
-    runBuildings(before);
-    runLanes(before);
+    const before = buildUpTo(runLanes, "everdusk-101", { settlement: 0 });
     const beforeJson = JSON.stringify({ ...before, facilities: null });
     expect(JSON.stringify({ ...model, facilities: null })).toBe(beforeJson);
   });

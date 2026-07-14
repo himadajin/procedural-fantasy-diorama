@@ -1,30 +1,17 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type Vec2,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type Vec2, type WorldModel } from "../src/model/worldmodel";
 import { createWaterField } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
 import { runSiting } from "../src/pipeline/siting";
 import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
 import { runWards } from "../src/pipeline/wards";
 import { runPlazas } from "../src/pipeline/plazas";
-import {
-  createDensityDecay,
-  runDensity,
-  protoDensityAt,
-} from "../src/pipeline/density";
+import { createDensityDecay, protoDensityAt } from "../src/pipeline/density";
 import {
   PROTO_THRESHOLD,
   verifyStreetShapeHealth,
   type StreetGrowthDiagnostics,
 } from "../src/pipeline/streets";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
 /** 湖・池を持つ代表 seed(water=70。事前に確認済み) */
@@ -37,11 +24,7 @@ function build(
   over: Partial<Params> = {},
   diagnostics?: StreetGrowthDiagnostics,
 ): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
+  const model = buildUpTo(runSiting, seed, over);
   runNetwork(model, diagnostics);
   return model;
 }
@@ -365,15 +348,7 @@ describe("network: 二次街路(street)の有機成長(契約は network-plaza.m
 describe("network: 段9(広場)の中心前広場接続路は追記のみ(network-plaza.md「中心前広場の接続路」)", () => {
   it("段5〜段8 の nodes / edges は段9(広場)を通しても不変で、street/plaza/ が追記される", () => {
     for (const seed of STREET_SEEDS) {
-      const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS });
-      runDerive(model);
-      runGround(model);
-      runWater(model);
-      runSiting(model);
-      runNetwork(model);
-      runCanals(model);
-      runDensity(model);
-      runWards(model);
+      const model = buildUpTo(runWards, seed);
       const edgesBefore = structuredClone(model.network.edges);
       const nodesBefore = structuredClone(model.network.nodes);
       runPlazas(model);
