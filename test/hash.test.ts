@@ -678,15 +678,35 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                     5121b268 → 6cf0044e
   //   seed-b {}                     55b78b2b → a78cc3fc
   //   seed-b {water:70}             cab2b951 → 4cac583b
+  //
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D6
+  // (サマリー・UI 文言の追随)による意図的な更新(2026-07-15):
+  // summary に `facilityCounts: Record<FacilityKind, number>` を追加した
+  // (contracts/vegetation-summary.md「施設カウントの追加」。段16「サマリー」
+  // が model.facilities の kind 別集計を書く。buildingCounts と異なり
+  // 全 7 kind を常にキーに持つ密な形)。段16 は乱数を消費しないため
+  // facilities・buildings 等の生成結果自体は不変だが、summary(= WorldModel
+  // の一部としてハッシュ対象)に新フィールドが増えるため全 8 組のハッシュが
+  // 変わる(water:0 のように facilities が空の組でも facilityCounts の
+  // キー構造自体がハッシュへ寄与するため不変にはならない)。
+  // 新旧対応(D5 → D6):
+  //   everdusk-101 {}               dab7bde4 → ccb2220a
+  //   everdusk-101 {water:0}        71014247 → c7ad2994
+  //   everdusk-101 {water:95}       7bf909e8 → ae131620
+  //   everdusk-101 {worldScale:0}   8095b6f0 → e5533033
+  //   everdusk-101 {worldScale:100} 0379edad → adbe34dd
+  //   seed-a {}                     6cf0044e → 437a7933
+  //   seed-b {}                     a78cc3fc → f56d0f4f
+  //   seed-b {water:70}             4cac583b → d28c51b3
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "dab7bde4"],
-    ["everdusk-101", { water: 0 }, "71014247"],
-    ["everdusk-101", { water: 95 }, "7bf909e8"],
-    ["everdusk-101", { worldScale: 0 }, "8095b6f0"],
-    ["everdusk-101", { worldScale: 100 }, "0379edad"],
-    ["seed-a", {}, "6cf0044e"],
-    ["seed-b", {}, "a78cc3fc"],
-    ["seed-b", { water: 70 }, "4cac583b"],
+    ["everdusk-101", {}, "ccb2220a"],
+    ["everdusk-101", { water: 0 }, "c7ad2994"],
+    ["everdusk-101", { water: 95 }, "ae131620"],
+    ["everdusk-101", { worldScale: 0 }, "e5533033"],
+    ["everdusk-101", { worldScale: 100 }, "adbe34dd"],
+    ["seed-a", {}, "437a7933"],
+    ["seed-b", {}, "f56d0f4f"],
+    ["seed-b", { water: 70 }, "d28c51b3"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

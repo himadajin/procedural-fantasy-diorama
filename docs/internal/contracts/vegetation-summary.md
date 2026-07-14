@@ -112,6 +112,7 @@ WorldModel から機械的に算出し、生成物と乖離させない。
 ```ts
 interface Summary {
   buildingCounts: Record<string, number>;  // 役割別内訳(下記)
+  facilityCounts: Record<FacilityKind, number>;  // kind 別内訳(下記。D6 確定)
   centerDescription: string;               // 軸スコアから生成する短い記述文(下記)
   waterOverview: { lakes: number; ponds: number; canals: number; bridges: number };
   wardOverview: { level: number; ringLength: number; towers: number;
@@ -127,19 +128,30 @@ interface Summary {
 中間の先埋めと最終値の乖離は起こらない)。段16 は乱数サブストリームを
 消費しない(モデル状態からの決定的な集計)。表示名は段16「箱庭を書き留めています…」。
 
-**施設カウントの追加(Phase D タスク D6 で実装。本節は枠のみ)**: `Summary`
-は `buildingCounts` と並ぶ施設カウントのフィールド(`facilities.md`
-「kind 一覧」の kind 別集計。`buildingCounts` と同じ
-`Record<kind, count>` 形を想定するが、フィールド名・正確な型は D6 で
-確定する)を追加する。既存フィールド(`buildingCounts` 以下)の型・算出規則
-は変えない。design.md「UI とサマリー」節のサマリー表示項目への反映も D6 の
-スコープ(本書 D1a はスキーマの拡張余地を明記するのみ)。
+**施設カウントの追加(Phase D タスク D6 で確定・実装)**: `Summary` は
+`buildingCounts` と並ぶ施設カウントのフィールド `facilityCounts:
+Record<FacilityKind, number>` を持つ。`buildingCounts`(出現した役割のみ
+キーを持つ疎な形)とは異なり、**`facilityCounts` は `facilities.md`
+「kind 一覧」の全 7 kind(`field` / `pasture` / `well` / `stall` /
+`windmill` / `watermill` / `pier`)を常にキーとして持つ密な形**とする
+(0 件の kind もキーを落とさない)。理由: 建物の role は種類数が多く
+出現有無に意味があるが、施設は kind の全体像(全 7 種の現れ方)を横並びで
+示すことがサマリーの価値であり、0 件を隠さない方が「この箱庭には桟橋が
+無い」といった情報を読み取れる。合計 = `facilities.length`。
+値は `model.facilities` の `kind` 別集計(段16「サマリー」が最終確定)。
+既存フィールド(`buildingCounts` 以下)の型・算出規則は変えない。
+kind の並び順は `FACILITY_KIND_ORDER`(`model/worldmodel.ts`。kind 一覧の
+記載順と同一)を正とし、summary の内訳表示とギャラリーの対象一覧が共有する。
+design.md「UI とサマリー」節のサマリー表示項目に「生成施設数」を追加した。
 
 各フィールドの算出規則:
 
 - `buildingCounts`: `buildings` の `role` 別集計(`Record<role, count>`)。
   キーは出現した役割のみ(0 件の役割はキーを持たない)。中心建築
   (role "center")も 1 件として数える。値の合計 = `buildings.length`
+- `facilityCounts`: `facilities` の `kind` 別集計(`Record<FacilityKind,
+  count>`)。全 7 kind を常にキーとして持つ(0 件も明示。上記「施設カウント
+  の追加」)。値の合計 = `facilities.length`
 - `centerDescription`: `centerPlan.axes` の支配軸(最大軸。同点は
   arcane > authority > waterside > rustic の固定順)と生成物の特徴から
   組み立てる短い日本語記述文。決定論的(乱数不使用、規則のみ)。構成:

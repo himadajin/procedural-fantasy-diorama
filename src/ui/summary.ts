@@ -12,7 +12,12 @@
  * (implementation-spec 1.10節、contracts/pipeline.md
  * 「描画プリセット・LOD・デバッグ表示」)。
  */
-import { DEFAULT_PARAMS, type Params, type WorldModel } from "../model/worldmodel";
+import {
+  DEFAULT_PARAMS,
+  FACILITY_KIND_ORDER,
+  type Params,
+  type WorldModel,
+} from "../model/worldmodel";
 
 /** 複雑度の実測値(UI が renderer.info から埋める。表示時のみの量) */
 export interface Complexity {
@@ -31,6 +36,21 @@ const PARAM_LABELS: { key: keyof Params; label: string }[] = [
   { key: "arcana", label: "Arcana" },
   { key: "monumentality", label: "Monumentality" },
 ];
+
+/**
+ * 施設 kind の表示名(内部 kind → 日本語。facilities.md「kind 一覧」節の
+ * 全 7 kind。ワールドサマリーの施設内訳(D6)とギャラリーの対象セレクタ
+ * (G2)の両方がラベルとして再利用する)
+ */
+const FACILITY_LABELS: Record<string, string> = {
+  field: "畑",
+  pasture: "牧草地",
+  well: "井戸",
+  stall: "屋台",
+  windmill: "風車",
+  watermill: "水車",
+  pier: "桟橋",
+};
 
 /**
  * 建物役割の表示名(内部 role → 日本語)。ギャラリーの対象セレクタ
@@ -128,6 +148,17 @@ export function renderSummary(
     row("建物", `${fmtInt(total)}  (${breakdown.join(" / ") || "なし"})`),
   );
 
+  // 施設数(kind 別内訳。全 kind を常に並べる — buildingCounts と異なり
+  // 0 件の kind も落とさない密な形。contracts/vegetation-summary.md
+  // Summary 節「施設カウントの追加」)
+  const facilityTotal = Object.values(s.facilityCounts).reduce((a, b) => a + b, 0);
+  const facilityBreakdown = FACILITY_KIND_ORDER.map(
+    (kind) => `${FACILITY_LABELS[kind]} ${s.facilityCounts[kind]}`,
+  );
+  container.appendChild(
+    row("施設", `${fmtInt(facilityTotal)}  (${facilityBreakdown.join(" / ")})`),
+  );
+
   // 水辺の概要
   const w = s.waterOverview;
   container.appendChild(
@@ -166,20 +197,6 @@ export function renderSummary(
     },
   };
 }
-
-/**
- * 施設 kind の表示名(内部 kind → 日本語。Phase D。対象化した kind のみ。
- * D3〜D5 の各実装タスクが行を足す)
- */
-const FACILITY_LABELS: Record<string, string> = {
-  field: "畑",
-  pasture: "牧草地",
-  well: "井戸",
-  stall: "屋台",
-  windmill: "風車",
-  watermill: "水車",
-  pier: "桟橋",
-};
 
 /**
  * ギャラリー対象id(`building/<role>` / `facility/<kind>`)の表示ラベル

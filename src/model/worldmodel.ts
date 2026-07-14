@@ -471,6 +471,20 @@ export type FacilityKind =
   | "watermill"
   | "pier";
 
+/**
+ * kind の表示順(facilities.md「kind 一覧・配置条件」節の記載順と同一)。
+ * summary の施設カウント内訳(D6)・ギャラリー対象一覧が共有する
+ */
+export const FACILITY_KIND_ORDER: readonly FacilityKind[] = [
+  "field",
+  "pasture",
+  "well",
+  "stall",
+  "windmill",
+  "watermill",
+  "pier",
+];
+
 /** 施設の由来メタ(id・RNG ラベル安定化・帰属領域特定に使う) */
 export type FacilityOrigin =
   | { type: "parcel"; parcelId: string } // field / pasture
@@ -517,6 +531,13 @@ export interface Vegetation {
 export interface Summary {
   /** 役割別内訳(出現した役割のみ。合計 = buildings.length) */
   buildingCounts: Record<string, number>;
+  /**
+   * kind 別内訳(Phase D タスク D6。全 7 kind を常にキーとして持つ
+   * ―buildingCounts と異なり 0 件の kind も落とさない。facilities.md
+   * 「kind 一覧」の全 kind を横並びで見せるための密な形。
+   * 合計 = facilities.length。contracts/vegetation-summary.md Summary 節)
+   */
+  facilityCounts: Record<FacilityKind, number>;
   /** 軸スコア+特徴から生成する短い日本語記述文(決定論的) */
   centerDescription: string;
   waterOverview: { lakes: number; ponds: number; canals: number; bridges: number };
@@ -605,6 +626,15 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
     vegetation: { trees: [], shrubs: [], grassPatches: [] },
     summary: {
       buildingCounts: {},
+      facilityCounts: {
+        field: 0,
+        pasture: 0,
+        well: 0,
+        stall: 0,
+        windmill: 0,
+        watermill: 0,
+        pier: 0,
+      },
       centerDescription: "",
       waterOverview: { lakes: 0, ponds: 0, canals: 0, bridges: 0 },
       wardOverview: {
