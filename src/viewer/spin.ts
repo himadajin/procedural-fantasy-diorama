@@ -21,16 +21,9 @@ const WHEEL_PERIOD_S = 11;
 const ROTOR_SPEED = -(Math.PI * 2) / ROTOR_PERIOD_S;
 const WHEEL_SPEED = (Math.PI * 2) / WHEEL_PERIOD_S;
 
-/** シーンから回転部品(userData.spin 持ち)を収集する(生成時に 1 回) */
-export function collectSpinners(root: THREE.Object3D): THREE.Object3D[] {
-  const spinners: THREE.Object3D[] = [];
-  root.traverse((obj) => {
-    if (obj.userData.spin) spinners.push(obj);
-  });
-  return spinners;
-}
-
-/** 回転部品の姿勢を経過時間から決める(等速。初期角 = phase) */
+/** 回転部品の姿勢を経過時間から決める(等速。初期角 = phase)。
+ *  回転部品の収集(userData.spin 持ちの走査)は mesh/build.ts が
+ *  生成時に 1 回行う。 */
 export function updateSpinners(
   spinners: readonly THREE.Object3D[],
   elapsed: number,

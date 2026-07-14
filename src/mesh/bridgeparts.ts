@@ -33,7 +33,7 @@ export const ROAD_Y_JITTER = 0.006;
 export const ROAD_WATER_SAMPLE_STEP = 2.0;
 /** 水路上の道路リボンの持ち上げ量の最大(canalLiftAt) */
 export const CANAL_ROAD_LIFT = 0.22;
-/** 水路の水面高(mesh/paving.ts CANAL_WATER_Y と同値。桁下端の検証基準) */
+/** 水路の水面高(mesh/paving.ts が共用する。桁下端の検証基準) */
 export const CANAL_WATER_SURFACE_Y = 0.04;
 
 /** 橋床天端と道路リボン中央の接合オフセット(Z ファイティング回避。契約) */

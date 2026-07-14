@@ -460,6 +460,54 @@ function openingPieces(
   planePiece(pools, part, inner, -0.5 + tx, 0.5 - tx, y0, 1 - ty, z);
 }
 
+/**
+ * 開口(窓・扉)のマージ経路版: `openingPieces`(インスタンス経路)と同じ
+ * 枠寸法・奥面の色/沈み(FRAME_T・OPENING_INSET_Z・DOOR_LEAF_Z・
+ * OPENING_COLOR・DOOR_LEAF_SHADE)を、共有プールでなくマージバッファへ
+ * 直接描く(subBox / face は boxPart 等の他のマージ形状と同じ押し込み経路
+ * のため、ワールド形状は openingPieces と同一になる)。呼び出し元は
+ * mesh/facilities.ts(施設の door / window。施設はインスタンス経路の
+ * 共有プールを持たないためマージへ寄せる)。
+ */
+export function openingPart(
+  part: Part,
+  buf: GeoBuffer,
+  base: THREE.Color,
+  kind: "window" | "door",
+): void {
+  const xf = makeXform(part);
+  const [sx, sy] = part.transform.scale;
+  const tx = Math.min(0.3, FRAME_T / Math.max(sx, 1e-6));
+  const ty = Math.min(0.3, FRAME_T / Math.max(sy, 1e-6));
+  // 枠: 左右+上(窓は下枠=窓台も)
+  subBox(buf, xf, base, -0.5, -0.5 + tx, 0, 1, -0.2, 0.5);
+  subBox(buf, xf, base, 0.5 - tx, 0.5, 0, 1, -0.2, 0.5);
+  subBox(buf, xf, base, -0.5 + tx, 0.5 - tx, 1 - ty, 1, -0.2, 0.5);
+  if (kind === "window") {
+    subBox(buf, xf, base, -0.5 + tx, 0.5 - tx, 0, ty, -0.2, 0.5);
+  }
+  // 奥面(窓は開口の暗色固定、扉は木部を沈めた扉板。発光させない)
+  const y0 = kind === "window" ? ty : 0;
+  const y1 = 1 - ty;
+  const z = kind === "window" ? OPENING_INSET_Z : DOOR_LEAF_Z;
+  const inner =
+    kind === "window" ? OPENING_COLOR : base.clone().multiplyScalar(DOOR_LEAF_SHADE);
+  const inside = xf([0, (y0 + y1) / 2, z - 0.5]);
+  face(
+    buf,
+    xf,
+    [
+      [-0.5 + tx, y0, z],
+      [0.5 - tx, y0, z],
+      [0.5 - tx, y1, z],
+      [-0.5 + tx, y1, z],
+    ],
+    [1, 1, 1, 1],
+    inside,
+    inner,
+  );
+}
+
 /** 煙突: 胴+笠(過大な冠)+頂部の焚き口(開口の暗色の薄箱) */
 function chimneyPieces(pools: InstancePools, part: Part, base: THREE.Color): void {
   boxPiece(pools, part, base, -0.5, 0.5, 0, 0.88, -0.5, 0.5);
