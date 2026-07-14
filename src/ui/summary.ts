@@ -12,7 +12,12 @@
  * (implementation-spec 1.10節、contracts/pipeline.md
  * 「描画プリセット・LOD・デバッグ表示」)。
  */
-import { DEFAULT_PARAMS, type Params, type WorldModel } from "../model/worldmodel";
+import {
+  DEFAULT_PARAMS,
+  FACILITY_KIND_ORDER,
+  type Params,
+  type WorldModel,
+} from "../model/worldmodel";
 
 /** 複雑度の実測値(UI が renderer.info から埋める。表示時のみの量) */
 export interface Complexity {
@@ -31,6 +36,21 @@ const PARAM_LABELS: { key: keyof Params; label: string }[] = [
   { key: "arcana", label: "Arcana" },
   { key: "monumentality", label: "Monumentality" },
 ];
+
+/**
+ * 施設 kind の表示名(内部 kind → 日本語。facilities.md「kind 一覧」節の
+ * 全 7 kind。ワールドサマリーの施設内訳(D6)とギャラリーの対象セレクタ
+ * (G2)の両方がラベルとして再利用する)
+ */
+const FACILITY_LABELS: Record<string, string> = {
+  field: "畑",
+  pasture: "牧草地",
+  well: "井戸",
+  stall: "屋台",
+  windmill: "風車",
+  watermill: "水車",
+  pier: "桟橋",
+};
 
 /**
  * 建物役割の表示名(内部 role → 日本語)。ギャラリーの対象セレクタ
@@ -128,6 +148,17 @@ export function renderSummary(
     row("建物", `${fmtInt(total)}  (${breakdown.join(" / ") || "なし"})`),
   );
 
+  // 施設数(kind 別内訳。全 kind を常に並べる — buildingCounts と異なり
+  // 0 件の kind も落とさない密な形。contracts/vegetation-summary.md
+  // Summary 節「施設カウントの追加」)
+  const facilityTotal = Object.values(s.facilityCounts).reduce((a, b) => a + b, 0);
+  const facilityBreakdown = FACILITY_KIND_ORDER.map(
+    (kind) => `${FACILITY_LABELS[kind]} ${s.facilityCounts[kind]}`,
+  );
+  container.appendChild(
+    row("施設", `${fmtInt(facilityTotal)}  (${facilityBreakdown.join(" / ")})`),
+  );
+
   // 水辺の概要
   const w = s.waterOverview;
   container.appendChild(
@@ -168,12 +199,12 @@ export function renderSummary(
 }
 
 /**
- * ギャラリー対象id(`building/<role>`)の表示ラベル(日本語の role 名)。
- * 対象セレクタ(G2)と簡易サマリーが共用する
+ * ギャラリー対象id(`building/<role>` / `facility/<kind>`)の表示ラベル
+ * (日本語名)。対象セレクタ(G2)と簡易サマリーが共用する
  */
 export function galleryTargetLabel(targetId: string): string {
-  const role = targetId.split("/")[1] ?? targetId;
-  return ROLE_LABELS[role] ?? role;
+  const name = targetId.split("/")[1] ?? targetId;
+  return ROLE_LABELS[name] ?? FACILITY_LABELS[name] ?? name;
 }
 
 /**
@@ -187,14 +218,17 @@ export function renderGallerySummary(
   model: WorldModel,
 ): void {
   container.replaceChildren();
+  // 対象は建物または施設(Phase D)。施設は複数(屋台の列)の合計を出す
   const building = model.buildings[0];
+  const hasTarget = building !== undefined || model.facilities.length > 0;
+  const partCount = building
+    ? building.parts.length
+    : model.facilities.reduce((sum, f) => sum + f.parts.length, 0);
 
   container.appendChild(
     row("対象", `${galleryTargetLabel(targetId)} (${targetId})`),
   );
   container.appendChild(row("seed", model.meta.seed));
-  container.appendChild(
-    row("部品数", building ? fmtInt(building.parts.length) : "—"),
-  );
+  container.appendChild(row("部品数", hasTarget ? fmtInt(partCount) : "—"));
   container.appendChild(row("ハッシュ", `#${model.summary.hash}`));
 }

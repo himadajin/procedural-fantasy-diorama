@@ -23,6 +23,7 @@ import {
 } from "../model/waterfield";
 import { buildCanalSurfaces, buildPaving, gradeColor } from "./paving";
 import { buildBuildings } from "./buildings";
+import { buildFacilities } from "./facilities";
 import { buildVegetation } from "./vegetation";
 import { applyLampTint, createLampTint } from "./wardparts";
 
@@ -460,6 +461,19 @@ export function buildWorld(model: WorldModel): THREE.Group {
   // InstancedMesh。部品展開は mesh/wardparts.ts / mesh/bridgeparts.ts。
   // mesh/buildings.ts が束ねる。計画デバッグ描画は PHASE 5b で全廃)
   for (const obj of buildBuildings(model, timeUniform)) group.add(obj);
+
+  // 施設(Phase D): マージ束(躯体+屋根)+回転部品(風車ロータ・水輪)の
+  // 個別メッシュ(mesh/facilities.ts)。回転部品は userData.spin を持ち、
+  // viewer(spin.ts)が表示演出として回す。生成時に 1 回収集して
+  // userData.spinners へ置く(毎フレームの traverse を避ける)
+  const spinners: THREE.Object3D[] = [];
+  for (const obj of buildFacilities(model)) {
+    group.add(obj);
+    obj.traverse((child) => {
+      if (child.userData.spin) spinners.push(child);
+    });
+  }
+  group.userData.spinners = spinners;
 
   // 植生(PHASE 6 commit 20): 幹・樹冠+低木の InstancedMesh と草むらの
   // マージメッシュ(mesh/vegetation.ts。draw call +3 以内)

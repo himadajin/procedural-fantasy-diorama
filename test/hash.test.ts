@@ -536,15 +536,177 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                     9d5b26ea → 94790fdf
   //   seed-b {}                     b832272a → c682f116
   //   seed-b {water:70}             9f347408 → bfa32c09
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D2a
+  // (差し戻し 1 回を含む最終構成)で更新。意図した変更:
+  // (1) スキーマ追加: `model.facilities: Facility[]`(常に空配列。段14
+  //     「施設」の実装は D2b 以降)、`Parcel.kind: "residential" |
+  //     "farmland"`(既定 residential)。WorldModel 直下・Parcel の新規
+  //     フィールドであり正規化ハッシュの直列化対象に加わるため、区画が
+  //     1件でも存在する組はすべてハッシュが変わる(groupId 導入時の C2 と
+  //     同型)。全 8 組が対象。
+  // (2) 農地区画の切り出し(段11「区画」の拡張。contracts/facilities.md
+  //     「field(畑)・pasture(牧草地)」実装補足): farmland 区画を
+  //     residential より先に切り出し、農村ゾーン(zoning の urbanity <
+  //     0.45。確定判定は縮小ステップごとの実候補中心)の道路沿いを
+  //     先取りする。id は parcel/<edge>/<L|R>/farm<slot> の専用 slot
+  //     空間、乱数は "parcel/<id>" ストリームの流儀(奥行き揺らぎ →
+  //     採択ロールの固定消費順)。間口 clamp(1.7 × residential 候補間口の
+  //     中央値, 14, 40)・奥行き比 1.6・採択率 farmlandRate =
+  //     clamp(0.25+0.55×(1−settle), 0.25, 0.8)。候補走査は両側不成立の
+  //     位置を 1/4 間口刻みで再試行する(決定論・乱数非消費)。farmland の
+  //     先取りにより residential の採択結果(区画数・位置)も変わる
+  //     (D2a 差し戻しの判定基準による設計変更。当初の残地方式は
+  //     Settlement 30 以降で農地が構造的に 0 件になるため棄却された)。
+  // (3) 区画グループ(groupId)の run 検出に kind 一致条件を追加した
+  //     (parcels.ts assignGroupIds)。residential のみの入力では常に真に
+  //     なるため無挙動(既存の区画グループ化ロジックは不変)。
+  // (4) 全単射契約の読み替え(contracts/buildings.md「全単射の対象範囲」。
+  //     D1a で確定済み): 段12「建物」(buildings.ts の
+  //     planGroupLayouts・runBuildings)は kind "farmland" の区画を建物
+  //     生成・クラスタリングの対象から除外する(farmland 区画は建物 0。
+  //     farmland 区画に対して "building/<id>" 系の RNG を消費しない)。
+  // 農地区画の実測(6 seed × 既定 World Scale。差し戻しの判定基準):
+  // settle0 平均 11.7 件/seed(最小 7)、settle20 平均 9.3(最小 7)、
+  // settle50 平均 2.2(最小 1・0 件 seed なし)、settle100 は 0 件。
+  // 農地の最小間口 / residential 実測中央値の比は全条件 1.68〜1.95
+  // (基準 1.5 以上)。residential 区画数への影響: settle0 で 2〜7 件/seed
+  // 減・settle50 で 0〜2 件減・settle100 で不変(農村の住居が農地に
+  // 置き換わる)。worldScale:0 の組は farmland が 1 件も切られず
+  // residential も不変のため、(1) のスキーマ追加ぶんのみの差となる。
+  // farmland の量・走査則は提案値(facilities.md)であり、D7 の実測
+  // スイープで調整しうる。
+  // 新旧対応(T3 → D2a):
+  //   everdusk-101 {}               ff09b628 → 2a39c640
+  //   everdusk-101 {water:0}        8fe1e5e2 → a388ba50
+  //   everdusk-101 {water:95}       0443ad8d → b8c119eb
+  //   everdusk-101 {worldScale:0}   6ecaca07 → 1ad27f0e
+  //   everdusk-101 {worldScale:100} 52e0c8e7 → 22074c19
+  //   seed-a {}                     94790fdf → 9b96a6dd
+  //   seed-b {}                     c682f116 → fc152906
+  //   seed-b {water:70}             bfa32c09 → 98d588bf
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D2b
+  // (畑・牧草地の生成)による意図的な更新(2026-07-14):
+  // (1) 段14「施設」の新設(contracts/pipeline.md 段契約表。植生 15・
+  //     サマリー 16 へ繰り下げ): farmland 区画ごとに施設 1 件
+  //     (field 0.68 / pasture 0.32 のコイン抽選)を生成し
+  //     `model.facilities` へ書く。乱数は新設ストリーム
+  //     `facility/farmland/<parcelId>` のみを消費し、既存の全ストリームの
+  //     消費列は不変(contracts/facilities.md「RNG ラベル体系」)。
+  // (2) 造形(contracts/facilities.md「kind ごとの造形の性質」D1b):
+  //     field = 耕土の基盤+作物の緑の畝列+post-and-rail の木柵、
+  //     pasture = 牧草パッチ+横木 2 本の柵。parts が facilities 配下に
+  //     入るためモデル内容が変わりハッシュが更新される。
+  // (3) 植生の回避対象に施設 footprint(縁 + 1.0)を追加
+  //     (contracts/vegetation-summary.md「回避対象への facilities 追加」。
+  //     乱数消費は不変で採択のみ変わる)。
+  // worldScale:0 の組は farmland が 1 件も切られず(D2a 実測)、施設 0・
+  // 植生の回避対象も空のため、ハッシュは D2a から不変だった(D2b 時点)。
+  //
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D3
+  // (井戸と市場屋台)による意図的な更新(2026-07-14):
+  // (1) 段14「施設」に well / stall を追加(contracts/facilities.md
+  //     「well(井戸)」「stall(市場屋台)」+ D3 実装補足): 市街の広場
+  //     (center / crossing)に井戸(settle 駆動の採否)と屋台列
+  //     (prosper 駆動の数量式。縁帯・中央円・通行帯セクターの帯規則)、
+  //     農村の道路ノード近傍に井戸(settle 駆動・上限つき)。乱数は新設
+  //     ストリーム facility/well/<plazaId|nodeId>・facility/stall/<plazaId>
+  //     のみを消費し、既存の全ストリームの消費列は不変。
+  // (2) 造形(D1b): 井戸 = 石環 fence×4 + 内面(void)+ 柱・轆轤 +
+  //     小屋根(shingle)、屋台 = 台(plinth 木)+ 柱 4 + canopy 天幕
+  //     (3 色重み抽選)。facilities 配下のモデル内容が変わりハッシュが
+  //     更新される(worldScale:0 も広場は存在するため今回は全 8 組更新)。
+  // (3) 植生の回避は D2b の施設 footprint 判定がそのまま well / stall にも
+  //     効く(乱数消費は不変で採択のみ変わる)。
+  // 新旧対応(D2b → D3):
+  //   everdusk-101 {}               d7c292ce → 4ba27dfa
+  //   everdusk-101 {water:0}        07a31f4e → d8dbc7a4
+  //   everdusk-101 {water:95}       f6914e3e → 1f478a96
+  //   everdusk-101 {worldScale:0}   1ad27f0e → 4424d838
+  //   everdusk-101 {worldScale:100} 9071f16c → 03ce4e79
+  //   seed-a {}                     f018e8cc → 75d72ddf
+  //   seed-b {}                     f28f4d06 → 60f80a00
+  //   seed-b {water:70}             5430d443 → c4dd589d
+  //
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D4
+  // (風車と水車)による意図的な更新(2026-07-14):
+  // (1) 段14「施設」に windmill / watermill を追加(contracts/facilities.md
+  //     「windmill(風車)」「watermill(水車)」+ D4 実装補足): 風車は
+  //     農村外縁の帯(marginWidth × [0.3, 1.8))の格子走査で 0〜2 基
+  //     (prosper × scale 駆動)、水車は水路 → 湖岸の候補列で 0〜2 基
+  //     (water 駆動)。乱数は新設ストリーム facility/windmill/<ix>_<iz>・
+  //     facility/watermill/<...> のみを消費し、既存の全ストリームの
+  //     消費列は不変。
+  // (2) 造形(D1b): 風車 = 石塔(taper 0.72)+ 木羽キャップ +
+  //     windmill-rotor(直径 9.0 ±8%・4 枚羽根・静的 phase)、水車 =
+  //     粗い木の平屋 + 軸 + water-wheel(濡れ木・直径 3.0 ±8%・軸 y 0.70)。
+  //     回転は viewer の表示演出で WorldModel は静的データのみ。
+  // 新旧対応(D3 → D4):
+  //   everdusk-101 {}               4ba27dfa → 18f0f191
+  //   everdusk-101 {water:0}        d8dbc7a4 → 71014247
+  //   everdusk-101 {water:95}       1f478a96 → 735e1aaf
+  //   everdusk-101 {worldScale:0}   4424d838 → f959c9a0
+  //   everdusk-101 {worldScale:100} 03ce4e79 → 0c1884ff
+  //   seed-a {}                     75d72ddf → 5121b268
+  //   seed-b {}                     60f80a00 → 55b78b2b
+  //   seed-b {water:70}             c4dd589d → cab2b951
+  //
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D5
+  // (桟橋)による意図的な更新(2026-07-15):
+  // (1) 段14「施設」に pier を追加(contracts/facilities.md「pier(桟橋)」
+  //     + D5 実装補足): 汀線ループ順の決定論走査で 0〜4 基(water 駆動の
+  //     数量式 round(clamp(1 + 3 × water, 0, 4)))。適格な岸点 =
+  //     waterside 建物の近傍(14 以内)または相対的に市街寄りの岸
+  //     (urbanity ≥ 全汀線点平均)。段12 の waterfront claimed 領域
+  //     (デッキ・張り出し部屋)を実体部品から決定論復元して読み取り参加
+  //     (追記はしない片方向参照)。橋・水路・汎用クリアランスと非干渉。
+  //     乱数は新設ストリーム facility/pier/<shoreLoopId>/<index> のみを
+  //     消費し(位置ジッター → 長さ → 幅 → 係船柱)、既存の全ストリームの
+  //     消費列は不変。
+  // (2) 造形(D1b): 板 = deck(rough-wood。幅 1.8 ±0.2 × 長さ 6〜10・
+  //     天端 y 0.35 = 建物デッキより低い)+ 杭 = pile(wood。0.22 角・
+  //     間隔 2.4 のペア・y −1.6 から)。先端ペアのみ chance 0.7 で係船柱
+  //     (天端 y 0.90)。facilities 配下のモデル内容が変わりハッシュが
+  //     更新される。water:0 は汀線が無く桟橋 0 基のためハッシュ不変。
+  // 実測(6 seed × water {0,30,50,70,95}): 0 / 2 / 3 / 3 / 4 基
+  //     (全 seed で数量式どおり。クリアランスによる減少なし)。
+  // 新旧対応(D4 → D5):
+  //   everdusk-101 {}               18f0f191 → dab7bde4
+  //   everdusk-101 {water:0}        71014247 → 71014247(不変)
+  //   everdusk-101 {water:95}       735e1aaf → 7bf909e8
+  //   everdusk-101 {worldScale:0}   f959c9a0 → 8095b6f0
+  //   everdusk-101 {worldScale:100} 0c1884ff → 0379edad
+  //   seed-a {}                     5121b268 → 6cf0044e
+  //   seed-b {}                     55b78b2b → a78cc3fc
+  //   seed-b {water:70}             cab2b951 → 4cac583b
+  //
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D6
+  // (サマリー・UI 文言の追随)による意図的な更新(2026-07-15):
+  // summary に `facilityCounts: Record<FacilityKind, number>` を追加した
+  // (contracts/vegetation-summary.md「施設カウントの追加」。段16「サマリー」
+  // が model.facilities の kind 別集計を書く。buildingCounts と異なり
+  // 全 7 kind を常にキーに持つ密な形)。段16 は乱数を消費しないため
+  // facilities・buildings 等の生成結果自体は不変だが、summary(= WorldModel
+  // の一部としてハッシュ対象)に新フィールドが増えるため全 8 組のハッシュが
+  // 変わる(water:0 のように facilities が空の組でも facilityCounts の
+  // キー構造自体がハッシュへ寄与するため不変にはならない)。
+  // 新旧対応(D5 → D6):
+  //   everdusk-101 {}               dab7bde4 → ccb2220a
+  //   everdusk-101 {water:0}        71014247 → c7ad2994
+  //   everdusk-101 {water:95}       7bf909e8 → ae131620
+  //   everdusk-101 {worldScale:0}   8095b6f0 → e5533033
+  //   everdusk-101 {worldScale:100} 0379edad → adbe34dd
+  //   seed-a {}                     6cf0044e → 437a7933
+  //   seed-b {}                     a78cc3fc → f56d0f4f
+  //   seed-b {water:70}             4cac583b → d28c51b3
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "ff09b628"],
-    ["everdusk-101", { water: 0 }, "8fe1e5e2"],
-    ["everdusk-101", { water: 95 }, "0443ad8d"],
-    ["everdusk-101", { worldScale: 0 }, "6ecaca07"],
-    ["everdusk-101", { worldScale: 100 }, "52e0c8e7"],
-    ["seed-a", {}, "94790fdf"],
-    ["seed-b", {}, "c682f116"],
-    ["seed-b", { water: 70 }, "bfa32c09"],
+    ["everdusk-101", {}, "ccb2220a"],
+    ["everdusk-101", { water: 0 }, "c7ad2994"],
+    ["everdusk-101", { water: 95 }, "ae131620"],
+    ["everdusk-101", { worldScale: 0 }, "e5533033"],
+    ["everdusk-101", { worldScale: 100 }, "adbe34dd"],
+    ["seed-a", {}, "437a7933"],
+    ["seed-b", {}, "f56d0f4f"],
+    ["seed-b", { water: 70 }, "d28c51b3"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

@@ -28,17 +28,19 @@ const SLIDERS: SliderDef[] = [
   {
     key: "settlement",
     name: "Settlement Pressure / 居住圧力",
-    description: "建物や道の集まりやすさ、中心部の密度、外縁への広がりに影響する。",
+    description:
+      "建物や道の集まりやすさ、中心部の密度、外縁への広がり、農村ゾーンに広がる畑や牧草地の量に影響する。",
   },
   {
     key: "prosperity",
     name: "Prosperity / 繁栄度",
-    description: "建物の整備度、素材の上質さ、屋根・窓・道・広場の見栄えに影響する。",
+    description:
+      "建物の整備度、素材の上質さ、屋根・窓・道・広場の見栄え、広場に並ぶ市場の屋台や井戸、風車の現れやすさに影響する。",
   },
   {
     key: "water",
     name: "Water Presence / 水辺の強さ",
-    description: "湖や池、街を通る水路、橋、岸辺、水辺の建築に影響する。",
+    description: "湖や池、街を通る水路、橋、岸辺、水辺の建築、水車、桟橋に影響する。",
   },
   {
     key: "arcana",

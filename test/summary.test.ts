@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PARAMS,
+  FACILITY_KIND_ORDER,
   createEmptyWorldModel,
   type Params,
   type WorldModel,
@@ -99,6 +100,26 @@ describe("段15 サマリー: WorldModel 実態との一致(contracts/vegetation
       }
     });
 
+    it(`${name}: facilityCounts が facilities の kind 別実数と一致し合計= facilities.length`, async () => {
+      const m = await runPipeline("everdusk-101", params);
+      const expected: Record<string, number> = {
+        field: 0,
+        pasture: 0,
+        well: 0,
+        stall: 0,
+        windmill: 0,
+        watermill: 0,
+        pier: 0,
+      };
+      for (const f of m.facilities) expected[f.kind] = (expected[f.kind] ?? 0) + 1;
+      expect(m.summary.facilityCounts).toEqual(expected);
+      const total = Object.values(m.summary.facilityCounts).reduce(
+        (a, b) => a + b,
+        0,
+      );
+      expect(total).toBe(m.facilities.length);
+    });
+
     it(`${name}: waterOverview が lakes/ponds/canals/bridges の実数と一致`, async () => {
       const m = await runPipeline("everdusk-101", params);
       expect(m.summary.waterOverview).toEqual({
@@ -133,6 +154,28 @@ describe("段15 サマリー: WorldModel 実態との一致(contracts/vegetation
       expect(m.summary.scale.worldSize).toBe(m.ground.size);
     });
   }
+});
+
+describe("段15 サマリー: facilityCounts は0件の kind もキーを落とさない密な形(contracts/vegetation-summary.md「施設カウントの追加」)", () => {
+  it("全 7 kind が常にキーに存在する(0件の kind も明示)", async () => {
+    // settlement:100 は農村ゾーンが縮小し field/pasture が 0 件になりやすい水準
+    // (計画書 D2a 実測: settle100 は 0)。0 件でもキーは落ちないことを確認する
+    const m = await runPipeline("everdusk-101", withParams({ settlement: 100 }));
+    for (const kind of FACILITY_KIND_ORDER) {
+      expect(m.summary.facilityCounts).toHaveProperty(kind);
+      expect(typeof m.summary.facilityCounts[kind]).toBe("number");
+    }
+    expect(Object.keys(m.summary.facilityCounts).sort()).toEqual(
+      [...FACILITY_KIND_ORDER].sort(),
+    );
+  });
+
+  it("空の WorldModel(createEmptyWorldModel)でも全 7 kind が 0 で初期化される", () => {
+    const m = createEmptyWorldModel("test", DEFAULT_PARAMS);
+    for (const kind of FACILITY_KIND_ORDER) {
+      expect(m.summary.facilityCounts[kind]).toBe(0);
+    }
+  });
 });
 
 describe("段15 サマリー: centerDescription が軸スコアと整合(4類型)", () => {

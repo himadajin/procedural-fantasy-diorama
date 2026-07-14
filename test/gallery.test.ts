@@ -4,6 +4,7 @@ import { ZONE_COUNT, sampleZoneMask } from "../src/model/zonemask";
 import { buildGalleryWorld, GALLERY_TARGET_IDS } from "../src/pipeline/gallery";
 import { runPipeline } from "../src/pipeline/run";
 import { hashWorldModel } from "../src/model/hash";
+import { polygonSignedDistance } from "../src/model/waterfield";
 
 const ROLES = [
   "house",
@@ -18,10 +19,28 @@ function targetId(role: (typeof ROLES)[number]): string {
   return `building/${role}`;
 }
 
+/** Phase D タスク D2b で対象化した farmland 施設 kind */
+const FACILITY_TARGETS = ["facility/field", "facility/pasture"] as const;
+/** Phase D タスク D3 で対象化した広場施設 kind */
+const PLAZA_FACILITY_TARGETS = ["facility/well", "facility/stall"] as const;
+/** Phase D タスク D4 で対象化した施設 kind */
+const MILL_FACILITY_TARGETS = [
+  "facility/windmill",
+  "facility/watermill",
+] as const;
+/** Phase D タスク D5 で対象化した施設 kind */
+const PIER_FACILITY_TARGETS = ["facility/pier"] as const;
+
 describe("gallery: 対象idの体系(契約「対象idの体系」)", () => {
-  it("MVP の対象idは一般建物の全6 role(center を除く)", () => {
+  it("対象idは一般建物の全6 role(center を除く)+ 施設の全 7 kind(D5 時点)", () => {
     expect([...GALLERY_TARGET_IDS].sort()).toEqual(
-      ROLES.map(targetId).sort(),
+      [
+        ...ROLES.map(targetId),
+        ...FACILITY_TARGETS,
+        ...PLAZA_FACILITY_TARGETS,
+        ...MILL_FACILITY_TARGETS,
+        ...PIER_FACILITY_TARGETS,
+      ].sort(),
     );
   });
 
@@ -29,7 +48,7 @@ describe("gallery: 対象idの体系(契約「対象idの体系」)", () => {
     expect(() =>
       buildGalleryWorld("building/center", "seed-x", {}),
     ).toThrow();
-    expect(() => buildGalleryWorld("facility/well", "seed-x", {})).toThrow();
+    expect(() => buildGalleryWorld("facility/unknown", "seed-x", {})).toThrow();
   });
 });
 
@@ -170,6 +189,255 @@ describe("gallery: 自明でない生成(seed・params で結果が変わる)", 
       explicit50,
     );
     expect(withDefault.summary.hash).toBe(withExplicit.summary.hash);
+  });
+});
+
+describe("gallery: 施設対象(facility/field・facility/pasture。Phase D D2b)", () => {
+  for (const id of FACILITY_TARGETS) {
+    const kind = id.split("/")[1] as "field" | "pasture";
+    it(`${id}: 同一入力2回で完全一致し、kind どおりの施設1件が生成される`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "everdusk-101", {});
+      expect(a.summary.hash).toBe(b.summary.hash);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+
+      expect(a.buildings.length).toBe(0);
+      expect(a.facilities.length).toBe(1);
+      const facility = a.facilities[0];
+      expect(facility).toBeDefined();
+      if (!facility) return;
+      expect(facility.kind).toBe(kind);
+      expect(facility.parts.length).toBeGreaterThan(0);
+      expect(facility.origin).toEqual({
+        type: "parcel",
+        parcelId: "parcel/gallery/L/farm0",
+      });
+      // footprint は農地区画そのもの(契約: 区画 = 施設の帰属領域)
+      const parcel = a.parcels[0];
+      expect(parcel).toBeDefined();
+      if (!parcel) return;
+      expect(parcel.kind).toBe("farmland");
+      expect(facility.footprint).toEqual(parcel.polygon);
+    });
+
+    it(`${id}: seed を変えるとハッシュが変わる`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "seed-b", {});
+      expect(a.summary.hash).not.toBe(b.summary.hash);
+    });
+  }
+
+  it("field は畝(ground-patch)の列、pasture は単一パッチ+横木2本の柵(D1b 造形)", () => {
+    const field = buildGalleryWorld("facility/field", "everdusk-101", {})
+      .facilities[0]!;
+    const pasture = buildGalleryWorld("facility/pasture", "everdusk-101", {})
+      .facilities[0]!;
+    const patches = (parts: typeof field.parts): typeof field.parts =>
+      parts.filter((p) => p.type === "ground-patch");
+    // field: 基盤 1 + 畝 N(≥ 2)。畝は params.top を持つ
+    expect(patches(field.parts).length).toBeGreaterThan(2);
+    expect(
+      patches(field.parts).filter((p) => p.params?.top !== undefined).length,
+    ).toBeGreaterThan(1);
+    // pasture: パッチはちょうど 1(牧草)
+    expect(patches(pasture.parts).length).toBe(1);
+    expect(patches(pasture.parts)[0]?.materialId).toBe("meadow");
+    // 柵はどちらも beam(木)のみで構成される
+    for (const f of [field, pasture]) {
+      for (const p of f.parts) {
+        expect(["ground-patch", "beam"]).toContain(p.type);
+        if (p.type === "beam") expect(p.materialId).toBe("wood");
+      }
+    }
+  });
+});
+
+describe("gallery: 広場施設対象(facility/well・facility/stall。Phase D D3)", () => {
+  for (const id of PLAZA_FACILITY_TARGETS) {
+    it(`${id}: 同一入力2回で完全一致する`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "everdusk-101", {});
+      expect(a.summary.hash).toBe(b.summary.hash);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    });
+
+    it(`${id}: seed を変えるとハッシュが変わる`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "seed-b", {});
+      expect(a.summary.hash).not.toBe(b.summary.hash);
+    });
+  }
+
+  it("well: 広場 1 枚に井戸 1 基(採否強制)。footprint は広場 polygon 内", () => {
+    const model = buildGalleryWorld("facility/well", "everdusk-101", {});
+    expect(model.buildings.length).toBe(0);
+    expect(model.facilities.length).toBe(1);
+    const well = model.facilities[0]!;
+    expect(well.kind).toBe("well");
+    expect(well.origin).toEqual({ type: "plaza", plazaId: "plaza/gallery" });
+    // 造形(D1b): 石環 fence×4 + 内面 + 柱2 + 轆轤 + 小屋根
+    const types = well.parts.map((p) => p.type);
+    expect(types.filter((t) => t === "fence").length).toBe(4);
+    expect(types.filter((t) => t === "beam").length).toBe(3);
+    expect(types.filter((t) => t === "gable").length).toBe(1);
+    expect(types.filter((t) => t === "ground-patch").length).toBe(1);
+    const plaza = model.plazas[0]!;
+    for (const v of well.footprint) {
+      expect(polygonSignedDistance(v.x, v.z, plaza.polygon)).toBeLessThan(0);
+    }
+  });
+
+  it("stall: 広場の縁帯に列(prosper 駆動)。全コーナーが広場内・天幕は3色の語彙", () => {
+    const model = buildGalleryWorld("facility/stall", "everdusk-101", {
+      prosperity: 100,
+    });
+    expect(model.facilities.length).toBeGreaterThanOrEqual(3);
+    const plaza = model.plazas[0]!;
+    const awnings = new Set<string>();
+    for (const stall of model.facilities) {
+      expect(stall.kind).toBe("stall");
+      const canopy = stall.parts.find((p) => p.type === "canopy");
+      expect(canopy).toBeDefined();
+      if (canopy) awnings.add(canopy.materialId);
+      for (const v of stall.footprint) {
+        expect(polygonSignedDistance(v.x, v.z, plaza.polygon)).toBeLessThan(0);
+      }
+      // 縁帯(広場縁から 1.0〜2.5)に立つ
+      let cx = 0;
+      let cz = 0;
+      for (const v of stall.footprint) {
+        cx += v.x;
+        cz += v.z;
+      }
+      cx /= stall.footprint.length;
+      cz /= stall.footprint.length;
+      const edge = -polygonSignedDistance(cx, cz, plaza.polygon);
+      expect(edge).toBeGreaterThanOrEqual(1.0 - 1e-9);
+      expect(edge).toBeLessThanOrEqual(2.5 + 1e-9);
+    }
+    for (const id of awnings) {
+      expect(["canvas", "awning-madder", "awning-slate"]).toContain(id);
+    }
+  });
+
+  it("stall: prosperity が屋台の数を駆動する", () => {
+    const low = buildGalleryWorld("facility/stall", "everdusk-101", {
+      prosperity: 0,
+    });
+    const high = buildGalleryWorld("facility/stall", "everdusk-101", {
+      prosperity: 100,
+    });
+    expect(high.facilities.length).toBeGreaterThan(low.facilities.length);
+  });
+});
+
+describe("gallery: 風車・水車対象(facility/windmill・facility/watermill。Phase D D4)", () => {
+  for (const id of MILL_FACILITY_TARGETS) {
+    it(`${id}: 同一入力2回で完全一致し、seed でハッシュが変わる`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "everdusk-101", {});
+      expect(a.summary.hash).toBe(b.summary.hash);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+      const c = buildGalleryWorld(id, "seed-b", {});
+      expect(c.summary.hash).not.toBe(a.summary.hash);
+    });
+  }
+
+  it("windmill: 塔 + キャップ + ロータ(4 枚羽根・静的 phase)+ 扉・窓(D1b 造形)", () => {
+    const model = buildGalleryWorld("facility/windmill", "everdusk-101", {});
+    expect(model.facilities.length).toBe(1);
+    const windmill = model.facilities[0]!;
+    expect(windmill.kind).toBe("windmill");
+    const types = windmill.parts.map((p) => p.type);
+    expect(types).toEqual(["tower", "gable", "windmill-rotor", "door", "window"]);
+    const rotor = windmill.parts.find((p) => p.type === "windmill-rotor")!;
+    expect(rotor.params?.blades).toBe(4);
+    expect(rotor.params?.phase).toBeGreaterThanOrEqual(0);
+    expect(rotor.params?.phase).toBeLessThanOrEqual(Math.PI / 2);
+    // ロータ直径 = 塔高の約 1.2 倍の誇張(D1b。±8% 揺らぎ込みの帯)
+    const dia = rotor.transform.scale[0];
+    expect(dia).toBeGreaterThanOrEqual(9.0 * 0.92 - 1e-9);
+    expect(dia).toBeLessThanOrEqual(9.0 * 1.08 + 1e-9);
+    // footprint 長軸 = 直径 + 0.6(ロータ掃引域込み)
+    let maxSpan = 0;
+    for (const a of windmill.footprint) {
+      for (const b of windmill.footprint) {
+        maxSpan = Math.max(maxSpan, Math.hypot(a.x - b.x, a.z - b.z));
+      }
+    }
+    expect(maxSpan).toBeGreaterThan(dia);
+  });
+
+  it("watermill: 小屋 + 軸 + 水輪(下端が水面下)。footprint 頂点は陸上(D1a 水域例外)", () => {
+    const model = buildGalleryWorld("facility/watermill", "everdusk-101", {});
+    expect(model.facilities.length).toBe(1);
+    const mill = model.facilities[0]!;
+    expect(mill.kind).toBe("watermill");
+    const types = mill.parts.map((p) => p.type);
+    expect(types).toEqual([
+      "plinth",
+      "wall",
+      "gable",
+      "door",
+      "window",
+      "beam",
+      "water-wheel",
+    ]);
+    const wheel = mill.parts.find((p) => p.type === "water-wheel")!;
+    expect(wheel.materialId).toBe("wet-wood");
+    expect(wheel.params?.paddles).toBe(8);
+    // 軸 y 0.70・下端 = 0.70 − 直径/2 が水面(−0.6)より下
+    const axleY = wheel.transform.position[1];
+    const dia = wheel.transform.scale[1];
+    expect(axleY).toBeCloseTo(0.7, 6);
+    expect(axleY - dia / 2).toBeLessThan(-0.6);
+    // footprint(小屋)は全頂点が陸上 = 池の外
+    const pond = model.water.ponds[0]!;
+    for (const v of mill.footprint) {
+      expect(polygonSignedDistance(v.x, v.z, pond)).toBeGreaterThanOrEqual(
+        -1e-9,
+      );
+    }
+  });
+});
+
+describe("gallery: 桟橋対象(facility/pier。Phase D D5)", () => {
+  it("pier: 同一入力2回で完全一致し、seed でハッシュが変わる", () => {
+    const a = buildGalleryWorld("facility/pier", "everdusk-101", {});
+    const b = buildGalleryWorld("facility/pier", "everdusk-101", {});
+    expect(a.summary.hash).toBe(b.summary.hash);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    const c = buildGalleryWorld("facility/pier", "seed-b", {});
+    expect(c.summary.hash).not.toBe(a.summary.hash);
+  });
+
+  it("pier: 板 1 + 杭のみの構成。天端 0.35・先端が池の上に突き出す(D1b 造形)", () => {
+    const model = buildGalleryWorld("facility/pier", "everdusk-101", {});
+    expect(model.facilities.length).toBe(1);
+    const pier = model.facilities[0]!;
+    expect(pier.kind).toBe("pier");
+    const decks = pier.parts.filter((p) => p.type === "deck");
+    const piles = pier.parts.filter((p) => p.type === "pile");
+    expect(decks.length).toBe(1);
+    expect(piles.length).toBeGreaterThanOrEqual(4);
+    expect(decks.length + piles.length).toBe(pier.parts.length);
+    const deck = decks[0]!;
+    expect(deck.materialId).toBe("rough-wood");
+    // 天端 y 0.35(地面 0 と水面 −0.6 の間 = 建物デッキより低い)
+    expect(deck.transform.position[1] + deck.transform.scale[1]).toBeCloseTo(
+      0.35,
+      6,
+    );
+    // 先端側の footprint 頂点が池の上(facing = −z = 池側)
+    const pond = model.water.ponds[0]!;
+    const overWater = pier.footprint.filter(
+      (v) => polygonSignedDistance(v.x, v.z, pond) < 0,
+    );
+    expect(overWater.length).toBeGreaterThanOrEqual(2);
+    // 杭は水底(y −1.6)から立つ
+    for (const pile of piles) {
+      expect(pile.transform.position[1]).toBeCloseTo(-1.6, 6);
+    }
   });
 });
 

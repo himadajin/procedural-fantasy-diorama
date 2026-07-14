@@ -1,5 +1,5 @@
 /**
- * 段15「サマリー」: 生成結果サマリー(contracts/vegetation-summary.md Summary 節)。
+ * 段16「サマリー」: 生成結果サマリー(contracts/vegetation-summary.md Summary 節)。
  * 最終状態の WorldModel から機械的に全フィールドを再算出して確定する。
  * 中間PHASEの各段は同名フィールドを部分的に先埋めするが、本段が最終値で
  * 上書きするため、サマリーは常に生成物と一致する(乖離しない)。
@@ -8,7 +8,13 @@
  * 表示プリセット依存のため WorldModel には持たず、UI が表示時に埋める。
  * three 非依存の純関数。
  */
-import type { BuildingRole, Vec2, WorldModel } from "../model/worldmodel";
+import {
+  FACILITY_KIND_ORDER,
+  type BuildingRole,
+  type FacilityKind,
+  type Vec2,
+  type WorldModel,
+} from "../model/worldmodel";
 import { pathLength } from "../model/geometry";
 
 /** 支配軸ごとの都市の性格語(centerDescription の主文) */
@@ -87,7 +93,7 @@ export function buildCenterDescription(model: WorldModel): string {
   return `${main}${tail}を持つ。`;
 }
 
-/** 段15「サマリー」の実体: summary 全フィールドを最終確定する */
+/** 段16「サマリー」の実体: summary 全フィールドを最終確定する */
 export function runSummary(model: WorldModel): void {
   // 建物数(役割別内訳)。出現した役割のみキーを持つ
   const buildingCounts: Record<string, number> = {};
@@ -96,12 +102,21 @@ export function runSummary(model: WorldModel): void {
     buildingCounts[role] = (buildingCounts[role] ?? 0) + 1;
   }
 
+  // 施設数(kind 別内訳)。buildingCounts と異なり全 kind を常にキーに持つ
+  // (0 件の kind も落とさない密な形。contracts/vegetation-summary.md
+  // Summary 節「施設カウントの追加」)
+  const facilityCounts = Object.fromEntries(
+    FACILITY_KIND_ORDER.map((kind) => [kind, 0]),
+  ) as Record<FacilityKind, number>;
+  for (const f of model.facilities) facilityCounts[f.kind] += 1;
+
   // 道路総延長(小道込みの最終総和)
   let roadLength = 0;
   for (const edge of model.network.edges) roadLength += pathLength(edge.path);
 
   model.summary = {
     buildingCounts,
+    facilityCounts,
     centerDescription: buildCenterDescription(model),
     waterOverview: {
       lakes: model.water.lakes.length,

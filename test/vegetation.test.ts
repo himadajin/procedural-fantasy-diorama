@@ -1,8 +1,10 @@
 /**
- * 段14「植生」(PHASE 6 commit 20)のテスト。
+ * 段15「植生」(PHASE 6 commit 20。Phase D で段14 から繰り下げ)のテスト。
  * 契約は docs/internal/contracts/vegetation-summary.md(Vegetation 節)と
  * contracts/pipeline.md の段契約表。implementation-spec 7章の完了条件
- * (衝突なし・植生勾配・森リング・岸辺植生・draw call 予算・決定性)に対応する。
+ * (衝突なし・植生勾配・森リング・岸辺植生・draw call 予算・決定性)と、
+ * Phase D の回避対象追加(施設 footprint。同契約「回避対象への facilities
+ * 追加」)に対応する。
  */
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
@@ -32,6 +34,7 @@ import { runPaving } from "../src/pipeline/paving";
 import { runParcels } from "../src/pipeline/parcels";
 import { runBuildings } from "../src/pipeline/buildings";
 import { runLanes } from "../src/pipeline/lanes";
+import { runFacilities } from "../src/pipeline/facilities";
 import {
   GRASS_MAX,
   SHRUB_MAX,
@@ -56,6 +59,7 @@ function build(seed: string, over: Partial<Params> = {}): WorldModel {
   runParcels(model);
   runBuildings(model);
   runLanes(model);
+  runFacilities(model);
   runVegetation(model);
   return model;
 }
@@ -79,14 +83,14 @@ function allPoints(model: WorldModel): { x: number; z: number }[] {
   ];
 }
 
-describe("段14 植生: 決定性", () => {
+describe("段15 植生: 決定性", () => {
   it("同一 seed・params で vegetation が完全一致する", () => {
     const a = build("everdusk-101");
     const b = build("everdusk-101");
     expect(JSON.stringify(a.vegetation)).toBe(JSON.stringify(b.vegetation));
   });
 
-  it("段14 は vegetation 以外のフィールドに触れない", () => {
+  it("段15 は vegetation 以外のフィールドに触れない", () => {
     const model = cached("everdusk-101");
     const before = createEmptyWorldModel("everdusk-101", DEFAULT_PARAMS);
     runDerive(before);
@@ -102,12 +106,13 @@ describe("段14 植生: 決定性", () => {
     runParcels(before);
     runBuildings(before);
     runLanes(before);
+    runFacilities(before);
     const beforeJson = JSON.stringify({ ...before, vegetation: null });
     expect(JSON.stringify({ ...model, vegetation: null })).toBe(beforeJson);
   });
 });
 
-describe("段14 植生: 衝突なし(contracts の散布保証)", () => {
+describe("段15 植生: 衝突なし(contracts の散布保証)", () => {
   const CASES: [string, Partial<Params>][] = [
     ["everdusk-101", {}],
     ["seed-b", { water: 70 }],
@@ -151,6 +156,29 @@ describe("段14 植生: 衝突なし(contracts の散布保証)", () => {
     });
   }
 
+  it("施設 footprint を回避する(縁 + 1.0。Phase D「回避対象への facilities 追加」)", () => {
+    // settle 低で農地(field / pasture)が多く切られる世界を使う
+    const model = cached("everdusk-101", { settlement: 0 });
+    expect(model.facilities.length).toBeGreaterThan(0);
+    for (const p of allPoints(model)) {
+      for (const f of model.facilities) {
+        // 候補点は縁 + 1.0 のクリアランスで棄却されるため、採択済みの
+        // 木・低木は施設 footprint から 1.0 以上離れている
+        expect(
+          polygonSignedDistance(p.x, p.z, f.footprint),
+        ).toBeGreaterThanOrEqual(1.0 - 1e-9);
+      }
+    }
+    for (const patch of model.vegetation.grassPatches) {
+      for (const v of patch.polygon) {
+        for (const f of model.facilities) {
+          // 草むらは多角形の頂点が施設に食い込まない(半径上乗せの帰結)
+          expect(polygonSignedDistance(v.x, v.z, f.footprint)).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
   it("草むらの多角形は時計回りで、点は水面・建物に重ならない", () => {
     const model = cached("everdusk-101");
     const field = createWaterField(model.ground.boundary, [
@@ -178,7 +206,7 @@ describe("段14 植生: 衝突なし(contracts の散布保証)", () => {
   });
 });
 
-describe("段14 植生: 散布マスクの勾配(implementation-spec 7章)", () => {
+describe("段15 植生: 散布マスクの勾配(implementation-spec 7章)", () => {
   it("結界内の植生密度は結界外(陸地)より明確に疎", () => {
     const model = cached("everdusk-101");
     const ring = model.wards.ringPath;
@@ -268,7 +296,7 @@ describe("段14 植生: 散布マスクの勾配(implementation-spec 7章)", () 
   });
 });
 
-describe("段14 植生: 上限(性能配慮)", () => {
+describe("段15 植生: 上限(性能配慮)", () => {
   it("worldScale 100 でも上限以内", () => {
     const model = cached("everdusk-101", { worldScale: 100 });
     expect(model.vegetation.trees.length).toBeLessThanOrEqual(TREE_MAX);
