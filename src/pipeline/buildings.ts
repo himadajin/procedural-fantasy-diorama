@@ -2346,6 +2346,75 @@ function expandWaterfrontParts(
 }
 
 /**
+ * 水辺拡張の claimed 領域の復元(Phase D タスク D5。contracts/facilities.md
+ * 「pier(桟橋)」実装補足・「waterfront claimed 検査への参加」)。
+ *
+ * `claimedRegions` は本段(`runBuildings` の水辺拡張パス)のローカル変数で
+ * WorldModel に永続化されないため、確定済み拡張の実体部品から領域を
+ * 決定論的に復元する読み取り関数を本モジュールが所有する:
+ * - デッキ領域 = waterfront フラグ付き `deck`(床)部品の外形矩形と一致
+ *   (床は採択領域の全面を覆う)
+ * - 張り出し部屋領域 = waterfront フラグ付き `wall` 部品の中心(壁面から
+ *   (ROOM_DEPTH − ROOM_EMBED)/2 水側)から面を復元し、面から水側へ
+ *   ROOM_DEPTH + 0.3 の矩形と一致。水側の判定は建物 footprint 重心から
+ *   遠ざかる側(面は建物の外面のため重心は常に陸側にある)
+ * facilities 段(桟橋)が読み取り専用で使う(本配列へ追記は行わない —
+ * 桟橋の追加が建物側の生成結果に影響しない片方向参照)。乱数は消費しない。
+ */
+export function waterfrontClaimedRegions(model: WorldModel): Polygon[] {
+  const regions: Polygon[] = [];
+  for (const building of model.buildings) {
+    let centroid: Vec2 | null = null;
+    for (const part of building.parts) {
+      if (part.params?.waterfront !== WATERFRONT_FLAG) continue;
+      if (part.type !== "deck" && part.type !== "wall") continue;
+      const [px, , pz] = part.transform.position;
+      const [sx, , sz] = part.transform.scale;
+      const rot = part.transform.rotation;
+      // Part の変換規約(makeXform): ローカル +x → (cosθ, −sinθ)、
+      // ローカル +z → (sinθ, cosθ)
+      const ax: Vec2 = { x: Math.cos(rot), z: -Math.sin(rot) };
+      const az: Vec2 = { x: Math.sin(rot), z: Math.cos(rot) };
+      if (part.type === "deck") {
+        regions.push(
+          ensureClockwise([
+            { x: px + ax.x * (sx / 2) + az.x * (sz / 2), z: pz + ax.z * (sx / 2) + az.z * (sz / 2) },
+            { x: px - ax.x * (sx / 2) + az.x * (sz / 2), z: pz - ax.z * (sx / 2) + az.z * (sz / 2) },
+            { x: px - ax.x * (sx / 2) - az.x * (sz / 2), z: pz - ax.z * (sx / 2) - az.z * (sz / 2) },
+            { x: px + ax.x * (sx / 2) - az.x * (sz / 2), z: pz + ax.z * (sx / 2) - az.z * (sz / 2) },
+          ]),
+        );
+        continue;
+      }
+      // wall(張り出し部屋)。水側 = footprint 重心から遠ざかる側
+      if (!centroid) {
+        let cx = 0;
+        let cz = 0;
+        for (const v of building.footprint) {
+          cx += v.x / building.footprint.length;
+          cz += v.z / building.footprint.length;
+        }
+        centroid = { x: cx, z: cz };
+      }
+      const dot = az.x * (px - centroid.x) + az.z * (pz - centroid.z);
+      const out: Vec2 = dot >= 0 ? az : { x: -az.x, z: -az.z };
+      const fx = px - out.x * ((ROOM_DEPTH - ROOM_EMBED) / 2);
+      const fz = pz - out.z * ((ROOM_DEPTH - ROOM_EMBED) / 2);
+      const reach = ROOM_DEPTH + 0.3;
+      regions.push(
+        ensureClockwise([
+          { x: fx + ax.x * (sx / 2), z: fz + ax.z * (sx / 2) },
+          { x: fx - ax.x * (sx / 2), z: fz - ax.z * (sx / 2) },
+          { x: fx - ax.x * (sx / 2) + out.x * reach, z: fz - ax.z * (sx / 2) + out.z * reach },
+          { x: fx + ax.x * (sx / 2) + out.x * reach, z: fz + ax.z * (sx / 2) + out.z * reach },
+        ]),
+      );
+    }
+  }
+  return regions;
+}
+
+/**
  * 段12「建物」の1区画ぶんの生成に与える配置パラメータ(Phase C)。
  * 乱数は一切消費しない(セットバック・向き・矩形固定の変調のみ)。
  *

@@ -6,7 +6,8 @@
  *
  * D2b: field(畑)/ pasture(牧草地)— farmland 区画への生成。
  * D3: well(井戸)/ stall(市場屋台)— 市街広場・農村道路ノードへの生成。
- * windmill / watermill / pier は D4〜D5 で追う。
+ * D4: windmill(風車)/ watermill(水車)— 農村外縁・水路/湖岸への生成。
+ * D5: pier(桟橋)— 汀線ループ沿い(waterfront claimed 検査へ読み取り参加)。
  *
  * 造形は「入力(寸法・向き・当該施設の rng サブストリーム)→ Part[]」の
  * 純関数(buildXxxParts)として配置ロジックから分離する(契約 3.8b。
@@ -16,18 +17,21 @@
  * 消費列は変えない。
  */
 import { makeRng, type Rng } from "../rng";
-import type {
-  Facility,
-  Parcel,
-  Part,
-  Plaza,
-  Vec2,
-  WorldModel,
+import {
+  SHORE_SKIRT_BOTTOM_Y,
+  type BridgeSite,
+  type Facility,
+  type Parcel,
+  type Part,
+  type Plaza,
+  type Vec2,
+  type WorldModel,
 } from "../model/worldmodel";
 import { distToPolyline, polygonSignedDistance } from "../model/waterfield";
 import { sampleFieldGrid } from "../model/fieldgrid";
-import { ensureClockwise } from "../model/geometry";
+import { ensureClockwise, polygonsOverlap } from "../model/geometry";
 import { createSiteContext } from "./parcels";
+import { waterfrontClaimedRegions } from "./buildings";
 
 // --- field / pasture の造形数値(すべて提案値。contracts/facilities.md
 //     「kind ごとの造形の性質」。調整時は契約を同一 commit で更新する) ---
@@ -1458,6 +1462,166 @@ export function buildWatermillFacility(
   };
 }
 
+// --- pier の造形数値(すべて提案値。contracts/facilities.md
+//     「kind ごとの造形の性質」D1b。調整時は契約を同一 commit で更新する) ---
+/** 桟橋: 板(幅 1.8 ±0.2 × 長さ 6〜10 × 床厚 0.22。天端 y 0.35) */
+const PIER_DECK_W = 1.8;
+const PIER_DECK_W_JITTER = 0.2;
+const PIER_LEN_MIN = 6;
+const PIER_LEN_MAX = 10;
+const PIER_DECK_TOP_Y = 0.35;
+const PIER_DECK_T = 0.22;
+/** 桟橋: 杭(0.22 角・間隔 2.4 のペア。板端からの寄り) */
+const PIER_PILE_SIZE = 0.22;
+const PIER_PILE_SPACING = 2.4;
+const PIER_PILE_END_INSET = 0.35;
+/** 桟橋: 先端の係船柱(chance 0.7 で天端 y 0.90 = 板の上に 0.55) */
+const PIER_BOLLARD_TOP_Y = 0.9;
+const PIER_BOLLARD_CHANCE = 0.7;
+/** 桟橋: 陸側端 = 汀線から 1.0 内陸 */
+const PIER_LAND_OVERLAP = 1.0;
+
+// --- pier の配置数値(契約「pier(桟橋)」D5 実装補足。すべて提案値) ---
+/** 桟橋どうしのアンカー間隔(実寸) */
+const PIER_SPACING = 8.0;
+/** 位置ジッター(接線方向 ±2.0。watermill と同じ流儀) */
+const PIER_JITTER = 2.0;
+/** 適格条件 (a): waterside 建物 footprint からの距離 */
+const PIER_NEAR_WATERSIDE = 14;
+/** 保守的検証 (2): アンカーから水側のプローブ距離(全点が水面) */
+const PIER_WATER_PROBES = [3.5, 6.0, 9.0] as const;
+/** 橋(BridgeSite 矩形)・水路縁からのクリアランス */
+const PIER_CLEAR_BRIDGE = 1.0;
+const PIER_CLEAR_CANAL = 1.0;
+
+/** 桟橋の造形純関数の入力(長さ・幅は配置側が消費済み。D5 実装補足) */
+export interface PierShapeInput {
+  /** 陸側端(板の陸側の縁の中点。汀線から 1.0 内陸) */
+  landEnd: Vec2;
+  /** 正面方位(陸 → 水域。板はこちらへ伸びる) */
+  facing: number;
+  /** 板の長さ(6〜10) */
+  length: number;
+  /** 板の幅(1.8 ±0.2) */
+  width: number;
+  /** 当該施設の rng(ジッター・長さ・幅の続き。係船柱の有無を消費する) */
+  rng: Rng;
+}
+
+/**
+ * 桟橋(pier)の造形純関数(契約「pier(桟橋)」)。
+ * parts 配列順: 板 1 → 杭(陸側ペアから先端ペアへ。ペア内は −s → +s)。
+ * rng 消費: (3) 係船柱の有無(chance 0.7)のみ(長さ・幅は配置側)。
+ */
+export function buildPierParts(input: PierShapeInput): Part[] {
+  const { landEnd, facing, length, width, rng } = input;
+  const bollard = rng.chance(PIER_BOLLARD_CHANCE);
+  const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  const at = (u: number, v: number): Vec2 => ({
+    x: landEnd.x + s.x * u + f.x * v,
+    z: landEnd.z + s.z * u + f.z * v,
+  });
+  const rotF = Math.atan2(-f.z, f.x); // ローカル +x = 長手方向(契約の deck 規約)
+
+  const parts: Part[] = [];
+  // 板(deck。粗い木 — 風化した板の読み。天端 0.35 = 建物デッキより低い)
+  const deckBottom = PIER_DECK_TOP_Y - PIER_DECK_T;
+  parts.push(
+    makePart(
+      "deck",
+      "rough-wood",
+      at(0, length / 2),
+      deckBottom,
+      rotF,
+      length,
+      PIER_DECK_T,
+      width,
+    ),
+  );
+  // 杭(板の両縁に面一のペア。y = −1.6(岸スカート下端)から板下端まで。
+  // 先端ペアのみ係船柱(chance 0.7)で天端 y 0.90 へ伸ばす)
+  const pileU = width / 2 - PIER_PILE_SIZE / 2;
+  const span = length - PIER_PILE_END_INSET * 2;
+  const pairs = Math.max(2, Math.ceil(span / PIER_PILE_SPACING) + 1);
+  for (let k = 0; k < pairs; k++) {
+    const v = PIER_PILE_END_INSET + (span * k) / (pairs - 1);
+    const isTip = k === pairs - 1;
+    const topY = isTip && bollard ? PIER_BOLLARD_TOP_Y : deckBottom;
+    for (const u of [-pileU, pileU]) {
+      parts.push(
+        makePart(
+          "pile",
+          "wood",
+          at(u, v),
+          SHORE_SKIRT_BOTTOM_Y,
+          rotF,
+          PIER_PILE_SIZE,
+          topY - SHORE_SKIRT_BOTTOM_Y,
+          PIER_PILE_SIZE,
+        ),
+      );
+    }
+  }
+  return parts;
+}
+
+/**
+ * 桟橋 1 基の生成(段14 の本番ループとギャラリーが共用。契約「pier」
+ * D5 実装補足)。消費列(固定): 位置ジッター(接線方向 ±2.0。revalidate が
+ * 通らなければ基点へ戻す)→ 長さ → 幅 → 造形(係船柱の有無)。
+ * normal は汀線法線(水域 → 陸)。facing はその逆(陸 → 水域)。
+ */
+export function buildPierFacility(
+  seed: string,
+  loopId: string,
+  index: number,
+  point: Vec2,
+  tangent: Vec2,
+  normal: Vec2,
+  revalidate: ((anchor: Vec2) => boolean) | null,
+): Facility {
+  const rng = makeRng(seed, `facility/pier/${loopId}/${index}`);
+  const jitter = rng.range(-PIER_JITTER, PIER_JITTER);
+  let anchor: Vec2 = {
+    x: point.x + tangent.x * jitter,
+    z: point.z + tangent.z * jitter,
+  };
+  if (revalidate && !revalidate(anchor)) anchor = point;
+  const length = rng.range(PIER_LEN_MIN, PIER_LEN_MAX);
+  const width =
+    PIER_DECK_W + rng.range(-PIER_DECK_W_JITTER, PIER_DECK_W_JITTER);
+  const facing = Math.atan2(-normal.z, -normal.x);
+  const f: Vec2 = { x: -normal.x, z: -normal.z };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  const landEnd: Vec2 = {
+    x: anchor.x + normal.x * PIER_LAND_OVERLAP,
+    z: anchor.z + normal.z * PIER_LAND_OVERLAP,
+  };
+  const center: Vec2 = {
+    x: landEnd.x + (f.x * length) / 2,
+    z: landEnd.z + (f.z * length) / 2,
+  };
+  // footprint = 板の矩形(杭は縁に面一のため「板+杭の外形」と一致)
+  const footprint = rectFootprint(center, f, s, width / 2, length / 2);
+  const parts = buildPierParts({ landEnd, facing, length, width, rng });
+  return {
+    id: `facility/pier/${loopId}/${index}`,
+    kind: "pier",
+    footprint: ensureClockwise(footprint),
+    facing,
+    parts,
+    origin: { type: "shore", shoreLoopId: loopId, index },
+  };
+}
+
+/** 橋(BridgeSite)の外形矩形(桟橋のクリアランス検査用) */
+function bridgeRect(bridge: BridgeSite): Vec2[] {
+  const f: Vec2 = { x: Math.cos(bridge.angle), z: Math.sin(bridge.angle) };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  return rectFootprint(bridge.position, f, s, bridge.width / 2, bridge.length / 2);
+}
+
 /**
  * 施設 parts の footprint 帯検証(契約「衝突・帯検証則」: 全 parts は
  * footprint から 0.9 を超えてはみ出さない)。部品の回転込みの 4 隅で
@@ -1745,6 +1909,154 @@ export function runFacilities(model: WorldModel): void {
         );
         placed++;
         break;
+      }
+    }
+  }
+
+  // --- pier: 汀線ループ順(D5。契約「pier(桟橋)」実装補足) ---
+  const pierCount = Math.round(Math.min(4, Math.max(0, 1 + 3 * waterP)));
+  const shoreLoops = model.water.shoreline.loops;
+  if (pierCount > 0 && shoreLoops.length > 0) {
+    // waterfront claimed 領域への読み取り専用参加(段12 で確定済み。
+    // 実体部品からの決定論的復元 — buildings.ts が復元関数を所有する)
+    const claimed = waterfrontClaimedRegions(model);
+    const bridgeRects = model.water.bridges.map(bridgeRect);
+    const watersideFootprints = model.buildings
+      .filter((b) => b.role === "waterside")
+      .map((b) => b.footprint);
+    // 適格条件 (b): 全汀線点の urbanity 平均(「相対的に高い側」の基準)
+    let urbanitySum = 0;
+    let urbanityN = 0;
+    if (model.zoning) {
+      for (const loop of shoreLoops) {
+        for (const p of loop.points) {
+          urbanitySum += sampleFieldGrid(model.zoning, p.x, p.z);
+          urbanityN++;
+        }
+      }
+    }
+    const meanUrbanity = urbanityN > 0 ? urbanitySum / urbanityN : 0;
+
+    /** 採択済みアンカー(ジッター解決後の汀線基準点) */
+    const anchors: Vec2[] = [];
+    const spacingOk = (p: Vec2, minDist: number): boolean => {
+      for (const a of anchors) {
+        if (Math.hypot(a.x - p.x, a.z - p.z) < minDist) return false;
+      }
+      return true;
+    };
+    /** 保守的検証(寸法上限の footprint。陸側端 = アンカー + 法線 × 1.0) */
+    const pierOk = (anchor: Vec2, normal: Vec2): boolean => {
+      const f: Vec2 = { x: -normal.x, z: -normal.z };
+      const s: Vec2 = { x: -f.z, z: f.x };
+      const landEnd: Vec2 = {
+        x: anchor.x + normal.x * PIER_LAND_OVERLAP,
+        z: anchor.z + normal.z * PIER_LAND_OVERLAP,
+      };
+      const halfW = (PIER_DECK_W + PIER_DECK_W_JITTER) / 2;
+      // (1) 陸側端(中点と両隅)が陸上・(2) 水側プローブ(各距離で中点と
+      //     両隅の 3 点 × 3 距離)が水面(全長の先端が板幅ごと水上になり、
+      //     砂洲・対岸・湾曲した岸を跨がない)
+      for (const u of [-halfW, 0, halfW]) {
+        if (
+          ruralCtx.waterBodySdf(landEnd.x + s.x * u, landEnd.z + s.z * u) < 0
+        ) {
+          return false;
+        }
+        for (const d of PIER_WATER_PROBES) {
+          if (
+            ruralCtx.waterBodySdf(
+              anchor.x + f.x * d + s.x * u,
+              anchor.z + f.z * d + s.z * u,
+            ) >= 0
+          ) {
+            return false;
+          }
+        }
+      }
+      const center: Vec2 = {
+        x: landEnd.x + (f.x * PIER_LEN_MAX) / 2,
+        z: landEnd.z + (f.z * PIER_LEN_MAX) / 2,
+      };
+      const fp = rectFootprint(
+        center,
+        f,
+        s,
+        (PIER_DECK_W + PIER_DECK_W_JITTER) / 2,
+        PIER_LEN_MAX / 2,
+      );
+      // (3) claimed 領域(建物のデッキ・張り出し部屋)と非重複
+      for (const region of claimed) {
+        if (polygonsOverlap(fp, region)) return false;
+      }
+      const probes = rectProbes(fp, center);
+      for (const p of probes) {
+        // (4) 橋・(5) 水路とのクリアランス
+        for (const rect of bridgeRects) {
+          if (polygonSignedDistance(p.x, p.z, rect) < PIER_CLEAR_BRIDGE) {
+            return false;
+          }
+        }
+        if (ruralCtx.canalSdf(p.x, p.z) < PIER_CLEAR_CANAL) return false;
+      }
+      // (6) 汎用クリアランス(水域は kind 例外で対象外)
+      return facilitySiteOk(ruralCtx, probes, facilities, null);
+    };
+
+    let placed = 0;
+    for (const loop of shoreLoops) {
+      if (placed >= pierCount) break;
+      for (let i = 0; i < loop.points.length && placed < pierCount; i++) {
+        const p = loop.points[i];
+        const n = loop.normals[i];
+        if (!p || !n) continue;
+        // 適格な岸点: (a) waterside 建物の近傍 or (b) 相対的に市街寄り
+        let eligible = model.zoning
+          ? sampleFieldGrid(model.zoning, p.x, p.z) >= meanUrbanity
+          : true;
+        if (!eligible) {
+          for (const fp of watersideFootprints) {
+            if (polygonSignedDistance(p.x, p.z, fp) <= PIER_NEAR_WATERSIDE) {
+              eligible = true;
+              break;
+            }
+          }
+        }
+        if (!eligible) continue;
+        // 候補時点はジッター幅込みの間隔・保守的検証
+        if (!spacingOk(p, PIER_SPACING + PIER_JITTER)) continue;
+        if (!pierOk(p, n)) continue;
+        // 接線 = 法線の 90° 回転(watermill の湖岸走査と同じ流儀)
+        const tangent: Vec2 = { x: -n.z, z: n.x };
+        const pier = buildPierFacility(
+          seed,
+          loop.id,
+          i,
+          p,
+          tangent,
+          n,
+          (a) => spacingOk(a, PIER_SPACING) && pierOk(a, n),
+        );
+        facilities.push(pier);
+        // アンカー(ジッター解決後)= footprint 重心 + 法線 × (長さ/2 − 1.0)
+        const c: Vec2 = { x: 0, z: 0 };
+        for (const v of pier.footprint) {
+          c.x += v.x / pier.footprint.length;
+          c.z += v.z / pier.footprint.length;
+        }
+        let vMin = Infinity;
+        let vMax = -Infinity;
+        for (const v of pier.footprint) {
+          const e = (v.x - c.x) * -n.x + (v.z - c.z) * -n.z;
+          vMin = Math.min(vMin, e);
+          vMax = Math.max(vMax, e);
+        }
+        const halfLen = (vMax - vMin) / 2;
+        anchors.push({
+          x: c.x + n.x * (halfLen - PIER_LAND_OVERLAP),
+          z: c.z + n.z * (halfLen - PIER_LAND_OVERLAP),
+        });
+        placed++;
       }
     }
   }
