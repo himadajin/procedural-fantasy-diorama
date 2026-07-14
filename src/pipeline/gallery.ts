@@ -22,6 +22,7 @@ import {
 import { hashWorldModel } from "../model/hash";
 import { ensureClockwise } from "../model/geometry";
 import { computeDerived } from "./derive";
+import { generateZoneMask } from "./ground";
 import { createSiteContext } from "./parcels";
 import { buildParcelBuilding, SINGLE_BUILD_OPTIONS } from "./buildings";
 import { runSummary } from "./summary";
@@ -102,10 +103,11 @@ function createWatersidePond(): Polygon {
 /**
  * 極小ワールドを合成し、本番の生成関数のみで対象(一般建物1棟)を生成する。
  * 本番のパイプライン段(pipeline/derive 等)は順に実行しない。
- * `computeDerived`(段1「導出設定」の純関数)・`runSummary`(段15
- * 「サマリー」。乱数非消費・モデル状態からの決定的な集計)は、対象生成
- * (`buildParcelBuilding`)そのものではなく極小モデルの合成・出力整形の一部
- * として直接呼ぶ(本番の造形・判定ロジックを再実装しないための選択)。
+ * `computeDerived`(段1「導出設定」の純関数)・`generateZoneMask`(段2
+ * 「地面」の純関数。G1b)・`runSummary`(段15「サマリー」。乱数非消費・
+ * モデル状態からの決定的な集計)は、対象生成(`buildParcelBuilding`)
+ * そのものではなく極小モデルの合成・出力整形の一部として直接呼ぶ
+ * (本番の造形・判定ロジックを再実装しないための選択)。
  */
 function buildSingleBuildingWorld(
   seed: string,
@@ -116,6 +118,12 @@ function buildSingleBuildingWorld(
   model.meta.derived = computeDerived(seed, params);
   model.ground.boundary = createGalleryBoundary();
   model.ground.size = WORLD_HALF_EXTENT * 2;
+  // zoneMask は本番の generateZoneMask(段2「地面」の純関数。草地ベース+
+  // 土の斑・明度ムラ)で極小ワールドの実寸ぶんを生成する。初期値
+  // (createZoneMask(0, 0))のままだと cellSize=0 で mesh 側のサンプリング
+  // (zoneColorAt / sampleZoneMask)が退化し、地面が全対象で真っ黒に
+  // 描画される(G1b。契約「極小ワールドの合成規約」の直接呼び出しの許容)
+  model.ground.zoneMask = generateZoneMask(seed, model.ground.size);
 
   const isWaterside = role === "waterside";
   const parcel = createGalleryParcel(isWaterside);

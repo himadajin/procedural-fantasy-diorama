@@ -221,9 +221,14 @@ runPipeline(seed: string, params: Params, opts?: {
 パイプライン段(`pipeline/derive` 等、上記「パイプライン段契約」節)を
 順に実行する必要はなく、対象の生成に必要なフィールドの素の合成でよい。
 ただし、段そのものではなく段が内部で使う純関数(`pipeline/derive.ts` の
-`computeDerived` 等)を呼んで `meta.derived` のような必須メタフィールドを
-埋めることは、この規約の範囲内とする(対象生成の本体ではなく極小モデルの
-合成の一部であり、本番の判定式を再実装しないための選択)。同様に、
+`computeDerived`、`pipeline/ground.ts` の `generateZoneMask`(2026-07-14
+G1b 追補)等)を呼んで `meta.derived`・`ground.zoneMask` のような必須
+フィールドを埋めることは、この規約の範囲内とする(対象生成の本体ではなく
+極小モデルの合成の一部であり、本番の判定式・地面の材質下地を再実装しない
+ための選択)。特に `ground.zoneMask` は `createEmptyWorldModel` の初期値
+(`createZoneMask(0, 0)`)のままにしてはならない: cellSize=0 の退化した
+マスクは `mesh/` 側のサンプリング(`zoneColorAt` / `sampleZoneMask`)を
+退化させ、地面の描画が破綻する(G1b で実バグとして確認)。同様に、
 出力整形(`summary` フィールドの機械算出)には `pipeline/summary.ts` の
 `runSummary`(乱数非消費・モデル状態からの決定的な集計。段そのものが
 既に「対象生成」を含まない純粋な集計関数)を直接呼んでよい。
