@@ -32,6 +32,8 @@ import {
   buildFarmlandFacility,
   buildPlazaStallFacilities,
   buildPlazaWellFacility,
+  buildWatermillFacility,
+  buildWindmillFacility,
 } from "./facilities";
 import { runSummary } from "./summary";
 
@@ -279,12 +281,93 @@ function buildPlazaFacilityWorld(
   return model;
 }
 
+// --- 施設(風車・水車)対象の極小ワールド(Phase D タスク D4) ---
+/** 風車対象のセル寸(実寸。ジッターがこの範囲で位置を揺らす) */
+const WINDMILL_GALLERY_CELL = 20;
+
+/**
+ * 風車 1 基の極小ワールド。本番の `buildWindmillFacility`(格子セル 1 枚
+ * ぶんの生成)のみを呼ぶ。facing は建物対象と同じ −π/2(正面 = −z 側)
+ */
+function buildSingleWindmillWorld(seed: string, params: Params): WorldModel {
+  const model = createEmptyWorldModel(seed, params);
+  model.meta.derived = computeDerived(seed, params);
+  model.ground.boundary = createGalleryBoundary();
+  model.ground.size = WORLD_HALF_EXTENT * 2;
+  model.ground.zoneMask = generateZoneMask(seed, model.ground.size);
+
+  const origin: Vec2 = {
+    x: -WINDMILL_GALLERY_CELL / 2,
+    z: -WINDMILL_GALLERY_CELL / 2,
+  };
+  model.facilities = [
+    buildWindmillFacility(
+      seed,
+      0,
+      0,
+      origin,
+      WINDMILL_GALLERY_CELL,
+      () => -Math.PI / 2,
+    ),
+  ];
+
+  runSummary(model);
+  model.summary.hash = hashWorldModel(model);
+  return model;
+}
+
+/** 水車対象の池(小屋の正面 = −z 側。建物対象と同じ順光の向き) */
+const WATERMILL_POND_FRONT_Z = -2.0;
+const WATERMILL_POND_DEPTH = 26;
+const WATERMILL_POND_HALF_WIDTH = 24;
+
+/**
+ * 水車 1 基+岸の池の極小ワールド。本番の `buildWatermillFacility` のみを
+ * 呼ぶ(湖岸配置の形。facing = −z = 池へ向く。建物対象と同じ「正面が
+ * 順光」の向きで、水輪が初期構図で日を受ける。revalidate は不要のため
+ * null — ジッターの消費は本番と同一)
+ */
+function buildSingleWatermillWorld(seed: string, params: Params): WorldModel {
+  const model = createEmptyWorldModel(seed, params);
+  model.meta.derived = computeDerived(seed, params);
+  model.ground.boundary = createGalleryBoundary();
+  model.ground.size = WORLD_HALF_EXTENT * 2;
+  model.ground.zoneMask = generateZoneMask(seed, model.ground.size);
+
+  const half = WATERMILL_POND_HALF_WIDTH;
+  const z0 = WATERMILL_POND_FRONT_Z;
+  model.water.ponds = [
+    ensureClockwise([
+      { x: -half, z: z0 - WATERMILL_POND_DEPTH },
+      { x: half, z: z0 - WATERMILL_POND_DEPTH },
+      { x: half, z: z0 },
+      { x: -half, z: z0 },
+    ]),
+  ];
+  model.facilities = [
+    buildWatermillFacility(
+      seed,
+      "facility/watermill/gallery",
+      "facility/watermill/gallery",
+      { type: "shore", shoreLoopId: "gallery", index: 0 },
+      { x: 0, z: 0 },
+      { x: 1, z: 0 },
+      -Math.PI / 2,
+      null,
+    ),
+  ];
+
+  runSummary(model);
+  model.summary.hash = hashWorldModel(model);
+  return model;
+}
+
 /**
  * 対象id → 極小ワールド合成関数の対応表(契約「対象idの体系」)。
  * MVP(G1): 一般建物の全 role(`BuildingRole` から "center" を除いた6つ)。
  * Phase D タスク D2b で施設 `facility/field` / `facility/pasture` を、
- * D3 で `facility/well` / `facility/stall` を追加(以後の施設 kind は
- * D4〜D5 の各実装タスクが行を足す)。
+ * D3 で `facility/well` / `facility/stall` を、D4 で `facility/windmill` /
+ * `facility/watermill` を追加(`facility/pier` は D5 が行を足す)。
  */
 const GALLERY_TARGETS: Readonly<
   Record<string, (seed: string, params: Params) => WorldModel>
@@ -309,6 +392,8 @@ const GALLERY_TARGETS: Readonly<
     buildPlazaFacilityWorld(seed, params, "well"),
   "facility/stall": (seed, params) =>
     buildPlazaFacilityWorld(seed, params, "stall"),
+  "facility/windmill": buildSingleWindmillWorld,
+  "facility/watermill": buildSingleWatermillWorld,
 };
 
 /** 実装済みの対象id一覧(UI・URL 検証(G2)が使う) */

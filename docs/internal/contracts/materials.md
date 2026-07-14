@@ -26,6 +26,7 @@ WorldModel スキーマ契約の一部(2026-07-07 に worldmodel.md から分割
 | `awning-madder` | `#8f6350` | 茜の天幕(屋台。Phase D タスク D3。同上) |
 | `awning-slate` | `#6b7a8c` | 青灰の天幕(屋台。Phase D タスク D3。同上) |
 | `void` | `#352c22` | 開口暗色(井戸の井桁内の暗がり。Phase D タスク D3。開口の奥面と同色) |
+| `wet-wood` | `#4a3c2e` | 濡れ木(水車の水輪。Phase D タスク D4。基準色は art-direction 5.5節) |
 | `glow` | (art-direction 5.4節) | 発光部品(`crystal` / `sigil`)。基準色表は使わず、発光束のマテリアル規範(上記)に従う |
 
 - 色の正はメッシュビルダーの基準色表(`src/mesh/buildings.ts`)とし、

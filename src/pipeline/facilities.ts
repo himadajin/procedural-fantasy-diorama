@@ -958,33 +958,25 @@ function buildRuralWellContext(model: WorldModel): RuralWellContext {
   };
 }
 
-/** 農村井戸の候補位置が汎用クリアランス(契約「衝突・帯検証則」)を満たすか */
-function ruralWellSiteOk(
+/**
+ * 汎用クリアランス(契約「衝突・帯検証則」)のプローブ検査。
+ * waterClear = null は水域(湖・池・水路)の帯検査をスキップする
+ * (watermill の水域例外 — 陸上判定は呼び出し側が別途行う)。
+ */
+function facilitySiteOk(
   ctx: RuralWellContext,
-  center: Vec2,
+  probes: readonly Vec2[],
   facilities: readonly Facility[],
+  waterClear: number | null,
 ): boolean {
   const { model } = ctx;
-  const h = WELL_FOOT_HALF;
-  // プローブ: 角 4 + 辺中点 4 + 中心 1(区画・建物の衝突検査と同じ流儀)
-  const probes: Vec2[] = [center];
-  for (const [du, dv] of [
-    [-h, -h],
-    [h, -h],
-    [h, h],
-    [-h, h],
-    [0, -h],
-    [h, 0],
-    [0, h],
-    [-h, 0],
-  ] as const) {
-    probes.push({ x: center.x + du, z: center.z + dv });
-  }
   const ring = model.wards.ringPath;
   for (const p of probes) {
     if (ctx.boundaryInside(p.x, p.z) < CLEAR_BOUNDARY) return false;
-    if (ctx.waterBodySdf(p.x, p.z) < CLEAR_WATER) return false;
-    if (ctx.canalSdf(p.x, p.z) < CLEAR_WATER) return false;
+    if (waterClear !== null) {
+      if (ctx.waterBodySdf(p.x, p.z) < waterClear) return false;
+      if (ctx.canalSdf(p.x, p.z) < waterClear) return false;
+    }
     for (const edge of model.network.edges) {
       if (distToPolyline(p.x, p.z, edge.path) < edge.width / 2 + CLEAR_ROAD) {
         return false;
@@ -1016,6 +1008,42 @@ function ruralWellSiteOk(
     }
   }
   return true;
+}
+
+/** 矩形 footprint のプローブ(角 4 + 辺中点 4 + 中心 1) */
+function rectProbes(footprint: readonly Vec2[], center: Vec2): Vec2[] {
+  const probes: Vec2[] = [center];
+  for (let i = 0; i < footprint.length; i++) {
+    const a = footprint[i];
+    const b = footprint[(i + 1) % footprint.length];
+    if (!a || !b) continue;
+    probes.push({ x: a.x, z: a.z });
+    probes.push({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 });
+  }
+  return probes;
+}
+
+/** 農村井戸の候補位置が汎用クリアランスを満たすか */
+function ruralWellSiteOk(
+  ctx: RuralWellContext,
+  center: Vec2,
+  facilities: readonly Facility[],
+): boolean {
+  const h = WELL_FOOT_HALF;
+  const probes: Vec2[] = [center];
+  for (const [du, dv] of [
+    [-h, -h],
+    [h, -h],
+    [h, h],
+    [-h, h],
+    [0, -h],
+    [h, 0],
+    [0, h],
+    [-h, 0],
+  ] as const) {
+    probes.push({ x: center.x + du, z: center.z + dv });
+  }
+  return facilitySiteOk(ctx, probes, facilities, CLEAR_WATER);
 }
 
 /**
@@ -1063,6 +1091,373 @@ function buildRuralWellFacility(
   };
 }
 
+// --- windmill / watermill の造形数値(すべて提案値。contracts/facilities.md
+//     「kind ごとの造形の性質」D1b。調整時は契約を同一 commit で更新する) ---
+/** 風車: 塔身(底辺・taper・高さと ±8% 揺らぎ) */
+const WINDMILL_TOWER_BASE = 3.4;
+const WINDMILL_TOWER_TAPER = 0.72;
+const WINDMILL_TOWER_H = 7.5;
+/** 風車: キャップ(棟長 × スパン・pitch 50。棟 = ロータ軸方向) */
+const WINDMILL_CAP_RIDGE = 3.0;
+const WINDMILL_CAP_SPAN = 2.8;
+const WINDMILL_CAP_PITCH = 50;
+/** 風車: ロータ(直径 9.0 ±8%。ハブ = 妻面から 0.6 前・y = 塔高 + 0.4) */
+const WINDMILL_ROTOR_DIA = 9.0;
+const WINDMILL_HUB_FORWARD = WINDMILL_CAP_RIDGE / 2 + 0.6;
+const WINDMILL_HUB_RISE = 0.4;
+const WINDMILL_HUB_DEPTH = 0.6;
+/** 風車: footprint(長軸 = ロータ直径 + 0.6、短軸 4.6。塔中心基準) */
+const WINDMILL_FOOT_LONG_PAD = 0.6;
+const WINDMILL_FOOT_SHORT = 4.6;
+/** 風車: 扉・窓(正面。塔の taper に沿って壁面へ寄せる) */
+const WINDMILL_DOOR_W = 1.05;
+const WINDMILL_DOOR_H = 2.15;
+const WINDMILL_WINDOW_W = 0.7;
+const WINDMILL_WINDOW_H = 0.9;
+const WINDMILL_WINDOW_Y = 4.5;
+/** 風車: 配置(外縁帯 = marginWidth × [0.3, 1.8)・格子 = marginWidth・水域 4.5) */
+const WINDMILL_BAND_INNER = 0.3;
+const WINDMILL_BAND_OUTER = 1.8;
+const WINDMILL_WATER_CLEAR = 4.5;
+
+/** 水車: 小屋(梁間 3.6 × 桁行 4.2〜5.0・基壇 0.2・壁高 3.0・pitch 52) */
+const WATERMILL_HUT_D = 3.6;
+const WATERMILL_HUT_LEN_MIN = 4.2;
+const WATERMILL_HUT_LEN_MAX = 5.0;
+const WATERMILL_PLINTH_H = 0.2;
+const WATERMILL_WALL_H = 3.0;
+const WATERMILL_ROOF_PITCH = 52;
+/** 水車: 軒の張り出し(スパン側 0.65 / 妻側 0.4。建物の流儀) */
+const WATERMILL_EAVE = 0.65;
+const WATERMILL_GABLE_OVERHANG = 0.4;
+/** 水車: 水輪(直径 3.0 ±8%・幅 0.7・軸 y 0.70・壁面から隙間 0.12) */
+const WATERMILL_WHEEL_DIA = 3.0;
+const WATERMILL_WHEEL_W = 0.7;
+const WATERMILL_AXLE_Y = 0.7;
+const WATERMILL_WHEEL_GAP = 0.12;
+/** 水車: 軸(0.18 角・長さ 1.3) */
+const WATERMILL_AXLE_SIZE = 0.18;
+const WATERMILL_AXLE_LEN = 1.3;
+/** 水車: 配置(水路の弧長刻み・小屋中心の水際からのオフセット・ジッター) */
+const WATERMILL_CANAL_STEP = 8.0;
+const WATERMILL_CANAL_OFFSET_PAD = 1.95;
+const WATERMILL_SHORE_OFFSET = 2.0;
+const WATERMILL_JITTER = 2.0;
+
+/** 風車の造形純関数の入力(塔高・直径は配置側が消費済み。D4 実装補足) */
+export interface WindmillShapeInput {
+  center: Vec2;
+  facing: number;
+  towerH: number;
+  rotorDia: number;
+  /** 当該施設の rng(ジッター・塔高・直径の続き。初期回転角を消費する) */
+  rng: Rng;
+}
+
+/**
+ * 風車(windmill)の造形純関数(契約「windmill(風車)」)。
+ * parts 配列順: 塔身 1 → キャップ 1 → ロータ 1 → 扉 1 → 窓 1。
+ * rng 消費: (3) 初期回転角(0〜90°)のみ(塔高・直径は配置側)。
+ */
+export function buildWindmillParts(input: WindmillShapeInput): Part[] {
+  const { center, facing, towerH, rotorDia, rng } = input;
+  const phase = rng.range(0, Math.PI / 2);
+  const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  const at = (u: number, v: number): Vec2 => ({
+    x: center.x + s.x * u + f.x * v,
+    z: center.z + s.z * u + f.z * v,
+  });
+  const rotAlongF = Math.atan2(-f.z, f.x); // ローカル +x → f
+  const rotFaceF = Math.atan2(f.x, f.z); // ローカル +z → f(開口・ロータ)
+
+  // 塔の taper に沿った半幅(y での壁面位置。扉・窓を壁へ寄せるため)
+  const halfBase = WINDMILL_TOWER_BASE / 2;
+  const halfAt = (y: number): number =>
+    halfBase - halfBase * (1 - WINDMILL_TOWER_TAPER) * (y / towerH);
+
+  const parts: Part[] = [];
+  // 塔身(石。先細りの角柱)
+  parts.push(
+    makePart(
+      "tower",
+      "stone",
+      center,
+      0,
+      rotAlongF,
+      WINDMILL_TOWER_BASE,
+      towerH,
+      WINDMILL_TOWER_BASE,
+      { taper: WINDMILL_TOWER_TAPER },
+    ),
+  );
+  // キャップ(木羽の切妻。棟 = ロータ軸方向)
+  const capRidgeH =
+    Math.tan((WINDMILL_CAP_PITCH * Math.PI) / 180) * (WINDMILL_CAP_SPAN / 2);
+  parts.push(
+    makePart(
+      "gable",
+      "shingle",
+      center,
+      towerH,
+      rotAlongF,
+      WINDMILL_CAP_RIDGE,
+      capRidgeH,
+      WINDMILL_CAP_SPAN,
+      { pitch: WINDMILL_CAP_PITCH },
+    ),
+  );
+  // ロータ(帆布の羽根 4 枚。position = ハブ中心。回転は viewer の表示演出)
+  parts.push(
+    makePart(
+      "windmill-rotor",
+      "canvas",
+      at(0, WINDMILL_HUB_FORWARD),
+      towerH + WINDMILL_HUB_RISE,
+      rotFaceF,
+      rotorDia,
+      rotorDia,
+      WINDMILL_HUB_DEPTH,
+      { blades: 4, phase },
+    ),
+  );
+  // 扉・窓(正面。開口部品の変換規約 — 壁面上の開口下端中心・+z = 外向き)
+  const doorPlane = halfAt(WINDMILL_DOOR_H / 2) - 0.03;
+  parts.push(
+    makePart(
+      "door",
+      "wood",
+      at(0, doorPlane),
+      0,
+      rotFaceF,
+      WINDMILL_DOOR_W,
+      WINDMILL_DOOR_H,
+      0.18,
+    ),
+  );
+  const windowPlane = halfAt(WINDMILL_WINDOW_Y + WINDMILL_WINDOW_H / 2) - 0.03;
+  parts.push(
+    makePart(
+      "window",
+      "wood",
+      at(0, windowPlane),
+      WINDMILL_WINDOW_Y,
+      rotFaceF,
+      WINDMILL_WINDOW_W,
+      WINDMILL_WINDOW_H,
+      0.16,
+    ),
+  );
+  return parts;
+}
+
+/** 水車の造形純関数の入力(桁行は配置側が消費済み。D4 実装補足) */
+export interface WatermillShapeInput {
+  center: Vec2;
+  /** 正面方位(水面へ向く。水側の壁面と水輪がこちら) */
+  facing: number;
+  /** 桁行(岸線・水路方向の小屋の長さ) */
+  hutLen: number;
+  /** 当該施設の rng(ジッター・桁行の続き。水輪直径 → 初期回転角) */
+  rng: Rng;
+}
+
+/**
+ * 水車(watermill)の造形純関数(契約「watermill(水車)」)。
+ * parts 配列順: 基壇 1 → 壁 1 → 屋根 1 → 扉 1 → 窓 1 → 軸 1 → 水輪 1。
+ * rng 消費(列挙順): (2) 水輪直径 ±8% → (3) 初期回転角(0〜45°)。
+ */
+export function buildWatermillParts(input: WatermillShapeInput): Part[] {
+  const { center, facing, hutLen, rng } = input;
+  const wheelDia = WATERMILL_WHEEL_DIA * rng.range(0.92, 1.08);
+  const phase = rng.range(0, Math.PI / 4);
+  const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  const at = (u: number, v: number): Vec2 => ({
+    x: center.x + s.x * u + f.x * v,
+    z: center.z + s.z * u + f.z * v,
+  });
+  const rotAlongS = Math.atan2(-s.z, s.x); // ローカル +x → s(桁行方向)
+  const rotAlongF = Math.atan2(-f.z, f.x); // ローカル +x → f(軸・水輪)
+  const halfD = WATERMILL_HUT_D / 2;
+
+  const parts: Part[] = [];
+  // 基壇(石)→ 壁(粗い木の平屋)→ 屋根(木羽。棟 = 桁行方向)
+  parts.push(
+    makePart(
+      "plinth",
+      "stone",
+      center,
+      0,
+      rotAlongS,
+      hutLen,
+      WATERMILL_PLINTH_H,
+      WATERMILL_HUT_D,
+    ),
+  );
+  parts.push(
+    makePart(
+      "wall",
+      "rough-wood",
+      center,
+      WATERMILL_PLINTH_H,
+      rotAlongS,
+      hutLen,
+      WATERMILL_WALL_H,
+      WATERMILL_HUT_D,
+      { floor: 0 },
+    ),
+  );
+  const roofSpan = WATERMILL_HUT_D + WATERMILL_EAVE * 2;
+  const roofRidgeH =
+    Math.tan((WATERMILL_ROOF_PITCH * Math.PI) / 180) * (roofSpan / 2);
+  parts.push(
+    makePart(
+      "gable",
+      "shingle",
+      center,
+      WATERMILL_PLINTH_H + WATERMILL_WALL_H - 0.05,
+      rotAlongS,
+      hutLen + WATERMILL_GABLE_OVERHANG * 2,
+      roofRidgeH,
+      roofSpan,
+      { pitch: WATERMILL_ROOF_PITCH },
+    ),
+  );
+  // 扉(陸側の長辺)・窓(妻面)
+  parts.push(
+    makePart(
+      "door",
+      "wood",
+      at(0, -halfD),
+      WATERMILL_PLINTH_H,
+      Math.atan2(-f.x, -f.z), // +z → −f(陸側)
+      1.0,
+      2.15,
+      0.18,
+    ),
+  );
+  parts.push(
+    makePart(
+      "window",
+      "wood",
+      at(hutLen / 2, 0),
+      1.6,
+      Math.atan2(s.x, s.z), // +z → +s(妻面)
+      0.7,
+      0.9,
+      0.16,
+    ),
+  );
+  // 軸(壁を貫いて水輪ハブへ)と水輪(濡れ木。position = 軸中点)
+  const hubV = halfD + WATERMILL_WHEEL_GAP + WATERMILL_WHEEL_W / 2;
+  parts.push(
+    makePart(
+      "beam",
+      "wood",
+      at(0, hubV - WATERMILL_AXLE_LEN / 2 + 0.25),
+      WATERMILL_AXLE_Y - WATERMILL_AXLE_SIZE / 2,
+      rotAlongF,
+      WATERMILL_AXLE_LEN,
+      WATERMILL_AXLE_SIZE,
+      WATERMILL_AXLE_SIZE,
+    ),
+  );
+  parts.push(
+    makePart(
+      "water-wheel",
+      "wet-wood",
+      at(0, hubV),
+      WATERMILL_AXLE_Y,
+      rotAlongF,
+      WATERMILL_WHEEL_W,
+      wheelDia,
+      wheelDia,
+      { paddles: 8, phase },
+    ),
+  );
+  return parts;
+}
+
+/**
+ * 風車 1 基の生成(段14 の本番ループとギャラリーが共用。契約「windmill」
+ * D4 実装補足)。消費列(固定): 格子内ジッター 2 → 塔高 → ロータ直径 →
+ * 造形(初期回転角)。位置はセル原点+ジッター、facing は呼び出し側が
+ * 決める(本番 = centerPlan へ向く方位)。
+ */
+export function buildWindmillFacility(
+  seed: string,
+  ix: number,
+  iz: number,
+  cellOrigin: Vec2,
+  cellSize: number,
+  facingOf: (pos: Vec2) => number,
+): Facility {
+  const rng = makeRng(seed, `facility/windmill/${ix}_${iz}`);
+  const pos: Vec2 = {
+    x: cellOrigin.x + rng.next() * cellSize,
+    z: cellOrigin.z + rng.next() * cellSize,
+  };
+  const towerH = WINDMILL_TOWER_H * rng.range(0.92, 1.08);
+  const rotorDia = WINDMILL_ROTOR_DIA * rng.range(0.92, 1.08);
+  const facing = facingOf(pos);
+  const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  const footprint = rectFootprint(
+    pos,
+    f,
+    s,
+    (rotorDia + WINDMILL_FOOT_LONG_PAD) / 2,
+    WINDMILL_FOOT_SHORT / 2,
+  );
+  const parts = buildWindmillParts({ center: pos, facing, towerH, rotorDia, rng });
+  return {
+    id: `facility/windmill/${ix}_${iz}`,
+    kind: "windmill",
+    footprint: ensureClockwise(footprint),
+    facing,
+    parts,
+    origin: { type: "site", cellId: `${ix}_${iz}` },
+  };
+}
+
+/**
+ * 水車 1 基の生成(段14 の本番ループとギャラリーが共用。契約「watermill」
+ * D4 実装補足)。消費列(固定): 位置ジッター(接線方向 ±2.0。revalidate が
+ * 通らなければ基点へ戻す)→ 桁行 → 造形(水輪直径 → 初期回転角)。
+ */
+export function buildWatermillFacility(
+  seed: string,
+  rngLabel: string,
+  facilityId: string,
+  origin: Facility["origin"],
+  base: Vec2,
+  tangent: Vec2,
+  facing: number,
+  revalidate: ((center: Vec2) => boolean) | null,
+): Facility {
+  const rng = makeRng(seed, rngLabel);
+  const jitter = rng.range(-WATERMILL_JITTER, WATERMILL_JITTER);
+  let center: Vec2 = {
+    x: base.x + tangent.x * jitter,
+    z: base.z + tangent.z * jitter,
+  };
+  if (revalidate && !revalidate(center)) center = base;
+  const hutLen = rng.range(WATERMILL_HUT_LEN_MIN, WATERMILL_HUT_LEN_MAX);
+  const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  const footprint = rectFootprint(center, f, s, hutLen / 2, WATERMILL_HUT_D / 2);
+  const parts = buildWatermillParts({ center, facing, hutLen, rng });
+  return {
+    id: facilityId,
+    kind: "watermill",
+    footprint: ensureClockwise(footprint),
+    facing,
+    parts,
+    origin,
+  };
+}
+
 /**
  * 施設 parts の footprint 帯検証(契約「衝突・帯検証則」: 全 parts は
  * footprint から 0.9 を超えてはみ出さない)。部品の回転込みの 4 隅で
@@ -1095,18 +1490,44 @@ function partBandViolations(facility: Facility): number {
   return violations;
 }
 
+/** ポリライン上の弧長 s の点と接線(watermill の水路候補走査) */
+function pointAndTangentAlong(
+  points: readonly Vec2[],
+  s: number,
+): { point: Vec2; tangent: Vec2 } | null {
+  let remain = s;
+  for (let i = 0; i + 1 < points.length; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (!a || !b) continue;
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    if (len < 1e-9) continue;
+    if (remain <= len) {
+      const t = remain / len;
+      return {
+        point: { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t },
+        tangent: { x: (b.x - a.x) / len, z: (b.z - a.z) / len },
+      };
+    }
+    remain -= len;
+  }
+  return null;
+}
+
 /**
  * パイプライン段の実体: facilities を埋める(他フィールドには触れない。
  * contracts/pipeline.md 段14)。配列順序は契約「Facility スキーマ」の
  * 走査順: field/pasture(farmland 区画の parcels 配列順)→ well
  * (広場 = plazas 配列順、続いて農村 = network.nodes 配列順)→ stall
- * (plazas 配列順)。
+ * (plazas 配列順)→ windmill(格子順)→ watermill(水路 → 湖岸)。
  */
 export function runFacilities(model: WorldModel): void {
   const seed = model.meta.seed;
-  const { settlement, prosperity } = model.meta.params;
+  const { settlement, prosperity, worldScale, water } = model.meta.params;
   const settle = settlement / 100;
   const prosper = prosperity / 100;
+  const scale = worldScale / 100;
+  const waterP = water / 100;
   const facilities: Facility[] = [];
 
   // --- field / pasture(D2b) ---
@@ -1162,6 +1583,170 @@ export function runFacilities(model: WorldModel): void {
         plazaAzimuths.get(plaza.id) ?? [],
       ),
     );
+  }
+
+  // --- windmill: 農村外縁の空白(格子走査。D4) ---
+  const windmillCount = Math.round(
+    Math.min(2, Math.max(0, (0.4 + 0.6 * prosper) * (0.5 + 0.5 * scale) * 2)),
+  );
+  if (windmillCount > 0) {
+    const { marginWidth } = model.meta.derived;
+    const size = model.ground.size;
+    const cell = Math.max(1, marginWidth);
+    const cells = Math.max(1, Math.ceil(size / cell));
+    const half = (cells * cell) / 2;
+    const facingOf = (pos: Vec2): number =>
+      Math.atan2(
+        model.centerPlan.position.z - pos.z,
+        model.centerPlan.position.x - pos.x,
+      );
+    let placed = 0;
+    for (let iz = 0; iz < cells && placed < windmillCount; iz++) {
+      for (let ix = 0; ix < cells && placed < windmillCount; ix++) {
+        const origin: Vec2 = { x: ix * cell - half, z: iz * cell - half };
+        const windmill = buildWindmillFacility(
+          seed,
+          ix,
+          iz,
+          origin,
+          cell,
+          facingOf,
+        );
+        // footprint は pos 中心の矩形のため、平均がジッター後の位置になる
+        const pos: Vec2 = { x: 0, z: 0 };
+        for (const v of windmill.footprint) {
+          pos.x += v.x / windmill.footprint.length;
+          pos.z += v.z / windmill.footprint.length;
+        }
+        // 外縁帯(marginWidth × [0.3, 1.8))かつ農村ゾーン
+        const bSdf = ruralCtx.boundaryInside(pos.x, pos.z);
+        if (
+          bSdf < marginWidth * WINDMILL_BAND_INNER ||
+          bSdf >= marginWidth * WINDMILL_BAND_OUTER
+        ) {
+          continue;
+        }
+        const urbanity = model.zoning
+          ? sampleFieldGrid(model.zoning, pos.x, pos.z)
+          : 0;
+        if (urbanity >= RURAL_URBANITY) continue;
+        // 汎用クリアランス(水域は 4.5)
+        if (
+          !facilitySiteOk(
+            ruralCtx,
+            rectProbes(windmill.footprint, pos),
+            facilities,
+            WINDMILL_WATER_CLEAR,
+          )
+        ) {
+          continue;
+        }
+        facilities.push(windmill);
+        placed++;
+      }
+    }
+  }
+
+  // --- watermill: 水路 → 湖岸の候補列(D4) ---
+  const watermillCount = Math.round(
+    Math.min(2, Math.max(0, (0.3 + 0.7 * waterP) * 2)),
+  );
+  if (watermillCount > 0) {
+    let placed = 0;
+    // 保守的検証(桁行上限の footprint。陸上判定+汎用クリアランス)
+    const watermillOk = (center: Vec2, f: Vec2, s: Vec2): boolean => {
+      const fp = rectFootprint(
+        center,
+        f,
+        s,
+        WATERMILL_HUT_LEN_MAX / 2,
+        WATERMILL_HUT_D / 2,
+      );
+      for (const c of fp) {
+        if (ruralCtx.waterBodySdf(c.x, c.z) < 0) return false;
+        if (ruralCtx.canalSdf(c.x, c.z) < 0) return false;
+      }
+      return facilitySiteOk(ruralCtx, rectProbes(fp, center), facilities, null);
+    };
+    // 水路沿い(canals 配列順。1 水路 1 基)
+    for (const canal of model.water.canals) {
+      if (placed >= watermillCount) break;
+      let total = 0;
+      for (let i = 0; i + 1 < canal.points.length; i++) {
+        const a = canal.points[i];
+        const b = canal.points[i + 1];
+        if (a && b) total += Math.hypot(b.x - a.x, b.z - a.z);
+      }
+      let adopted = false;
+      for (
+        let arc = WATERMILL_CANAL_STEP / 2;
+        arc < total && !adopted;
+        arc += WATERMILL_CANAL_STEP
+      ) {
+        const at = pointAndTangentAlong(canal.points, arc);
+        if (!at) break;
+        const n: Vec2 = { x: -at.tangent.z, z: at.tangent.x };
+        for (const side of [1, -1] as const) {
+          const offset = canal.width / 2 + WATERMILL_CANAL_OFFSET_PAD;
+          const center: Vec2 = {
+            x: at.point.x + n.x * side * offset,
+            z: at.point.z + n.z * side * offset,
+          };
+          // facing = 水面(水路)へ向く
+          const facing = Math.atan2(-n.z * side, -n.x * side);
+          const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+          const s: Vec2 = { x: -f.z, z: f.x };
+          if (!watermillOk(center, f, s)) continue;
+          facilities.push(
+            buildWatermillFacility(
+              seed,
+              `facility/watermill/${canal.id}`,
+              `facility/watermill/${canal.id}`,
+              { type: "canal", canalId: canal.id },
+              center,
+              at.tangent,
+              facing,
+              (c) => watermillOk(c, f, s),
+            ),
+          );
+          placed++;
+          adopted = true;
+          break;
+        }
+      }
+    }
+    // 湖岸沿い(shoreline.loops 配列順・points 点列順。1 ループ 1 基)
+    for (const loop of model.water.shoreline.loops) {
+      if (placed >= watermillCount) break;
+      for (let i = 0; i < loop.points.length; i++) {
+        const p = loop.points[i];
+        const n = loop.normals[i];
+        if (!p || !n) continue;
+        const center: Vec2 = {
+          x: p.x + n.x * WATERMILL_SHORE_OFFSET,
+          z: p.z + n.z * WATERMILL_SHORE_OFFSET,
+        };
+        // facing = 法線の逆(陸 → 水域)
+        const facing = Math.atan2(-n.z, -n.x);
+        const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+        const s: Vec2 = { x: -f.z, z: f.x };
+        if (!watermillOk(center, f, s)) continue;
+        facilities.push(
+          buildWatermillFacility(
+            seed,
+            `facility/watermill/shore/${loop.id}/${i}`,
+            `facility/watermill/shore/${loop.id}/${i}`,
+            { type: "shore", shoreLoopId: loop.id, index: i },
+            center,
+            { x: -n.z, z: n.x },
+            facing,
+            (c) => watermillOk(c, f, s),
+          ),
+        );
+        placed++;
+        break;
+      }
+    }
   }
 
   model.facilities = facilities;

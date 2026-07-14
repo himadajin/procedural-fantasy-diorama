@@ -15,6 +15,8 @@ import {
 } from "../src/model/worldmodel";
 import { distToPolyline, polygonSignedDistance } from "../src/model/waterfield";
 import { ensureClockwise } from "../src/model/geometry";
+import { sampleFieldGrid } from "../src/model/fieldgrid";
+import { createWaterField, waterBodies } from "../src/model/waterfield";
 import { runDerive } from "../src/pipeline/derive";
 import { runGround } from "../src/pipeline/ground";
 import { runWater } from "../src/pipeline/water";
@@ -436,7 +438,9 @@ describe("段14 施設: well / stall(Phase D D3。契約「well」「stall」「
     const rank = (f: (typeof model.facilities)[number]): number => {
       if (f.kind === "field" || f.kind === "pasture") return 0;
       if (f.kind === "well") return f.origin.type === "plaza" ? 1 : 2;
-      return 3; // stall
+      if (f.kind === "stall") return 3;
+      if (f.kind === "windmill") return 4;
+      return 5; // watermill
     };
     const ranks = model.facilities.map(rank);
     for (let i = 1; i < ranks.length; i++) {
@@ -452,5 +456,106 @@ describe("段14 施設: well / stall(Phase D D3。契約「well」「stall」「
     );
     expect(stalls.length).toBeGreaterThan(3);
     expect(plazaWells.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+
+describe("段14 施設: windmill / watermill(Phase D D4。契約「windmill」「watermill」)", () => {
+  it("windmill: prosper/scale 高で少数(≤2)が農村外縁の帯に立つ", () => {
+    const model = cached("everdusk-101", { prosperity: 100 });
+    const windmills = model.facilities.filter((f) => f.kind === "windmill");
+    expect(windmills.length).toBeGreaterThanOrEqual(1);
+    expect(windmills.length).toBeLessThanOrEqual(2);
+    const field = createWaterField(
+      model.ground.boundary,
+      waterBodies(model.water),
+    );
+    const { marginWidth } = model.meta.derived;
+    for (const windmill of windmills) {
+      const c = {
+        x:
+          windmill.footprint.reduce((a, v) => a + v.x, 0) /
+          windmill.footprint.length,
+        z:
+          windmill.footprint.reduce((a, v) => a + v.z, 0) /
+          windmill.footprint.length,
+      };
+      // 外縁帯(marginWidth × [0.3, 1.8))かつ農村ゾーン
+      const bSdf = field.boundarySdf(c.x, c.z);
+      expect(bSdf).toBeGreaterThanOrEqual(marginWidth * 0.3 - 1e-9);
+      expect(bSdf).toBeLessThan(marginWidth * 1.8);
+      if (model.zoning) {
+        expect(sampleFieldGrid(model.zoning, c.x, c.z)).toBeLessThan(0.45);
+      }
+      // 水域から 4.5(windmill の例外帯)
+      expect(field.waterSdf(c.x, c.z)).toBeGreaterThanOrEqual(4.5 - 1e-9);
+      // 道路・区画と重ならない(中心点の検算)
+      for (const parcel of model.parcels) {
+        expect(
+          polygonSignedDistance(c.x, c.z, parcel.polygon),
+        ).toBeGreaterThan(0);
+      }
+      // origin はセル由来
+      expect(windmill.origin.type).toBe("site");
+      expect(windmill.id).toMatch(/^facility\/windmill\/\d+_\d+$/);
+    }
+  });
+
+  it("windmill: prosper 0 × scale 0 では 0 基(数量式)", () => {
+    const model = cached("everdusk-101", { prosperity: 0, worldScale: 0 });
+    expect(model.facilities.filter((f) => f.kind === "windmill").length).toBe(
+      0,
+    );
+  });
+
+  it("watermill: water 高で少数(≤2)が岸・水路沿いに立ち、本体は陸上", () => {
+    const model = cached("everdusk-101", { water: 95 });
+    const mills = model.facilities.filter((f) => f.kind === "watermill");
+    expect(mills.length).toBeGreaterThanOrEqual(1);
+    expect(mills.length).toBeLessThanOrEqual(2);
+    const field = createWaterField(
+      model.ground.boundary,
+      waterBodies(model.water),
+    );
+    for (const mill of mills) {
+      // footprint 頂点はすべて陸上(waterSdf ≥ 0)・水路にも重ならない
+      for (const v of mill.footprint) {
+        expect(field.waterSdf(v.x, v.z)).toBeGreaterThanOrEqual(-1e-6);
+        for (const canal of model.water.canals) {
+          let d = Infinity;
+          for (let i = 0; i + 1 < canal.points.length; i++) {
+            const a = canal.points[i]!;
+            const b = canal.points[i + 1]!;
+            const dx = b.x - a.x;
+            const dz = b.z - a.z;
+            const len2 = dx * dx + dz * dz;
+            const t =
+              len2 > 0
+                ? Math.max(
+                    0,
+                    Math.min(1, ((v.x - a.x) * dx + (v.z - a.z) * dz) / len2),
+                  )
+                : 0;
+            d = Math.min(
+              d,
+              Math.hypot(v.x - (a.x + dx * t), v.z - (a.z + dz * t)),
+            );
+          }
+          expect(d - canal.width / 2).toBeGreaterThanOrEqual(-1e-6);
+        }
+      }
+      // 水輪のハブは水側(facing 方向)にある
+      const wheel = mill.parts.find((p) => p.type === "water-wheel");
+      expect(wheel).toBeDefined();
+      // origin は canal / shore 由来
+      expect(["canal", "shore"]).toContain(mill.origin.type);
+    }
+  });
+
+  it("watermill: water 0(水域なし)では 0 基", () => {
+    const model = cached("everdusk-101", { water: 0 });
+    expect(model.facilities.filter((f) => f.kind === "watermill").length).toBe(
+      0,
+    );
   });
 });

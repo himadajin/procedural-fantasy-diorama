@@ -626,15 +626,38 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                     f018e8cc → 75d72ddf
   //   seed-b {}                     f28f4d06 → 60f80a00
   //   seed-b {water:70}             5430d443 → c4dd589d
+  //
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D4
+  // (風車と水車)による意図的な更新(2026-07-14):
+  // (1) 段14「施設」に windmill / watermill を追加(contracts/facilities.md
+  //     「windmill(風車)」「watermill(水車)」+ D4 実装補足): 風車は
+  //     農村外縁の帯(marginWidth × [0.3, 1.8))の格子走査で 0〜2 基
+  //     (prosper × scale 駆動)、水車は水路 → 湖岸の候補列で 0〜2 基
+  //     (water 駆動)。乱数は新設ストリーム facility/windmill/<ix>_<iz>・
+  //     facility/watermill/<...> のみを消費し、既存の全ストリームの
+  //     消費列は不変。
+  // (2) 造形(D1b): 風車 = 石塔(taper 0.72)+ 木羽キャップ +
+  //     windmill-rotor(直径 9.0 ±8%・4 枚羽根・静的 phase)、水車 =
+  //     粗い木の平屋 + 軸 + water-wheel(濡れ木・直径 3.0 ±8%・軸 y 0.70)。
+  //     回転は viewer の表示演出で WorldModel は静的データのみ。
+  // 新旧対応(D3 → D4):
+  //   everdusk-101 {}               4ba27dfa → 18f0f191
+  //   everdusk-101 {water:0}        d8dbc7a4 → 71014247
+  //   everdusk-101 {water:95}       1f478a96 → 735e1aaf
+  //   everdusk-101 {worldScale:0}   4424d838 → f959c9a0
+  //   everdusk-101 {worldScale:100} 03ce4e79 → 0c1884ff
+  //   seed-a {}                     75d72ddf → 5121b268
+  //   seed-b {}                     60f80a00 → 55b78b2b
+  //   seed-b {water:70}             c4dd589d → cab2b951
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "4ba27dfa"],
-    ["everdusk-101", { water: 0 }, "d8dbc7a4"],
-    ["everdusk-101", { water: 95 }, "1f478a96"],
-    ["everdusk-101", { worldScale: 0 }, "4424d838"],
-    ["everdusk-101", { worldScale: 100 }, "03ce4e79"],
-    ["seed-a", {}, "75d72ddf"],
-    ["seed-b", {}, "60f80a00"],
-    ["seed-b", { water: 70 }, "c4dd589d"],
+    ["everdusk-101", {}, "18f0f191"],
+    ["everdusk-101", { water: 0 }, "71014247"],
+    ["everdusk-101", { water: 95 }, "735e1aaf"],
+    ["everdusk-101", { worldScale: 0 }, "f959c9a0"],
+    ["everdusk-101", { worldScale: 100 }, "0c1884ff"],
+    ["seed-a", {}, "5121b268"],
+    ["seed-b", {}, "55b78b2b"],
+    ["seed-b", { water: 70 }, "cab2b951"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

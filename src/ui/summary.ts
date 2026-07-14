@@ -176,6 +176,8 @@ const FACILITY_LABELS: Record<string, string> = {
   pasture: "牧草地",
   well: "井戸",
   stall: "屋台",
+  windmill: "風車",
+  watermill: "水車",
 };
 
 /**
