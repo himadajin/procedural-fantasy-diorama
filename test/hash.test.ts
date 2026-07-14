@@ -649,15 +649,44 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                     75d72ddf → 5121b268
   //   seed-b {}                     60f80a00 → 55b78b2b
   //   seed-b {water:70}             c4dd589d → cab2b951
+  //
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D5
+  // (桟橋)による意図的な更新(2026-07-15):
+  // (1) 段14「施設」に pier を追加(contracts/facilities.md「pier(桟橋)」
+  //     + D5 実装補足): 汀線ループ順の決定論走査で 0〜4 基(water 駆動の
+  //     数量式 round(clamp(1 + 3 × water, 0, 4)))。適格な岸点 =
+  //     waterside 建物の近傍(14 以内)または相対的に市街寄りの岸
+  //     (urbanity ≥ 全汀線点平均)。段12 の waterfront claimed 領域
+  //     (デッキ・張り出し部屋)を実体部品から決定論復元して読み取り参加
+  //     (追記はしない片方向参照)。橋・水路・汎用クリアランスと非干渉。
+  //     乱数は新設ストリーム facility/pier/<shoreLoopId>/<index> のみを
+  //     消費し(位置ジッター → 長さ → 幅 → 係船柱)、既存の全ストリームの
+  //     消費列は不変。
+  // (2) 造形(D1b): 板 = deck(rough-wood。幅 1.8 ±0.2 × 長さ 6〜10・
+  //     天端 y 0.35 = 建物デッキより低い)+ 杭 = pile(wood。0.22 角・
+  //     間隔 2.4 のペア・y −1.6 から)。先端ペアのみ chance 0.7 で係船柱
+  //     (天端 y 0.90)。facilities 配下のモデル内容が変わりハッシュが
+  //     更新される。water:0 は汀線が無く桟橋 0 基のためハッシュ不変。
+  // 実測(6 seed × water {0,30,50,70,95}): 0 / 2 / 3 / 3 / 4 基
+  //     (全 seed で数量式どおり。クリアランスによる減少なし)。
+  // 新旧対応(D4 → D5):
+  //   everdusk-101 {}               18f0f191 → dab7bde4
+  //   everdusk-101 {water:0}        71014247 → 71014247(不変)
+  //   everdusk-101 {water:95}       735e1aaf → 7bf909e8
+  //   everdusk-101 {worldScale:0}   f959c9a0 → 8095b6f0
+  //   everdusk-101 {worldScale:100} 0c1884ff → 0379edad
+  //   seed-a {}                     5121b268 → 6cf0044e
+  //   seed-b {}                     55b78b2b → a78cc3fc
+  //   seed-b {water:70}             cab2b951 → 4cac583b
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "18f0f191"],
+    ["everdusk-101", {}, "dab7bde4"],
     ["everdusk-101", { water: 0 }, "71014247"],
-    ["everdusk-101", { water: 95 }, "735e1aaf"],
-    ["everdusk-101", { worldScale: 0 }, "f959c9a0"],
-    ["everdusk-101", { worldScale: 100 }, "0c1884ff"],
-    ["seed-a", {}, "5121b268"],
-    ["seed-b", {}, "55b78b2b"],
-    ["seed-b", { water: 70 }, "cab2b951"],
+    ["everdusk-101", { water: 95 }, "7bf909e8"],
+    ["everdusk-101", { worldScale: 0 }, "8095b6f0"],
+    ["everdusk-101", { worldScale: 100 }, "0379edad"],
+    ["seed-a", {}, "6cf0044e"],
+    ["seed-b", {}, "a78cc3fc"],
+    ["seed-b", { water: 70 }, "4cac583b"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

@@ -519,6 +519,13 @@ export function buildFacilities(model: WorldModel): THREE.Object3D[] {
         boxPart(part, solid, base, BEAM_FOOT_AO);
         continue;
       }
+      if (part.type === "pile") {
+        // 桟橋の杭・係船柱(D5)。建物側の pile はインスタンス経路だが、
+        // 施設では柵の beam と同じくマージへ寄せる(形状は同じ直方体。
+        // 足元 = 水中 y −1.6 のため AO は beam と同じ控えめな値)
+        boxPart(part, solid, base, BEAM_FOOT_AO);
+        continue;
+      }
       if (part.type === "canopy") {
         canopyPart(part, solid, base);
         continue;

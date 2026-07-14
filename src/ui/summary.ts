@@ -178,6 +178,7 @@ const FACILITY_LABELS: Record<string, string> = {
   stall: "屋台",
   windmill: "風車",
   watermill: "水車",
+  pier: "桟橋",
 };
 
 /**

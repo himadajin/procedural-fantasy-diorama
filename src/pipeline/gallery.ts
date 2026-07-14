@@ -30,6 +30,7 @@ import { createSiteContext } from "./parcels";
 import { buildParcelBuilding, SINGLE_BUILD_OPTIONS } from "./buildings";
 import {
   buildFarmlandFacility,
+  buildPierFacility,
   buildPlazaStallFacilities,
   buildPlazaWellFacility,
   buildWatermillFacility,
@@ -362,12 +363,57 @@ function buildSingleWatermillWorld(seed: string, params: Params): WorldModel {
   return model;
 }
 
+/** 桟橋対象の池(板の正面 = −z 側。水車対象と同じ順光の向き) */
+const PIER_POND_FRONT_Z = -2.0;
+const PIER_POND_DEPTH = 26;
+const PIER_POND_HALF_WIDTH = 24;
+
+/**
+ * 桟橋 1 基+岸の池の極小ワールド。本番の `buildPierFacility` のみを呼ぶ
+ * (汀線点 = 池の縁 z = −2 上の 1 点、法線 = 陸側 +z。facing = −z = 池へ
+ * 向く。建物対象と同じ「正面が順光」の向き。revalidate は不要のため
+ * null — ジッターの消費は本番と同一)
+ */
+function buildSinglePierWorld(seed: string, params: Params): WorldModel {
+  const model = createEmptyWorldModel(seed, params);
+  model.meta.derived = computeDerived(seed, params);
+  model.ground.boundary = createGalleryBoundary();
+  model.ground.size = WORLD_HALF_EXTENT * 2;
+  model.ground.zoneMask = generateZoneMask(seed, model.ground.size);
+
+  const half = PIER_POND_HALF_WIDTH;
+  const z0 = PIER_POND_FRONT_Z;
+  model.water.ponds = [
+    ensureClockwise([
+      { x: -half, z: z0 - PIER_POND_DEPTH },
+      { x: half, z: z0 - PIER_POND_DEPTH },
+      { x: half, z: z0 },
+      { x: -half, z: z0 },
+    ]),
+  ];
+  model.facilities = [
+    buildPierFacility(
+      seed,
+      "gallery",
+      0,
+      { x: 0, z: z0 },
+      { x: 1, z: 0 },
+      { x: 0, z: 1 },
+      null,
+    ),
+  ];
+
+  runSummary(model);
+  model.summary.hash = hashWorldModel(model);
+  return model;
+}
+
 /**
  * 対象id → 極小ワールド合成関数の対応表(契約「対象idの体系」)。
  * MVP(G1): 一般建物の全 role(`BuildingRole` から "center" を除いた6つ)。
  * Phase D タスク D2b で施設 `facility/field` / `facility/pasture` を、
  * D3 で `facility/well` / `facility/stall` を、D4 で `facility/windmill` /
- * `facility/watermill` を追加(`facility/pier` は D5 が行を足す)。
+ * `facility/watermill` を、D5 で `facility/pier` を追加(全 7 kind)。
  */
 const GALLERY_TARGETS: Readonly<
   Record<string, (seed: string, params: Params) => WorldModel>
@@ -394,6 +440,7 @@ const GALLERY_TARGETS: Readonly<
     buildPlazaFacilityWorld(seed, params, "stall"),
   "facility/windmill": buildSingleWindmillWorld,
   "facility/watermill": buildSingleWatermillWorld,
+  "facility/pier": buildSinglePierWorld,
 };
 
 /** 実装済みの対象id一覧(UI・URL 検証(G2)が使う) */
