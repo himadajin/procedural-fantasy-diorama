@@ -31,58 +31,18 @@ import {
 } from "./mesh/build";
 import type { VegBudget } from "./mesh/vegetation";
 import {
+  computeGalleryFraming,
+  type GalleryFraming,
+} from "./viewer/framing";
+import { CAMERA_INITIAL_AZIMUTH } from "./viewer/constants";
+import {
   DEFAULT_PARAMS,
-  FLOOR_HEIGHT,
   WATER_SURFACE_Y,
   type Params,
   type WorldModel,
 } from "./model/worldmodel";
 
 import { DEFAULT_SEED } from "./defaults";
-
-/**
- * ギャラリー表示用のカメラ距離基準(計画書「ギャラリー表示に適した初期
- * カメラ距離は実装判断でよい(対象1体が画面に収まる距離)」)。
- * 区画は間口18×奥行き20(pipeline/gallery.ts)であり、
- * OrbitController.configure(size) は home distance = size*0.75 を取るため、
- * 40 なら距離30・min 2.4・max 60 となり、対象1体+周囲の余白が
- * 画面に収まる(実測値ではなく実装判断の初期値)。
- * 箱庭側(runPipeline の ground.size。240〜880)とは無関係の
- * 表示専用の定数であり、ギャラリーの WorldModel 自体の地面サイズ
- * (pipeline/gallery.ts の WORLD_HALF_EXTENT*2=120。霧・影の較正に使う)
- * とも独立している
- */
-const GALLERY_CAMERA_SIZE = 40;
-
-/**
- * ギャラリー対象の概略中心(orbit 注視点)。区画(pipeline/gallery.ts)は
- * 接道正面を z=0 に置き奥行き方向(+z)へ建物を配置するため、原点(0,0,0)を
- * 注視点にすると対象の手前下端を見ることになり、対象本体(特に軒の深い
- * 屋根)がカメラに寄りすぎて画面を占有してしまう。footprint の重心(xz)+
- * 高さの半分(floors×FLOOR_HEIGHT/2。屋根棟の高さは含まない簡略値だが
- * 表示用の初期構図としては十分)を注視点にすることで対象全体を
- * 画面中央に収める(実装判断。生成ロジックには一切触れない — 表示済みの
- * WorldModel から読むだけ)
- */
-function galleryCameraTarget(model: WorldModel): {
-  x: number;
-  y: number;
-  z: number;
-} {
-  const building = model.buildings[0];
-  if (!building || building.footprint.length === 0) {
-    return { x: 0, y: 0, z: 0 };
-  }
-  let cx = 0;
-  let cz = 0;
-  for (const p of building.footprint) {
-    cx += p.x;
-    cz += p.z;
-  }
-  cx /= building.footprint.length;
-  cz /= building.footprint.length;
-  return { x: cx, y: (FLOOR_HEIGHT * building.floors) / 2, z: cz };
-}
 
 const app = document.getElementById("app");
 if (!app) throw new Error("#app not found");
@@ -182,10 +142,13 @@ if (!viewer) {
     firstGeneration: boolean;
     stopFade: (() => void) | null;
     summaryView: SummaryView | null;
-    /** OrbitController.configure に渡すカメラ基準寸法 */
-    cameraSizeFor: (model: WorldModel) => number;
-    /** OrbitController.configure に渡す注視点(既定は原点) */
-    cameraTargetFor: (model: WorldModel) => { x: number; y: number; z: number };
+    /**
+     * OrbitController.configure に渡す初期構図(カメラ基準寸法・注視点・
+     * 方位)。ワールドは ground.size 基準・原点・既定方位、ギャラリーは
+     * 対象寸法から導出(viewer/framing.ts。G2b で固定距離から変更)。
+     * 生成直後・タブ切替時に毎回評価する(画面アスペクト比に追従)
+     */
+    framingFor: (model: WorldModel) => GalleryFraming;
   }
   const worldScene: SceneState = {
     group: null,
@@ -193,8 +156,11 @@ if (!viewer) {
     firstGeneration: true,
     stopFade: null,
     summaryView: null,
-    cameraSizeFor: (m) => m.ground.size,
-    cameraTargetFor: () => ({ x: 0, y: 0, z: 0 }),
+    framingFor: (m) => ({
+      size: m.ground.size,
+      target: { x: 0, y: 0, z: 0 },
+      azimuth: CAMERA_INITIAL_AZIMUTH,
+    }),
   };
   const galleryScene: SceneState = {
     group: null,
@@ -202,10 +168,21 @@ if (!viewer) {
     firstGeneration: true,
     stopFade: null,
     summaryView: null,
-    cameraSizeFor: () => GALLERY_CAMERA_SIZE,
-    cameraTargetFor: galleryCameraTarget,
+    framingFor: (m) =>
+      computeGalleryFraming(m, viewer!.camera.fov, viewer!.camera.aspect),
   };
   let activeTab: TabKey = initialTab;
+
+  /** scene の初期構図を orbit へ適用する(生成直後・タブ切替時) */
+  function applyFraming(scene: SceneState, model: WorldModel): void {
+    const framing = scene.framingFor(model);
+    controls.configure(
+      framing.size,
+      WATER_SURFACE_Y,
+      framing.target,
+      framing.azimuth,
+    );
+  }
 
   /** タブ切替(表示のみ。生成状態には触れない。panel の onTabChange から呼ばれる) */
   function applyActiveTab(tab: TabKey): void {
@@ -215,11 +192,7 @@ if (!viewer) {
     const scene = tab === "world" ? worldScene : galleryScene;
     if (scene.model) {
       viewer!.setWorldSize(scene.model.ground.size);
-      controls.configure(
-        scene.cameraSizeFor(scene.model),
-        WATER_SURFACE_Y,
-        scene.cameraTargetFor(scene.model),
-      );
+      applyFraming(scene, scene.model);
       controls.resetCamera(true);
       debug?.setHash(scene.model.summary.hash);
     }
@@ -400,11 +373,7 @@ if (!viewer) {
 
     if (tab === activeTab) {
       viewer!.setWorldSize(model.ground.size);
-      controls.configure(
-        scene.cameraSizeFor(model),
-        WATER_SURFACE_Y,
-        scene.cameraTargetFor(model),
-      );
+      applyFraming(scene, model);
       controls.resetCamera(scene.firstGeneration);
       debug?.setHash(model.summary.hash);
       if (!reducedMotion) scene.stopFade = fadeIn(group);
