@@ -1,7 +1,7 @@
 /**
  * 段3「水系」: 湖・池・岸線・湿地/砂洲・外周の閉じ方を確定する。
  * データの正は docs/internal/contracts/ground-water.md(Water 節)、
- * 設計は implementation-spec 1.3節・1.6節・PHASE 2。
+ * 設計は implementation-spec 1.3節・1.6節。
  *
  * - 湖: derived.lakeChance で存否を決め、0〜1個。位置候補(角度 θ・境界半径比
  *   r ∈ [0.15, 0.55])を固定数(6組)先に引き切り、境界クリアランス
@@ -16,7 +16,8 @@
  * - 水域合計面積は ground 面積 × derived.waterAreaCap を上限にクリップ
  *   (超過時は確定済みの湖・池の半径を一括スケールして縮小する決定論的な
  *   反復。乱数は消費しない)
- * - 湿地・砂洲を岸辺周辺の zoneMask チャネルへ書き込む(commit 7 で予約済み)
+ * - 湿地・砂洲を岸辺周辺の zoneMask チャネルへ書き込む
+ *   (contracts/ground-water.md ZoneMask 節)
  * - edgeStyle: 選択確率を Water Presence に連動させ、Water 15 未満は "fog" 固定
  * - Water 0(水域なし)でも乾いた土地として破綻しない
  */
@@ -437,7 +438,7 @@ export function runWater(model: WorldModel): void {
     params.water < 15 ? 0 : clamp((params.water - 15) / 85, 0, 1) * 0.85;
   model.ground.edgeStyle = edgeRoll < waterEdgeChance ? "water" : "fog";
 
-  // サマリー(段16 の担当だが、中間PHASEでは部分的に埋める)
+  // サマリー(段16 の担当だが、本段でも先取りして部分的に埋める)
   model.summary.waterOverview.lakes = lakes.length;
   model.summary.waterOverview.ponds = ponds.length;
 

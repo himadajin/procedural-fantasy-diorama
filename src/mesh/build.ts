@@ -105,7 +105,7 @@ function zoneColorAt(
 /**
  * 地面+岸スカートのメッシュ。
  * 地面は水域ポリゴンを穴として除いた陸地(landSdf > 0)の三角形分割
- * (細分グリッドのクリップ。implementation-spec PHASE 2)。
+ * (細分グリッドのクリップ。implementation-spec 3章「地面と水系」)。
  * 岸スカートは陸地の縁の全周に、地面高 y=0 から水面下(岸=−1.6、
  * 霧閉じの外縁=さらに下)まで落とす帯メッシュ。同じ等値線から作るため
  * 地面との間に隙間ができない。
@@ -203,7 +203,7 @@ function buildGround(model: WorldModel, field: WaterField): THREE.Mesh {
     }
   }
 
-  // 魔法灯の足元の照り返し(頂点カラー焼き込み。PHASE 5b commit 18。
+  // 魔法灯の足元の照り返し(頂点カラー焼き込み。
   // 舗装 mesh/paving.ts と同じ純関数を共用する。art-direction 3節)
   applyLampTint(createLampTint(model), positions, colors);
 
@@ -459,10 +459,10 @@ export function buildWorld(model: WorldModel): THREE.Group {
 
   // 建物+結界構造+魔法灯・浮遊要素+橋(躯体/屋根/発光マージ+各
   // InstancedMesh。部品展開は mesh/wardparts.ts / mesh/bridgeparts.ts。
-  // mesh/buildings.ts が束ねる。計画デバッグ描画は PHASE 5b で全廃)
+  // mesh/buildings.ts が束ねる)
   for (const obj of buildBuildings(model, timeUniform)) group.add(obj);
 
-  // 施設(Phase D): マージ束(躯体+屋根)+回転部品(風車ロータ・水輪)の
+  // 施設: マージ束(躯体+屋根)+回転部品(風車ロータ・水輪)の
   // 個別メッシュ(mesh/facilities.ts)。回転部品は userData.spin を持ち、
   // viewer(spin.ts)が表示演出として回す。生成時に 1 回収集して
   // userData.spinners へ置く(毎フレームの traverse を避ける)
@@ -475,7 +475,7 @@ export function buildWorld(model: WorldModel): THREE.Group {
   }
   group.userData.spinners = spinners;
 
-  // 植生(PHASE 6 commit 20): 幹・樹冠+低木の InstancedMesh と草むらの
+  // 植生: 幹・樹冠+低木の InstancedMesh と草むらの
   // マージメッシュ(mesh/vegetation.ts。draw call +3 以内)
   for (const obj of buildVegetation(model)) group.add(obj);
 

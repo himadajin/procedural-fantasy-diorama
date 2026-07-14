@@ -2,7 +2,7 @@
  * 段7「一次密度場」: 中心からの距離(densityPeak / densityFalloff)、
  * 道路近接、Settlement Pressure から一次密度場を構成する。結界に依存しない。
  * データの正は docs/internal/contracts/network-plaza.md(Density 節)、
- * 設計は implementation-spec 1.3節(段7)・PHASE 3。
+ * 設計は implementation-spec 1.3節(段7)。
  *
  * - FieldGrid(model/fieldgrid.ts)へ格納する。解像度 64 固定、
  *   張りは waterfield と同じ(size×1.1)。結界計画の等値線抽出と
@@ -28,7 +28,7 @@ export function smoothstep(edge0: number, edge1: number, v: number): number {
 const DENSITY_RESOLUTION = 64;
 /** グリッドの張り(ワールド一辺比。waterfield と同じ) */
 const DENSITY_SPAN_RATIO = 1.1;
-/** 道路近接ブーストの届く距離と強さ(main / connector / street。Phase B) */
+/** 道路近接ブーストの届く距離と強さ(main / connector / street) */
 const ROAD_REACH_MAIN = 18;
 const ROAD_REACH_CONNECTOR = 12;
 const ROAD_REACH_STREET = 10;
@@ -133,7 +133,7 @@ export interface DensityDecayParts {
  * 中心の指数減衰 × 外縁フェード(道路近接ブーストを除く部分)を評価する
  * 純関数を返す(createWaterField / createBoundaryRadius と同じ「factory が
  * 前処理を1回だけ行い、返した閉関数を多数回呼ぶ」流儀)。
- * density.ts(段7。本ファイル)と streets.ts(段5後半サブフェーズ)が
+ * density.ts(段7。本ファイル)と streets.ts(段5後半処理)が
  * 同じ実装を共有する(contracts/network-plaza.md「二次街路の有機成長」
  * 「成長優先度場」)。乱数は消費しない。
  */

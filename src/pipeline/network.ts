@@ -2,19 +2,20 @@
  * 段5「道路網」: グリッドA*で進入点→中心の主道と進入点間の補完路を引き、
  * 道路グラフ(nodes/edges)を確定する。
  * データの正は docs/internal/contracts/network-plaza.md(Network 節)・ground-water.md(Water 節)、
- * 設計は implementation-spec 1.3節(段5)・PHASE 3・9節(リスクと対策)。
+ * 設計は implementation-spec 1.3節(段5)・9節(リスクと対策)。
  *
  * - コスト = 距離 + 低周波ノイズのコスト場(seed 駆動の格子ノイズ。
  *   乱数ストリームを消費せず、碁盤目化を防いで道を有機的に曲げる)
  *   + 水域横断コスト(湖・池は一律高コストとし、事実上の通行禁止にする。
- *   水域は閉領域であり境界内で迂回できるため。3.2節(5))
+ *   水域は閉領域であり境界内で迂回できるため。contracts/network-plaza.md
+ *   Network 節「道路網の性質」)
  *   − 既存道路割引(先に引いた道を再利用させ、幹線を自己組織化させる)
  * - グリッド解像度は World Scale に応じて上限クリップし、A* は
  *   ヒューリスティック重み付きで近似最短を許容する(spec 9節)
  * - 道路(段5)は湖・池を渡らないため、本段は BridgeSite を抽出しない
  *   (橋は段6「水路」と段8「結界計画」由来のみ。contracts/ground-water.md
  *   「bridges の性質」)
- * - 後PHASE(小道=4b、水路=段6)は nodes / edges への追記のみで
+ * - 後段(小道=段13、水路=段6)は nodes / edges への追記のみで
  *   行える構造(id はグリッドセル座標由来で安定)
  * - 本段は乱数ストリームを消費しない(A* もコスト場も決定論的)
  */
@@ -470,15 +471,15 @@ export function runNetwork(
   // water.bridges は本段では触らない(道路は湖・池を渡らないため段5 は
   // BridgeSite を抽出しない。橋は段6「水路」と段8「結界計画」由来のみ)
 
-  // 段5後半サブフェーズ: 幹線から発芽する二次街路(street)を成長させ、
-  // nodes/edges へ追記する(Phase B。contracts/network-plaza.md
+  // 段5後半処理: 幹線から発芽する二次街路(street)を成長させ、
+  // nodes/edges へ追記する(contracts/network-plaza.md
   // 「二次街路(street)の有機成長」)。本段の乱数非消費部分(A*・コスト場)は
   // 上記まで完了しており、ここから先のみ乱数を消費する
   const streetDiagnostics = streetDiagnosticsOut ?? { continuationPairs: new Set<string>() };
   growStreets(model, streetDiagnostics);
 
-  // サマリー(段13 の担当だが、中間PHASEでは部分的に埋める。street 込みの
-  // 総延長にする)
+  // サマリー(段13 の担当だが、本段でも street 込みの総延長を先取りして
+  // 埋める)
   let roadLength = 0;
   for (const edge of model.network.edges) roadLength += pathLength(edge.path);
   model.summary.scale.roadLength = roadLength;
@@ -526,9 +527,9 @@ export function runNetwork(
     );
   }
 
-  // 3〜6) 二次街路(street)の形状健全性 4 項(Phase B。契約と同じ閾値を
-  // network.test.ts・B7 検収メトリクスと共有する。A6 の教訓により三者を
-  // 最初から一致させる)。違反は throw せず件数を console に出す
+  // 3〜6) 二次街路(street)の形状健全性 4 項(契約と同じ閾値を
+  // network.test.ts・contracts/network-plaza.md「二次街路(street)の
+  // 有機成長」の三者で一致させる)。違反は throw せず件数を console に出す
   const health = verifyStreetShapeHealth(model, streetDiagnostics.continuationPairs);
   let streetHealthViolations = 0;
   streetHealthViolations += health.crossAngleViolations;

@@ -1,9 +1,8 @@
 /**
- * ギャラリーの初期構図(計画書 `2026-07-14-gallery.md`「ギャラリー表示に
- * 適した初期カメラ距離は実装判断でよい(対象1体が画面に収まる距離)」の
- * 実装。G2b で固定距離から対象寸法駆動へ改めた)。
+ * ギャラリーの初期構図(art-direction.md「8. カメラの初期構図」の
+ * ギャラリー初期構図節の実装)。
  *
- * 対象(建物または施設1体。施設は Phase D タスク D2b で追加)の寸法を
+ * 対象(建物または施設1体)の寸法を
  * WorldModel から見積もり、外接球が視野に余白つきで収まるカメラ距離・
  * 注視点・方位を導出する純関数。
  * 表示専用のロジックであり、WorldModel には一切書き込まない。
@@ -81,7 +80,7 @@ interface Box {
  *
  * 基本は建築部品(`Building.parts`)の transform から取る — メッシュは
  * 部品の展開そのものであり、footprint の外に出る部品(裏庭の塀・付属屋、
- * 軒の張り出し、煙突、杭。Phase C6 以降の語彙)まで含めた実表示範囲に
+ * 軒の張り出し、煙突、杭)まで含めた実表示範囲に
  * 一致する。部品のジオメトリ詳細(型ごとの原点規約)はメッシュビルダーの
  * 実装詳細のため参照せず、xz は position ± (|sx|+|sz|)/2(任意の y 軸回転で
  * 安全な AABB 上界)、y は position.y 〜 position.y + |sy|(部品は下端
@@ -133,9 +132,9 @@ function estimateBounds(b: Building): Box | null {
 }
 
 /**
- * 施設(Phase D タスク D2b)のバウンディングボックス。施設は階数・基礎を
+ * 施設のバウンディングボックス。施設は階数・基礎を
  * 持たないため、footprint(高さの既定は接地する低い構造 0〜0.5)と部品の
- * 和集合で見積もる。複数の施設(屋台の列。D3)は全体の和集合を取る
+ * 和集合で見積もる。複数の施設(屋台の列)は全体の和集合を取る
  * (列全体が 1 つの鑑賞対象)。
  */
 function estimateFacilitiesBounds(
@@ -180,7 +179,7 @@ export function computeGalleryFraming(
   fovDeg: number,
   aspect: number,
 ): GalleryFraming {
-  // 対象は建物または施設(Phase D)。施設は複数(屋台の列)でも
+  // 対象は建物または施設。施設は複数(屋台の列)でも
   // 全体の和集合を 1 つの鑑賞対象として収める
   const b = model.buildings[0] ?? null;
   const facing = b?.facing ?? model.facilities[0]?.facing;

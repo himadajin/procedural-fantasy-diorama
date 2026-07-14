@@ -1,6 +1,7 @@
 /**
  * 舗装・水路のメッシュ: 道路リボン、広場の舗装+縁石、水路の護岸(縁石・
- * 石積み)+杭を WorldModel から生成する(implementation-spec PHASE 3)。
+ * 石積み)+杭を WorldModel から生成する(implementation-spec 4章
+ * 「大域計画 — 立地・道路網・水路・広場・結界計画」)。
  *
  * - 頂点カラーのみで表現(画像テクスチャ禁止)。色は art-direction 5.2/5.3節
  * - 道路・広場・護岸は単一の MeshStandardMaterial にマージして 1 draw call、
@@ -10,7 +11,7 @@
  *   護岸の立ち上がりとの段差で掘り込みを読ませる。水面ジオメトリ自体は
  *   build.ts が湖・池と同じ水面マテリアルへ統合する
  * - 湖・池の渡り区間は岸で止め、橋(mesh/bridgeparts.ts)が同一の
- *   標本化・基準高で受け持つ(PHASE 5b commit 18)。魔法灯の足元の
+ *   標本化・基準高で受け持つ。魔法灯の足元の
  *   照り返しは頂点カラーへ焼き込む(wardparts の純関数を地面と共用)
  * - 乱数ストリームは消費しない。ムラは位置ハッシュから決定論的に導出する
  */
@@ -172,7 +173,7 @@ function shadeAt(x: number, z: number, tidiness: number): number {
  * 道路リボン: edge.path 沿いの幅 edge.width のリボン。
  * - 断面は5点(フェザー/路肩/中央/路肩/フェザー)で、中央を数cm盛り上げる
  * - 等級 grade で土→砂利→石畳の頂点カラー補間
- * - 湖・池を渡る区間は描かず岸で止める(橋の立体は PHASE 5b)。
+ * - 湖・池を渡る区間は描かず岸で止める(橋の立体は mesh/bridgeparts.ts)。
  *   水路(canal)上は通し、水路橋位置では路面をわずかに持ち上げて
  *   水面(y=+0.04)との交差を避ける
  */
@@ -470,7 +471,7 @@ function canalFrames(
 
 /**
  * 水路の護岸: 縁石(#7e7c76)天端+石積み(#8e8a84)の内面+外の土手。
- * towpathSide 側は土手を広めに取り、岸沿い道の余地を残す(PHASE 4b フック)。
+ * towpathSide 側は土手を広めに取り、岸沿い道(段13「小道」)の余地を残す。
  * 橋位置(over="canal")では護岸を欠き、道路リボンが上を通る。
  */
 function buildCanalWalls(
@@ -686,7 +687,7 @@ export function buildPaving(
   buildPlazas(model, buf);
   buildCanalWalls(model, field, buf);
 
-  // 魔法灯の足元の照り返し(頂点カラー焼き込み。PHASE 5b commit 18。
+  // 魔法灯の足元の照り返し(頂点カラー焼き込み。
   // 地面 mesh/build.ts と同じ純関数を共用する)
   applyLampTint(createLampTint(model), buf.positions, buf.colors);
 

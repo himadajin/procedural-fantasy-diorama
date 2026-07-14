@@ -7,7 +7,7 @@
  * 複雑度(頂点数・インスタンス数・draw call・triangle)はレンダラー実測値
  * (renderer.info)を表示時に埋める(WorldModel には持たない。
  * contracts/vegetation-summary.md Summary 節の設計判断)。
- * PHASE 7 commit 22 で開発用デバッグ表示を本サマリーへ統合した:
+ * 開発用デバッグ表示は本サマリーへ統合済み:
  * ハッシュは「ハッシュ」行、renderer.info は「複雑度」行
  * (implementation-spec 1.10節、contracts/pipeline.md
  * 「描画プリセット・LOD・デバッグ表示」)。
@@ -39,8 +39,8 @@ const PARAM_LABELS: { key: keyof Params; label: string }[] = [
 
 /**
  * 施設 kind の表示名(内部 kind → 日本語。facilities.md「kind 一覧」節の
- * 全 7 kind。ワールドサマリーの施設内訳(D6)とギャラリーの対象セレクタ
- * (G2)の両方がラベルとして再利用する)
+ * 全 7 kind。ワールドサマリーの施設内訳とギャラリーの対象セレクタの
+ * 両方がラベルとして再利用する)
  */
 const FACILITY_LABELS: Record<string, string> = {
   field: "畑",
@@ -53,8 +53,8 @@ const FACILITY_LABELS: Record<string, string> = {
 };
 
 /**
- * 建物役割の表示名(内部 role → 日本語)。ギャラリーの対象セレクタ
- * (G2)がラベル(role の日本語名)として再利用する
+ * 建物役割の表示名(内部 role → 日本語)。ギャラリーの対象セレクタが
+ * ラベル(role の日本語名)として再利用する
  */
 export const ROLE_LABELS: Record<string, string> = {
   house: "住居",
@@ -200,7 +200,7 @@ export function renderSummary(
 
 /**
  * ギャラリー対象id(`building/<role>` / `facility/<kind>`)の表示ラベル
- * (日本語名)。対象セレクタ(G2)と簡易サマリーが共用する
+ * (日本語名)。対象セレクタと簡易サマリーが共用する
  */
 export function galleryTargetLabel(targetId: string): string {
   const name = targetId.split("/")[1] ?? targetId;
@@ -208,7 +208,7 @@ export function galleryTargetLabel(targetId: string): string {
 }
 
 /**
- * ギャラリーの簡易サマリー(design.md「ギャラリー」節・計画書3.4節)。
+ * ギャラリーの簡易サマリー(design.md「ギャラリー」節)。
  * 対象・seed・部品数・ハッシュのみの読み取り専用表示(本番サマリーの
  * 複雑度・水辺・結界などの箱庭スケールの情報は持たない)。
  */
@@ -218,7 +218,7 @@ export function renderGallerySummary(
   model: WorldModel,
 ): void {
   container.replaceChildren();
-  // 対象は建物または施設(Phase D)。施設は複数(屋台の列)の合計を出す
+  // 対象は建物または施設。施設は複数(屋台の列)の合計を出す
   const building = model.buildings[0];
   const hasTarget = building !== undefined || model.facilities.length > 0;
   const partCount = building

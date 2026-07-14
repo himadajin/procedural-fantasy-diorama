@@ -1,11 +1,11 @@
 /**
- * 橋(石造アーチ橋・木橋・水路の小橋)の Part 展開(PHASE 5b commit 18。
- * contracts/wards.md「魔法灯・浮遊要素・橋の立体化」が正)。
+ * 橋(石造アーチ橋・木橋・水路の小橋)の Part 展開
+ * (contracts/wards.md「魔法灯・浮遊要素・橋の立体化」が正)。
  *
  * 設計判断: 展開は water.bridges / network / derived から一意に決まる
  * **表示写像**であり、新しい計画内容を持たないため、パイプラインではなく
- * メッシュ層の純関数として置く(commit 17 の wardparts と同じ流儀)。
- * WorldModel には書き戻さない(正規化ハッシュは PHASE 5a から不変)。
+ * メッシュ層の純関数として置く(wardparts.ts と同じ流儀)。
+ * WorldModel には書き戻さない(正規化ハッシュは不変)。
  * 本ファイルは three 非依存とし、両岸接続・桁下端・橋脚到達・決定性の
  * テストが three を経由せず機械検証できる(contracts/pipeline.md)。
  *

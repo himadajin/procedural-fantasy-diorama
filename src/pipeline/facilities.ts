@@ -1,17 +1,17 @@
 /**
- * 段14「施設」: 施設(Facility)の生成(Phase D。
- * `docs/internal/plans/2026-07-14-worldgen-rework-facilities.md`)。
+ * 段14「施設」: 施設(Facility)の生成。
  * 契約の正は docs/internal/contracts/facilities.md(kind 一覧・配置条件・
  * 衝突/帯検証則・RNG ラベル体系・造形の純関数分離・kind ごとの造形の性質)。
  *
- * D2b: field(畑)/ pasture(牧草地)— farmland 区画への生成。
- * D3: well(井戸)/ stall(市場屋台)— 市街広場・農村道路ノードへの生成。
- * D4: windmill(風車)/ watermill(水車)— 農村外縁・水路/湖岸への生成。
- * D5: pier(桟橋)— 汀線ループ沿い(waterfront claimed 検査へ読み取り参加)。
+ * field(畑)/ pasture(牧草地)— farmland 区画への生成。
+ * well(井戸)/ stall(市場屋台)— 市街広場・農村道路ノードへの生成。
+ * windmill(風車)/ watermill(水車)— 農村外縁・水路/湖岸への生成。
+ * pier(桟橋)— 汀線ループ沿い(waterfront claimed 検査へ読み取り参加)。
  *
  * 造形は「入力(寸法・向き・当該施設の rng サブストリーム)→ Part[]」の
- * 純関数(buildXxxParts)として配置ロジックから分離する(契約 3.8b。
- * ギャラリーは buildFarmlandFacility / buildPlazaWellFacility /
+ * 純関数(buildXxxParts)として配置ロジックから分離する(contracts/facilities.md
+ * 「造形の純関数分離(ギャラリー対応の前提)」。ギャラリーは
+ * buildFarmlandFacility / buildPlazaWellFacility /
  * buildPlazaStallFacilities を経由してこの本番の造形関数のみを呼ぶ)。
  * 乱数は新設ストリーム `"facility/<...>"` のみを消費し、既存ストリームの
  * 消費列は変えない。
@@ -450,7 +450,7 @@ export function buildFarmlandFacility(
 }
 
 // --- well / stall の造形数値(すべて提案値。contracts/facilities.md
-//     「kind ごとの造形の性質」D1b。調整時は契約を同一 commit で更新する) ---
+//     「kind ごとの造形の性質」。調整時は契約を同一 commit で更新する) ---
 /** 井戸: 石環(外形・厚み・高さと ±10% 揺らぎ) */
 const WELL_RING_OUTER = 1.9;
 const WELL_RING_T = 0.3;
@@ -535,7 +535,7 @@ export interface WellShapeInput {
  * parts 配列順: 石環 4(前 → 右 → 奥 → 左)→ 内面 1 → 柱 2(+s → −s)→
  * 轆轤 1 → 小屋根 1。
  * rng 消費(列挙順に固定): (1) 石環高さ ±10%(向き揺らぎは呼び出し側で
- * facing へ畳み込み済み — 契約 D3 実装補足)。
+ * facing へ畳み込み済み — 契約「well(井戸)」実装補足「向きの揺らぎ」)。
  */
 export function buildWellParts(input: WellShapeInput): Part[] {
   const { center, facing, rng } = input;
@@ -675,7 +675,7 @@ export function buildStallParts(input: StallShapeInput): Part[] {
   return parts;
 }
 
-// --- 広場・農村ノードへの配置(契約「kind 一覧・配置条件」D3 実装補足) ---
+// --- 広場・農村ノードへの配置(契約「kind 一覧・配置条件」実装補足) ---
 
 /** 広場中心からのレイと polygon 縁の交点距離(見つからなければ radius) */
 function rayDistanceToPolygon(center: Vec2, angle: number, polygon: Vec2[], fallback: number): number {
@@ -699,7 +699,8 @@ function rayDistanceToPolygon(center: Vec2, angle: number, polygon: Vec2[], fall
   return Number.isFinite(best) ? best : fallback;
 }
 
-/** 通行帯セクターの流入方位の上限(契約 D3 実装補足。提案値) */
+/** 通行帯セクターの流入方位の上限(契約「stall(市場屋台)」実装補足
+ *  「通行帯セクターの流入方位」。提案値) */
 const MAX_TRAFFIC_AZIMUTHS = 4;
 /** 近接する流入方位候補をまとめる角(同上) */
 const AZIMUTH_MERGE = (10 * Math.PI) / 180;
@@ -711,7 +712,8 @@ const ROAD_CLASS_RANK: Record<string, number> = {
 };
 
 /**
- * 広場に接続する道路 edge の流入方位(契約 D3 実装補足)。
+ * 広場に接続する道路 edge の流入方位(契約「stall(市場屋台)」実装補足
+ * 「通行帯セクターの流入方位」)。
  * lane 以外の edge のうち path の端点が広場中心から radius + width 以内の
  * ものを候補とし、格の高い順(main > connector > street、同格は幅の
  * 広い順)に最大 4 本を返す(近接 10° はまとめる。決定論・乱数非消費)。
@@ -720,8 +722,9 @@ export function plazaInflowAzimuths(model: WorldModel, plaza: Plaza): number[] {
   const candidates: { azimuth: number; rank: number; width: number }[] = [];
   const c = plaza.position;
   for (const edge of model.network.edges) {
-    // lane(裏手の小道・岸沿い道)は市場の通行帯を作らない(契約 D3
-    // 実装補足。市街中心では街路の端点が十数本収束するため上限も課す)
+    // lane(裏手の小道・岸沿い道)は市場の通行帯を作らない(契約
+    // 「stall(市場屋台)」実装補足。市街中心では街路の端点が十数本収束
+    // するため上限も課す)
     const rank = ROAD_CLASS_RANK[edge.class];
     if (rank === undefined) continue;
     const path = edge.path;
@@ -809,9 +812,9 @@ function cornersInsidePlaza(footprint: Vec2[], plaza: Plaza, margin: number): bo
 
 /**
  * 広場井戸 1 基の生成(段14 の本番ループとギャラリーが共用。契約
- * 「well(井戸)」D3 実装補足)。
+ * 「well(井戸)」実装補足)。
  *
- * 消費列(固定): 採否 chance → 位置ジッター 2 ロール → 造形(D1b)。
+ * 消費列(固定): 採否 chance → 位置ジッター 2 ロール → 造形。
  * `adoptOverride` 非 null のときも採否の消費は行い、値だけ置き換える
  * (ギャラリーの kind 強制と同じ意味論)。合格位置が無ければ null。
  */
@@ -839,7 +842,7 @@ export function buildPlazaWellFacility(
         x: plaza.position.x + Math.cos(angle) * plaza.radius * radial,
         z: plaza.position.z + Math.sin(angle) * plaza.radius * radial,
       };
-      // 中央円の外(位置の条件。契約 D3 実装補足)
+      // 中央円の外(位置の条件。契約「well(井戸)」実装補足「広場井戸の位置」)
       const distC = Math.hypot(p.x - plaza.position.x, p.z - plaza.position.z);
       if (distC < centerR) continue;
       // 縁帯(屋台の帯)より内側(広場縁から 2.7 以上)
@@ -858,7 +861,7 @@ export function buildPlazaWellFacility(
   }
   if (!pos) return null;
 
-  // facing = 井戸位置 → 広場中心(既定規約)± 揺らぎ(D1b。facing へ畳み込む)
+  // facing = 井戸位置 → 広場中心(既定規約)± 揺らぎ(facing へ畳み込む)
   const baseFacing = Math.atan2(plaza.position.z - pos.z, plaza.position.x - pos.x);
   const facing = baseFacing + rng.range(-WELL_FACING_JITTER, WELL_FACING_JITTER);
   const parts = buildWellParts({ center: pos, facing, rng });
@@ -874,7 +877,7 @@ export function buildPlazaWellFacility(
 
 /**
  * 広場の屋台列の生成(段14 の本番ループとギャラリーが共用。契約
- * 「stall(屋台)」D3 実装補足)。
+ * 「stall(市場屋台)」実装補足)。
  *
  * 配置スロットは決定論の等角走査(乱数非消費)。乱数は配置が確定した
  * 屋台の造形バリエーションのみに、`facility/stall/<plazaId>` から
@@ -1051,8 +1054,8 @@ function ruralWellSiteOk(
 }
 
 /**
- * 農村井戸の生成(契約「well(井戸)」(b)・D3 実装補足)。
- * 消費列(固定): 採否 chance → 造形(D1b。位置は決定論走査で乱数非消費)。
+ * 農村井戸の生成(契約「well(井戸)」実装補足「農村井戸の位置」)。
+ * 消費列(固定): 採否 chance → 造形(位置は決定論走査で乱数非消費)。
  */
 function buildRuralWellFacility(
   ctx: RuralWellContext,
@@ -1096,7 +1099,7 @@ function buildRuralWellFacility(
 }
 
 // --- windmill / watermill の造形数値(すべて提案値。contracts/facilities.md
-//     「kind ごとの造形の性質」D1b。調整時は契約を同一 commit で更新する) ---
+//     「kind ごとの造形の性質」。調整時は契約を同一 commit で更新する) ---
 /** 風車: 塔身(底辺・taper・高さと ±8% 揺らぎ) */
 const WINDMILL_TOWER_BASE = 3.4;
 const WINDMILL_TOWER_TAPER = 0.72;
@@ -1148,7 +1151,8 @@ const WATERMILL_CANAL_OFFSET_PAD = 1.95;
 const WATERMILL_SHORE_OFFSET = 2.0;
 const WATERMILL_JITTER = 2.0;
 
-/** 風車の造形純関数の入力(塔高・直径は配置側が消費済み。D4 実装補足) */
+/** 風車の造形純関数の入力(塔高・直径は配置側が消費済み。契約
+ *  「windmill(風車)」実装補足) */
 export interface WindmillShapeInput {
   center: Vec2;
   facing: number;
@@ -1255,7 +1259,8 @@ export function buildWindmillParts(input: WindmillShapeInput): Part[] {
   return parts;
 }
 
-/** 水車の造形純関数の入力(桁行は配置側が消費済み。D4 実装補足) */
+/** 水車の造形純関数の入力(桁行は配置側が消費済み。契約
+ *  「watermill(水車)」実装補足) */
 export interface WatermillShapeInput {
   center: Vec2;
   /** 正面方位(水面へ向く。水側の壁面と水輪がこちら) */
@@ -1385,7 +1390,7 @@ export function buildWatermillParts(input: WatermillShapeInput): Part[] {
 
 /**
  * 風車 1 基の生成(段14 の本番ループとギャラリーが共用。契約「windmill」
- * D4 実装補足)。消費列(固定): 格子内ジッター 2 → 塔高 → ロータ直径 →
+ * 実装補足)。消費列(固定): 格子内ジッター 2 → 塔高 → ロータ直径 →
  * 造形(初期回転角)。位置はセル原点+ジッター、facing は呼び出し側が
  * 決める(本番 = centerPlan へ向く方位)。
  */
@@ -1427,7 +1432,7 @@ export function buildWindmillFacility(
 
 /**
  * 水車 1 基の生成(段14 の本番ループとギャラリーが共用。契約「watermill」
- * D4 実装補足)。消費列(固定): 位置ジッター(接線方向 ±2.0。revalidate が
+ * 実装補足)。消費列(固定): 位置ジッター(接線方向 ±2.0。revalidate が
  * 通らなければ基点へ戻す)→ 桁行 → 造形(水輪直径 → 初期回転角)。
  */
 export function buildWatermillFacility(
@@ -1463,7 +1468,7 @@ export function buildWatermillFacility(
 }
 
 // --- pier の造形数値(すべて提案値。contracts/facilities.md
-//     「kind ごとの造形の性質」D1b。調整時は契約を同一 commit で更新する) ---
+//     「kind ごとの造形の性質」。調整時は契約を同一 commit で更新する) ---
 /** 桟橋: 板(幅 1.8 ±0.2 × 長さ 6〜10 × 床厚 0.22。天端 y 0.35) */
 const PIER_DECK_W = 1.8;
 const PIER_DECK_W_JITTER = 0.2;
@@ -1481,7 +1486,7 @@ const PIER_BOLLARD_CHANCE = 0.7;
 /** 桟橋: 陸側端 = 汀線から 1.0 内陸 */
 const PIER_LAND_OVERLAP = 1.0;
 
-// --- pier の配置数値(契約「pier(桟橋)」D5 実装補足。すべて提案値) ---
+// --- pier の配置数値(契約「pier(桟橋)」実装補足。すべて提案値) ---
 /** 桟橋どうしのアンカー間隔(実寸) */
 const PIER_SPACING = 8.0;
 /** 位置ジッター(接線方向 ±2.0。watermill と同じ流儀) */
@@ -1494,7 +1499,8 @@ const PIER_WATER_PROBES = [3.5, 6.0, 9.0] as const;
 const PIER_CLEAR_BRIDGE = 1.0;
 const PIER_CLEAR_CANAL = 1.0;
 
-/** 桟橋の造形純関数の入力(長さ・幅は配置側が消費済み。D5 実装補足) */
+/** 桟橋の造形純関数の入力(長さ・幅は配置側が消費済み。契約
+ *  「pier(桟橋)」実装補足) */
 export interface PierShapeInput {
   /** 陸側端(板の陸側の縁の中点。汀線から 1.0 内陸) */
   landEnd: Vec2;
@@ -1568,7 +1574,7 @@ export function buildPierParts(input: PierShapeInput): Part[] {
 
 /**
  * 桟橋 1 基の生成(段14 の本番ループとギャラリーが共用。契約「pier」
- * D5 実装補足)。消費列(固定): 位置ジッター(接線方向 ±2.0。revalidate が
+ * 実装補足)。消費列(固定): 位置ジッター(接線方向 ±2.0。revalidate が
  * 通らなければ基点へ戻す)→ 長さ → 幅 → 造形(係船柱の有無)。
  * normal は汀線法線(水域 → 陸)。facing はその逆(陸 → 水域)。
  */
@@ -1694,7 +1700,7 @@ export function runFacilities(model: WorldModel): void {
   const waterP = water / 100;
   const facilities: Facility[] = [];
 
-  // --- field / pasture(D2b) ---
+  // --- field / pasture ---
   for (const parcel of model.parcels) {
     if (parcel.kind !== "farmland") continue;
     facilities.push(buildFarmlandFacility(seed, parcel));
@@ -1749,7 +1755,7 @@ export function runFacilities(model: WorldModel): void {
     );
   }
 
-  // --- windmill: 農村外縁の空白(格子走査。D4) ---
+  // --- windmill: 農村外縁の空白(格子走査) ---
   const windmillCount = Math.round(
     Math.min(2, Math.max(0, (0.4 + 0.6 * prosper) * (0.5 + 0.5 * scale) * 2)),
   );
@@ -1811,7 +1817,7 @@ export function runFacilities(model: WorldModel): void {
     }
   }
 
-  // --- watermill: 水路 → 湖岸の候補列(D4) ---
+  // --- watermill: 水路 → 湖岸の候補列 ---
   const watermillCount = Math.round(
     Math.min(2, Math.max(0, (0.3 + 0.7 * waterP) * 2)),
   );
@@ -1913,7 +1919,7 @@ export function runFacilities(model: WorldModel): void {
     }
   }
 
-  // --- pier: 汀線ループ順(D5。契約「pier(桟橋)」実装補足) ---
+  // --- pier: 汀線ループ順(契約「pier(桟橋)」実装補足) ---
   const pierCount = Math.round(Math.min(4, Math.max(0, 1 + 3 * waterP)));
   const shoreLoops = model.water.shoreline.loops;
   if (pierCount > 0 && shoreLoops.length > 0) {
