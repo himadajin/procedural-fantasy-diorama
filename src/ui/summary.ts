@@ -174,6 +174,8 @@ export function renderSummary(
 const FACILITY_LABELS: Record<string, string> = {
   field: "畑",
   pasture: "牧草地",
+  well: "井戸",
+  stall: "屋台",
 };
 
 /**
@@ -196,15 +198,17 @@ export function renderGallerySummary(
   model: WorldModel,
 ): void {
   container.replaceChildren();
-  // 対象は建物または施設(Phase D)。どちらも parts を持つ
-  const target = model.buildings[0] ?? model.facilities[0];
+  // 対象は建物または施設(Phase D)。施設は複数(屋台の列)の合計を出す
+  const building = model.buildings[0];
+  const hasTarget = building !== undefined || model.facilities.length > 0;
+  const partCount = building
+    ? building.parts.length
+    : model.facilities.reduce((sum, f) => sum + f.parts.length, 0);
 
   container.appendChild(
     row("対象", `${galleryTargetLabel(targetId)} (${targetId})`),
   );
   container.appendChild(row("seed", model.meta.seed));
-  container.appendChild(
-    row("部品数", target ? fmtInt(target.parts.length) : "—"),
-  );
+  container.appendChild(row("部品数", hasTarget ? fmtInt(partCount) : "—"));
   container.appendChild(row("ハッシュ", `#${model.summary.hash}`));
 }

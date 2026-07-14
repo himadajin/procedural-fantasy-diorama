@@ -63,6 +63,10 @@ export const MATERIAL_COLORS: Record<string, string> = {
   // --- 施設(Phase D。art-direction 5.5節) ---
   "tilled-soil": "#63513e",
   meadow: "#94a166",
+  canvas: "#c9b48e",
+  "awning-madder": "#8f6350",
+  "awning-slate": "#6b7a8c",
+  void: "#352c22",
 };
 
 /** 屋根系 materialId(「屋根」束へマージ。それ以外は「躯体」束) */

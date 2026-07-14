@@ -4,6 +4,7 @@ import { ZONE_COUNT, sampleZoneMask } from "../src/model/zonemask";
 import { buildGalleryWorld, GALLERY_TARGET_IDS } from "../src/pipeline/gallery";
 import { runPipeline } from "../src/pipeline/run";
 import { hashWorldModel } from "../src/model/hash";
+import { polygonSignedDistance } from "../src/model/waterfield";
 
 const ROLES = [
   "house",
@@ -18,13 +19,19 @@ function targetId(role: (typeof ROLES)[number]): string {
   return `building/${role}`;
 }
 
-/** Phase D タスク D2b で対象化した施設 kind(D3〜D5 で kind が増える) */
+/** Phase D タスク D2b で対象化した farmland 施設 kind */
 const FACILITY_TARGETS = ["facility/field", "facility/pasture"] as const;
+/** Phase D タスク D3 で対象化した広場施設 kind(D4〜D5 で kind が増える) */
+const PLAZA_FACILITY_TARGETS = ["facility/well", "facility/stall"] as const;
 
 describe("gallery: 対象idの体系(契約「対象idの体系」)", () => {
-  it("対象idは一般建物の全6 role(center を除く)+ 施設 field / pasture(D2b)", () => {
+  it("対象idは一般建物の全6 role(center を除く)+ 施設 field / pasture / well / stall", () => {
     expect([...GALLERY_TARGET_IDS].sort()).toEqual(
-      [...ROLES.map(targetId), ...FACILITY_TARGETS].sort(),
+      [
+        ...ROLES.map(targetId),
+        ...FACILITY_TARGETS,
+        ...PLAZA_FACILITY_TARGETS,
+      ].sort(),
     );
   });
 
@@ -32,7 +39,9 @@ describe("gallery: 対象idの体系(契約「対象idの体系」)", () => {
     expect(() =>
       buildGalleryWorld("building/center", "seed-x", {}),
     ).toThrow();
-    expect(() => buildGalleryWorld("facility/well", "seed-x", {})).toThrow();
+    expect(() =>
+      buildGalleryWorld("facility/windmill", "seed-x", {}),
+    ).toThrow();
   });
 });
 
@@ -233,6 +242,85 @@ describe("gallery: 施設対象(facility/field・facility/pasture。Phase D D2b)
         if (p.type === "beam") expect(p.materialId).toBe("wood");
       }
     }
+  });
+});
+
+describe("gallery: 広場施設対象(facility/well・facility/stall。Phase D D3)", () => {
+  for (const id of PLAZA_FACILITY_TARGETS) {
+    it(`${id}: 同一入力2回で完全一致する`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "everdusk-101", {});
+      expect(a.summary.hash).toBe(b.summary.hash);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    });
+
+    it(`${id}: seed を変えるとハッシュが変わる`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "seed-b", {});
+      expect(a.summary.hash).not.toBe(b.summary.hash);
+    });
+  }
+
+  it("well: 広場 1 枚に井戸 1 基(採否強制)。footprint は広場 polygon 内", () => {
+    const model = buildGalleryWorld("facility/well", "everdusk-101", {});
+    expect(model.buildings.length).toBe(0);
+    expect(model.facilities.length).toBe(1);
+    const well = model.facilities[0]!;
+    expect(well.kind).toBe("well");
+    expect(well.origin).toEqual({ type: "plaza", plazaId: "plaza/gallery" });
+    // 造形(D1b): 石環 fence×4 + 内面 + 柱2 + 轆轤 + 小屋根
+    const types = well.parts.map((p) => p.type);
+    expect(types.filter((t) => t === "fence").length).toBe(4);
+    expect(types.filter((t) => t === "beam").length).toBe(3);
+    expect(types.filter((t) => t === "gable").length).toBe(1);
+    expect(types.filter((t) => t === "ground-patch").length).toBe(1);
+    const plaza = model.plazas[0]!;
+    for (const v of well.footprint) {
+      expect(polygonSignedDistance(v.x, v.z, plaza.polygon)).toBeLessThan(0);
+    }
+  });
+
+  it("stall: 広場の縁帯に列(prosper 駆動)。全コーナーが広場内・天幕は3色の語彙", () => {
+    const model = buildGalleryWorld("facility/stall", "everdusk-101", {
+      prosperity: 100,
+    });
+    expect(model.facilities.length).toBeGreaterThanOrEqual(3);
+    const plaza = model.plazas[0]!;
+    const awnings = new Set<string>();
+    for (const stall of model.facilities) {
+      expect(stall.kind).toBe("stall");
+      const canopy = stall.parts.find((p) => p.type === "canopy");
+      expect(canopy).toBeDefined();
+      if (canopy) awnings.add(canopy.materialId);
+      for (const v of stall.footprint) {
+        expect(polygonSignedDistance(v.x, v.z, plaza.polygon)).toBeLessThan(0);
+      }
+      // 縁帯(広場縁から 1.0〜2.5)に立つ
+      let cx = 0;
+      let cz = 0;
+      for (const v of stall.footprint) {
+        cx += v.x;
+        cz += v.z;
+      }
+      cx /= stall.footprint.length;
+      cz /= stall.footprint.length;
+      const edge = -polygonSignedDistance(cx, cz, plaza.polygon);
+      expect(edge).toBeGreaterThanOrEqual(1.0 - 1e-9);
+      expect(edge).toBeLessThanOrEqual(2.5 + 1e-9);
+    }
+    for (const id of awnings) {
+      expect(["canvas", "awning-madder", "awning-slate"]).toContain(id);
+    }
+  });
+
+  it("stall: prosperity が屋台の数を駆動する", () => {
+    const low = buildGalleryWorld("facility/stall", "everdusk-101", {
+      prosperity: 0,
+    });
+    const high = buildGalleryWorld("facility/stall", "everdusk-101", {
+      prosperity: 100,
+    });
+    expect(high.facilities.length).toBeGreaterThan(low.facilities.length);
   });
 });
 

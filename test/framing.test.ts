@@ -36,16 +36,22 @@ function targetInfo(model: WorldModel): {
       facing: b.facing,
     };
   }
-  const f = model.facilities[0];
-  if (!f) throw new Error("gallery world has no target");
+  const facilities = model.facilities;
+  const first = facilities[0];
+  if (!first) throw new Error("gallery world has no target");
+  // 施設は複数(屋台の列)でも全体の和集合が鑑賞対象(framing と同じ扱い)
   let top = 0.5;
-  for (const p of f.parts) {
-    top = Math.max(
-      top,
-      p.transform.position[1] + Math.abs(p.transform.scale[1]),
-    );
+  const footprint: Polygon = [];
+  for (const f of facilities) {
+    footprint.push(...f.footprint);
+    for (const p of f.parts) {
+      top = Math.max(
+        top,
+        p.transform.position[1] + Math.abs(p.transform.scale[1]),
+      );
+    }
   }
-  return { footprint: f.footprint, top, facing: f.facing };
+  return { footprint, top, facing: first.facing };
 }
 
 describe("framing: ギャラリー初期構図(対象寸法駆動。G2b)", () => {
