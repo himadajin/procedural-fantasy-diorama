@@ -118,7 +118,7 @@ describe("density: FieldGrid 実体(contracts/network-plaza.md Density 節)", ()
   });
 });
 
-describe("density: street 近接ブースト(Phase B。届く距離 10・強さ 0.16)", () => {
+describe("density: street 近接ブースト(届く距離 10・強さ 0.16)", () => {
   it("street 上の値が、道路近接ブーストを除いた proto-density より高い(同一地点での比較)", () => {
     // 「近い点 vs 遠い点」の比較は、2点間で中心距離(centerTerm)自体が
     // 変わってしまい、ブースト(最大 0.16)より centerTerm の変化が大きい
@@ -151,7 +151,7 @@ describe("density: street 近接ブースト(Phase B。届く距離 10・強さ 
   });
 });
 
-describe("zoning: 市街度 FieldGrid(contracts/network-plaza.md Density 節 zoning。Phase B)", () => {
+describe("zoning: 市街度 FieldGrid(contracts/network-plaza.md Density 節 zoning)", () => {
   it("解像度 64・張り size×1.1・値域 0〜1・決定性(density.primary と同じ張り)", () => {
     for (const seed of SEEDS) {
       const model = build(seed);

@@ -1,5 +1,5 @@
 /**
- * 段13「小道」(PHASE 4b commit 15)のテスト。
+ * 段13「小道」のテスト。
  * 契約は docs/internal/contracts/network-plaza.md(Network 節「小道の性質」・ground-water.md
  * ZoneMask 節)と contracts/pipeline.md の段契約表。
  */

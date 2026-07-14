@@ -1,5 +1,5 @@
 /**
- * 橋の立体化(PHASE 5b commit 18)のテスト。
+ * 橋の立体化のテスト。
  * 展開はメッシュ層の純関数 src/mesh/bridgeparts.ts(three 非依存)のため、
  * three を経由せず機械検証できる
  * (contracts/wards.md「魔法灯・浮遊要素・橋の立体化」の検証契約)。
@@ -41,14 +41,12 @@ const WATERY: Partial<Params>[] = [{ water: 70 }, { water: 95 }];
 
 describe("bridgeparts: 決定性(表示写像)", () => {
   it("同一 seed + params で展開結果が完全一致する(乱数ストリーム非消費)", async () => {
-    // water=95 はタスク A4(陸上率0.95・水域横断禁止の強化)以降、everdusk-101
-    // の巨大な湖では水路が全棄却され canals=0(橋なし)になりうる
-    // (水域横断を防ぐための正当な棄却であり破綻ではない。
-    // contracts/ground-water.md「水路の性質」)。water=90 はタスク A7
-    // (形状健全性検査の追加)以降、everdusk-101 で「水路はあるが道路との
-    // 交差が0」(橋なし)になることが判明したため water=70 に差し替えた。
-    // 両 seed とも water=70 では canals=1・bridges=1 で安定して橋が
-    // 生じることを確認済み(2026-07-12 タスク A7)
+    // water=95 では everdusk-101 の巨大な湖で水路が全棄却され canals=0
+    // (橋なし)になりうる(水域横断を防ぐための正当な棄却であり破綻では
+    // ない。contracts/ground-water.md「水路の性質」)。water=90 では
+    // everdusk-101 で「水路はあるが道路との交差が0」(橋なし)になりうる
+    // ため water=70 に差し替えた。両 seed とも water=70 では canals=1・
+    // bridges=1 で安定して橋が生じることを確認済み
     for (const seed of SEEDS) {
       const a = expandBridgeParts(
         await runPipeline(seed, { ...DEFAULT_PARAMS, water: 70 }),

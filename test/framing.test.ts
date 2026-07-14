@@ -20,7 +20,7 @@ function homeDistance(size: number): number {
 }
 
 /**
- * 検証用: 対象(建物または施設。Phase D で施設対象を追加)の footprint・
+ * 検証用: 対象(建物または施設)の footprint・
  * 全高の見積もり・facing。framing 側の実装を再利用せず素朴に導出する
  */
 function targetInfo(model: WorldModel): {

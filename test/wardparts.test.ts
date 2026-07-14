@@ -1,5 +1,5 @@
 /**
- * 結界構造の立体化(PHASE 5b commit 17)のテスト。
+ * 結界構造の立体化のテスト。
  * 展開はメッシュ層の純関数 src/mesh/wardparts.ts(three 非依存)のため、
  * three を経由せず機械検証できる(contracts/wards.md「結界構造の立体化」)。
  */
@@ -225,7 +225,7 @@ describe("wardparts: 発光面積の規律(art-direction 5.4節)", () => {
         expect(ex.glowBudget).toBeCloseTo(cap * (1 - CENTER_GLOW_SHARE), 6);
         expect(ex.glowArea).toBeLessThanOrEqual(ex.glowBudget + 1e-9);
         // glowArea は展開結果の発光部品+発光インスタンス(火屋・浮遊水晶)の
-        // 実面積と一致する(commit 18: 灯・浮遊水晶も同じ取り分に含める)
+        // 実面積と一致する(灯・浮遊水晶も同じ取り分に含める)
         let sum = 0;
         for (const part of ex.parts) sum += glowPartArea(part);
         for (const inst of ex.lampHeads) sum += glowInstanceArea(inst);
@@ -242,7 +242,7 @@ describe("wardparts: 発光面積の規律(art-direction 5.4節)", () => {
   });
 });
 
-describe("wardparts: 魔法灯・浮遊要素の立体化(PHASE 5b commit 18)", () => {
+describe("wardparts: 魔法灯・浮遊要素の立体化", () => {
   it("魔法灯 = 柱(lamp-post)+火屋が 1:1(灯らない柱を残さない)", async () => {
     for (const seed of SEEDS) {
       for (const arcana of [60, 95]) {

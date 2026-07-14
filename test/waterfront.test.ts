@@ -1,7 +1,7 @@
 /**
- * PHASE 6 commit 19: 水辺建築の拡張(杭支持デッキ・張り出し部屋・
+ * 水辺建築の拡張(杭支持デッキ・張り出し部屋・
  * 水路裏口・杭繋ぎ梁)のテスト。契約は docs/internal/contracts/buildings.md
- * 「水辺建築の拡張」「PHASE 6 commit 19 の追加語彙」。
+ * 「水辺建築の拡張」。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -34,16 +34,9 @@ import { FLOOR_HEIGHT, runBuildings } from "../src/pipeline/buildings";
 
 /**
  * 完了条件(implementation-spec 7章)の代表 seed。
- * 橋詰め建築・水路沿いの家並みの有無は段11「区画」の採択結果
- * (PHASE 4a 確定。本PHASEで変更しない)に依存するため、Water 90 で
- * 水辺要素が同一箱庭に共存する代表 seed を固定する。
- * タスク A3(湖・池の独立配置モデル導入)で水系生成が変わったため、
- * 新モデルで再スキャンして選び直した(4種以上・水路裏口の向き契約を
- * 満たす代表 3 種であることを確認済み)。
- * タスク B2(進入点数のスケール連動)で harbor-1・test1 の進入点数が
- * 3→4 に変わり道路網以降の生成が変化して 4 種共存の閾値を割ったため、
- * 再スキャンして harbor-2・lakeside-2 に差し替えた(2026-07-12。
- * mistvale-7 は引き続き満たすことを確認済み)
+ * 橋詰め建築・水路沿いの家並みの有無は段11「区画」の採択結果に依存するため、
+ * Water 90 で複数の水辺タイプ(4種以上・水路裏口の向き契約を満たす)が
+ * 同一箱庭に共存する seed を固定する。
  */
 const REP_SEEDS = ["mistvale-7", "harbor-2", "lakeside-2"];
 
@@ -115,7 +108,7 @@ function waterBodySdf(model: WorldModel): (x: number, z: number) => number {
   ]).waterSdf;
 }
 
-/** 水辺拡張の語彙(契約「PHASE 6 commit 19 の追加語彙」) */
+/** 水辺拡張の語彙(契約 buildings.md「水辺建築の拡張」の追加語彙) */
 const WATERFRONT_TYPES = new Set([
   "deck",
   "pile",
@@ -397,7 +390,7 @@ describe("waterfront: 衝突なし(他建物・道路・橋・水路)", () => {
   });
 });
 
-describe("waterfront: 完了条件(implementation-spec 7章 PHASE 6)", () => {
+describe("waterfront: 完了条件(implementation-spec 7章)", () => {
   it("Water 90 の代表 seed で水辺要素 4 種以上が同一箱庭に共存する", () => {
     for (const seed of REP_SEEDS) {
       const model = cached(seed, { water: 90 });

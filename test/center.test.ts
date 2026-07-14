@@ -1,8 +1,8 @@
 /**
- * PHASE 5a commit 16: 中心建築の拡張文法のテスト。
- * 契約は docs/internal/contracts/buildings.md「中心建築(PHASE 5a commit 16)」
+ * 中心建築の拡張文法のテスト。
+ * 契約は docs/internal/contracts/buildings.md「中心建築」
  * (スカイライン契約・4軸→骨格/装飾・発光の規律)、
- * 設計は implementation-spec 1.7節・PHASE 5a。
+ * 設計は implementation-spec 1.7節。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -37,7 +37,7 @@ import {
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
-/** 中心建築の追加語彙+再利用語彙(contracts「PHASE 5a commit 16 の追加語彙」) */
+/** 中心建築の追加語彙+再利用語彙(contracts/buildings.md「中心建築」の追加語彙) */
 const CENTER_PART_TYPES = new Set([
   "plinth",
   "wall",
@@ -104,7 +104,7 @@ function peripheralTop(model: WorldModel): number {
   return top;
 }
 
-/** 4類型の組み合わせ(implementation-spec PHASE 5a の完了条件) */
+/** 4類型の組み合わせ(implementation-spec「中心建築」節の完了条件) */
 const ARCANE: Partial<Params> = { monumentality: 90, arcana: 90 };
 const AUTHORITY: Partial<Params> = {
   monumentality: 90,
@@ -195,7 +195,7 @@ describe("center: 基本契約(contracts「中心建築」)", () => {
 
   it("中庭(kind courtyard)は中心建築の footprint と重ならない", () => {
     let courtyards = 0;
-    // SEEDS に加え、水系刷新(Phase A)後も中庭が確実に現れる代表 seed を補う
+    // SEEDS に加え、中庭が確実に現れる代表 seed を補う
     // (中庭の出現は centerPlan.position 経由で水域配置の影響を受けるため、
     // 特定 seed×combo では偶然出現しないことがある。事前に確認済み)
     for (const seed of [...SEEDS, "seed-c", "harbor-1"]) {
@@ -205,7 +205,7 @@ describe("center: 基本契約(contracts「中心建築」)", () => {
         for (const plaza of model.plazas) {
           if (plaza.kind !== "courtyard") continue;
           // 中心建築の中庭は id "plaza/courtyard"(単一)。一般建物の中庭型
-          // クラスタ(Phase C タスク C4c)は id "plaza/courtyard/<groupId>"
+          // クラスタは id "plaza/courtyard/<groupId>"
           // を持ち、id 空間が分離しているため中心建築の courtyard 検証とは
           // 区別する(契約「中庭型(courtyard)の性質」・network-plaza.md
           // 「Plaza」節)。いずれも中心建築 footprint とは重ならないはず
@@ -257,7 +257,7 @@ describe("center: スカイライン契約(周辺最高点 × skylineRatio)", ()
   });
 });
 
-describe("center: 4軸の組み合わせ分岐(implementation-spec 1.7節・PHASE 5a)", () => {
+describe("center: 4軸の組み合わせ分岐(implementation-spec 1.7節)", () => {
   it("(Mon高, Arc高) → 魔導系: 支配軸 arcane、水晶+細長い主塔+発光開口+紋様", () => {
     for (const seed of SEEDS) {
       const model = cached(seed, ARCANE);

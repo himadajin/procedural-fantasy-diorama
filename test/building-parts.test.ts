@@ -1,6 +1,6 @@
 /**
- * PHASE 4a commit 13: 骨格文法(materials / parts)と zoneMask 建物上書きの
- * テスト。契約は docs/internal/contracts/buildings.md
+ * 骨格文法(materials / parts)と zoneMask 建物上書きのテスト。
+ * 契約は docs/internal/contracts/buildings.md
  * 「Part の型語彙」「materialId の語彙」「建物部品の性質」。
  */
 import { describe, expect, it } from "vitest";
@@ -35,9 +35,8 @@ const WALL_IDS = ["rough-wood", "plaster", "stone", "ashlar"];
 const ROOF_IDS = ["thatch", "shingle", "tile", "slate"];
 const TRIM_IDS = ["wood", "stone"];
 const ALL_MATERIAL_IDS = new Set([...WALL_IDS, ...ROOF_IDS, ...TRIM_IDS]);
-/** commit 13 の骨格語彙 + PHASE 4b commit 14 の詳細語彙 +
- *  PHASE 6 commit 19 の水辺拡張語彙(deck) +
- *  Phase C タスク C4c の中庭型語彙(courtyard-wall) */
+/** 骨格語彙 + 詳細部品の語彙 + 水辺建築の拡張語彙(deck) +
+ *  中庭型(courtyard)の語彙(courtyard-wall) */
 const PART_TYPES = new Set([
   "plinth",
   "pile",
@@ -64,12 +63,12 @@ const SITE_PART_TYPES = new Set(["fence", "stair"]);
  *  いずれかのメンバー区画から 1.2 以内であればよい) */
 const GROUP_BAND_PART_TYPES = new Set(["courtyard-wall"]);
 
-/** 水辺拡張部品(commit 19。骨格・詳細の性質検査から契約どおり除く) */
+/** 水辺拡張部品(契約「水辺建築の拡張」。骨格・詳細の性質検査から契約どおり除く) */
 function isWaterfront(p: Part): boolean {
   return p.params?.waterfront === 1;
 }
 
-/** 裏庭部品(Phase C タスク C6。fence(背面・側面)・shed の wall/gable)。
+/** 裏庭部品(契約「裏庭の性質」。fence(背面・側面)・shed の wall/gable)。
  *  骨格の壁体・屋根の型別カウント検査からは除き、footprint 帯検査では
  *  SITE_PART_TYPES と同じ流儀(親区画 1.2 帯。ただし連棟の共有裏庭に対応する
  *  ため Building.spanParcelIds の全区画のいずれかから 1.2 以内、へ一般化する。

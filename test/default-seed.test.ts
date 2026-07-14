@@ -4,8 +4,7 @@ import { DEFAULT_PARAMS } from "../src/model/worldmodel";
 import { runPipeline } from "../src/pipeline/run";
 
 /**
- * デフォルト seed の意図の恒久検証(PHASE 7 commit 23。
- * implementation-spec 8章「総合検証」)。
+ * デフォルト seed の意図の恒久検証(implementation-spec 8章「総合検証」)。
  * デフォルト(全パラメータ 50 + 選定 seed)の初回表示が design.md の
  * 「各傾向の中間にある、破綻のない中立な集落」であることの機械検証可能な
  * 部分: 水路 1 本以上・wardLevel 2(部分結界)・部分的な結界壁+魔導塔。
