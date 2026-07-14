@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { CAMERA_INITIAL_AZIMUTH, CAMERA_INITIAL_PITCH } from "./constants";
+import { HOME_DISTANCE_RATIO } from "./framing";
 
 /**
  * 自前 orbit カメラコントローラー(implementation-spec PHASE 1)。
@@ -82,24 +83,27 @@ export class OrbitController {
    * 視点は動かさない。構図へ戻すには resetCamera を呼ぶ。
    *
    * `target` は初期構図の注視点(既定は原点。ワールド側は常にこれで良い)。
-   * ギャラリー(G2)は対象1体が区画の原点寄りにオフセットして立つため、
-   * 対象の概略中心(footprint重心+高さの半分)を渡して画面に収める
-   * (`../../docs/internal/plans/2026-07-14-gallery.md`「ギャラリー表示に
-   * 適した初期カメラ距離は実装判断でよい」)
+   * `homeAzimuth` は初期方位(既定は art-direction 8節の
+   * CAMERA_INITIAL_AZIMUTH。ワールド側は常に既定)。
+   * ギャラリー(G2/G2b)は対象1体を画面に収めるため、対象寸法から導出した
+   * 注視点・距離・正面がやや見える方位を渡す(`framing.ts`
+   * `computeGalleryFraming`。計画書「ギャラリー表示に適した初期カメラ距離は
+   * 実装判断でよい」)
    */
   configure(
     worldSize: number,
     floorY = 0,
     target: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 },
+    homeAzimuth: number = CAMERA_INITIAL_AZIMUTH,
   ): void {
     this.minDistance = worldSize * 0.06;
     this.maxDistance = worldSize * 1.5;
     this.panBound = worldSize * 0.55;
     this.floorY = floorY;
     this.home = {
-      azimuth: CAMERA_INITIAL_AZIMUTH,
+      azimuth: homeAzimuth,
       pitch: CAMERA_INITIAL_PITCH,
-      distance: worldSize * 0.75,
+      distance: worldSize * HOME_DISTANCE_RATIO,
       target: new THREE.Vector3(target.x, target.y, target.z),
     };
   }
