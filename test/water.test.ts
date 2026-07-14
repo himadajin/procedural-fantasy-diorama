@@ -231,7 +231,7 @@ describe("water: Water 増で水域面積が概ね単調増", () => {
 });
 
 describe("water: サマリーと後段予約", () => {
-  it("waterOverview に湖・池の数が入り、canals / bridges は空のまま(PHASE 3 担当)", () => {
+  it("waterOverview に湖・池の数が入り、canals / bridges は空のまま(段6「水路」の担当)", () => {
     const model = build("seed-b", { water: 70 });
     expect(model.summary.waterOverview.lakes).toBe(model.water.lakes.length);
     expect(model.summary.waterOverview.ponds).toBe(model.water.ponds.length);

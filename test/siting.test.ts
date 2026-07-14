@@ -75,7 +75,7 @@ describe("siting: 進入点", () => {
   });
 
   it("進入点は基準角+等間隔+揺らぎのみで決まり、対岸への強制移設(後処理)を行わない" +
-    "(contracts/network-plaza.md Phase A 註記)", () => {
+    "(contracts/network-plaza.md「道路網の性質」entryPoints 節)", () => {
     // water=0 では水域が存在せず nudgeToLand も発火しないため、
     // 進入点は「基準角+等間隔+揺らぎ」の素の式と厳密に一致するはずである。
     // もし対岸移設のような後処理が残っていれば、水域が無くても

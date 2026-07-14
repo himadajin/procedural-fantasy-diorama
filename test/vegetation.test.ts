@@ -1,9 +1,9 @@
 /**
- * 段15「植生」(PHASE 6 commit 20。Phase D で段14 から繰り下げ)のテスト。
+ * 段15「植生」のテスト。
  * 契約は docs/internal/contracts/vegetation-summary.md(Vegetation 節)と
  * contracts/pipeline.md の段契約表。implementation-spec 7章の完了条件
  * (衝突なし・植生勾配・森リング・岸辺植生・draw call 予算・決定性)と、
- * Phase D の回避対象追加(施設 footprint。同契約「回避対象への facilities
+ * 回避対象追加(施設 footprint。同契約「回避対象への facilities
  * 追加」)に対応する。
  */
 import { describe, expect, it } from "vitest";
@@ -156,7 +156,7 @@ describe("段15 植生: 衝突なし(contracts の散布保証)", () => {
     });
   }
 
-  it("施設 footprint を回避する(縁 + 1.0。Phase D「回避対象への facilities 追加」)", () => {
+  it("施設 footprint を回避する(縁 + 1.0。vegetation-summary.md「回避対象への facilities 追加」)", () => {
     // settle 低で農地(field / pasture)が多く切られる世界を使う
     const model = cached("everdusk-101", { settlement: 0 });
     expect(model.facilities.length).toBeGreaterThan(0);
@@ -271,7 +271,7 @@ describe("段15 植生: 散布マスクの勾配(implementation-spec 7章)", () 
 
   it("Water Presence が岸辺植生を駆動する(岸沿いの低木が増える)", () => {
     const dry = cached("everdusk-101", { water: 30 });
-    // water=90 は使わない: タスク A4(水域横断禁止・陸上率0.95)後、everdusk-101
+    // water=90 は使わない: 水域横断禁止・陸上率0.95 の制約下では、everdusk-101
     // の水路本数・経路が変わり(密度場の水路近接ブーストが影響する
     // grid セルの取捨も連動して変わるため)、この seed 個体では water=90 の
     // 岸沿い低木数の差が縮む代表例になった。water=100 は差が十分safe
