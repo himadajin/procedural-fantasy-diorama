@@ -10,7 +10,12 @@
  * (fence / plinth / gable 等)は mesh/buildings.ts の MERGE_HANDLERS を
  * そのまま流用し、経路・形状を建物と完全に一致させる。beam は建物では
  * インスタンス経路だが、施設(柵の柱・横木)ではマージへ寄せる(契約
- * 「新設 4 型はいずれもマージ経路」の柵の集約方針)。
+ * 「新設 4 型はいずれもマージ経路」の柵の集約方針)。door / window
+ * (風車・水車小屋の開口)も建物では INSTANCED_TYPES(共有プールの
+ * インスタンス経路)だが、施設はその共有プールを持たないため
+ * mesh/buildings.ts の `openingPart`(建物の `openingPieces` と同一の
+ * 枠寸法・色をマージバッファへ描く関数)へ寄せ、追加の draw call を
+ * 増やさない。
  *
  * 例外(contracts/facilities.md「表示演出(風車・水車の回転)」): 回転する
  * 部品(`windmill-rotor` / `water-wheel`)は viewer が
@@ -30,6 +35,7 @@ import {
   face,
   makeXform,
   materialColor,
+  openingPart,
   type GeoBuffer,
   type L,
   type W,
@@ -530,6 +536,10 @@ export function buildFacilities(model: WorldModel): THREE.Object3D[] {
       }
       if (part.type === "canopy") {
         canopyPart(part, solid, base);
+        continue;
+      }
+      if (part.type === "door" || part.type === "window") {
+        openingPart(part, solid, base, part.type);
         continue;
       }
       if (part.type === "windmill-rotor") {

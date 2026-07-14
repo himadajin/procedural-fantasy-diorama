@@ -24,6 +24,7 @@ import {
 import { pathLength, pointAlong, waterCrossings } from "../model/geometry";
 import type { WaterField } from "../model/waterfield";
 import {
+  CANAL_WATER_SURFACE_Y,
   ROAD_CROWN,
   ROAD_WATER_SAMPLE_STEP,
   canalLiftAt,
@@ -55,8 +56,9 @@ const PLAZA_CURB_WIDTH = 0.34;
 const PLAZA_STEP = 2.4;
 
 /** 水路の造形: 水面は地面よりわずかに上、縁石天端は水面 +0.4 前後
- * (contracts/ground-water.md Water 節の設計判断) */
-export const CANAL_WATER_Y = 0.04;
+ * (contracts/ground-water.md Water 節の設計判断)。水面高そのものは
+ * mesh/bridgeparts.ts の CANAL_WATER_SURFACE_Y(橋の桁下端の検証基準と
+ * 共用)を使う。 */
 const CANAL_WALL_RISE = 0.4;
 const CANAL_WALL_DIP = 0.3; // 護岸内面が水面下へ潜る深さ(水際を見せない)
 const CANAL_CURB_WIDTH = 0.42;
@@ -451,7 +453,8 @@ function canalFrames(
     const sdf = field.waterSdf(p.x, p.z);
     // 湖・池へ注ぐ端部では水面高を湖・池の水面へ連続に降ろす(contracts Water 節)
     const t = smoothstep01((sdf - 0.5) / CANAL_MOUTH_RAMP);
-    const waterY = WATER_SURFACE_Y + 0.05 + (CANAL_WATER_Y - (WATER_SURFACE_Y + 0.05)) * t;
+    const waterY =
+      WATER_SURFACE_Y + 0.05 + (CANAL_WATER_SURFACE_Y - (WATER_SURFACE_Y + 0.05)) * t;
     let wall = sdf > 0.8;
     if (wall) {
       for (const b of canalBridges) {
