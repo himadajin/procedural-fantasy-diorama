@@ -356,7 +356,11 @@ export interface Wards {
  * 段11「区画」が道路 edge 沿いの矩形敷地として埋める。
  */
 export interface Parcel {
-  /** "parcel/<roadEdgeId>/<L|R>/<slot>"。位置・edge 由来で安定 */
+  /**
+   * residential: "parcel/<roadEdgeId>/<L|R>/<slot>"。
+   * farmland: "parcel/<roadEdgeId>/<L|R>/farm<slot>"(専用の slot 空間。
+   * Phase D。contracts/facilities.md)。いずれも位置・edge 由来で安定
+   */
   id: string;
   /** 接道する道路 edge の id */
   roadEdgeId: string;
@@ -376,6 +380,15 @@ export interface Parcel {
    * contracts/buildings.md「区画グループとクラスタパターン」)
    */
   groupId: string;
+  /**
+   * 区画の種別。既定 residential(Phase D。計画書
+   * `plans/2026-07-14-worldgen-rework-facilities.md` タスク D2a)。
+   * farmland は農村ゾーン(zoning の urbanity < 0.45)の道路沿いに
+   * 追加で切り出される区画で、建物を持たず施設(field / pasture。
+   * contracts/facilities.md)を 1 件持つ。全単射契約(下記「連棟(rowhouse)
+   * の性質」節末尾)は residential 区画のみを対象とする
+   */
+  kind: "residential" | "farmland";
 }
 
 export type BuildingRole =
@@ -445,6 +458,41 @@ export interface Building {
   parts: Part[];
 }
 
+/**
+ * 施設(contracts/facilities.md)。Phase D で新設。段14「施設」が書く
+ * (D2a では常に空配列。生成は D2b〜D5)。
+ */
+export type FacilityKind =
+  | "field"
+  | "pasture"
+  | "well"
+  | "stall"
+  | "windmill"
+  | "watermill"
+  | "pier";
+
+/** 施設の由来メタ(id・RNG ラベル安定化・帰属領域特定に使う) */
+export type FacilityOrigin =
+  | { type: "parcel"; parcelId: string } // field / pasture
+  | { type: "plaza"; plazaId: string } // well(市街)/ stall
+  | { type: "node"; nodeId: string } // well(農村)
+  | { type: "site"; cellId: string } // windmill(候補格子セル)
+  | { type: "canal"; canalId: string } // watermill(水路沿い)
+  | { type: "shore"; shoreLoopId: string; index: number }; // watermill(湖岸沿い)・pier
+
+export interface Facility {
+  /** 由来から安定(contracts/facilities.md「RNG ラベル体系」の id 体系) */
+  id: string;
+  kind: FacilityKind;
+  /** 施設の外形。時計回り・自己交差なし */
+  footprint: Polygon;
+  /** 正面方位(xz 偏角。kind ごとの既定規約は contracts/facilities.md) */
+  facing: number;
+  /** 造形の純関数(kind ごとの buildXxxParts)の出力 */
+  parts: Part[];
+  origin: FacilityOrigin;
+}
+
 export interface Vegetation {
   trees: {
     id: string;
@@ -503,6 +551,12 @@ export interface WorldModel {
   wards: Wards;
   parcels: Parcel[];
   buildings: Building[];
+  /**
+   * 施設(畑・牧草地・井戸・屋台・風車/水車・桟橋)。段14「施設」が書く
+   * (Phase D。D2a では常に空配列。生成は D2b〜D5。
+   * contracts/facilities.md)
+   */
+  facilities: Facility[];
   vegetation: Vegetation;
   summary: Summary;
 }
@@ -547,6 +601,7 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
     },
     parcels: [],
     buildings: [],
+    facilities: [],
     vegetation: { trees: [], shrubs: [], grassPatches: [] },
     summary: {
       buildingCounts: {},

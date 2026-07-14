@@ -917,7 +917,9 @@ export function planGroupLayouts(model: WorldModel): Map<string, ParcelLayout> {
 
   const groups = new Map<string, Parcel[]>();
   for (const parcel of model.parcels) {
-    if (!parcel.groupId) continue;
+    // Phase D: farmland 区画は建物クラスタリングの対象外(建物を持たない。
+    // contracts/buildings.md「全単射の対象範囲」)
+    if (!parcel.groupId || parcel.kind !== "residential") continue;
     let bucket = groups.get(parcel.groupId);
     if (!bucket) {
       bucket = [];
@@ -3889,6 +3891,9 @@ export function runBuildings(model: WorldModel): void {
   }
 
   for (const parcel of model.parcels) {
+    // Phase D: farmland 区画は建物を持たない(0 棟。施設を 1 件持つ。
+    // contracts/buildings.md「全単射の対象範囲」。施設自体の生成は D2b)
+    if (parcel.kind === "farmland") continue;
     const id = `building/${parcel.id.slice("parcel/".length)}`;
 
     // --- グループ計画(雁行・中庭型。C4b では rowhouse 当選も単棟同様に

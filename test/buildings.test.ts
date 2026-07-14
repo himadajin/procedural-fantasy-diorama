@@ -92,9 +92,12 @@ function general(model: WorldModel): WorldModel["buildings"] {
 }
 
 describe("buildings: 骨格データの性質", () => {
-  it("全採択区画がちょうど 1 棟に帰属する(単棟=1区画1棟、連棟=k区画1棟。spanParcelIds の全単射)、中心建築(role center)が末尾に 1 棟(PHASE 5a)", () => {
+  it("全採択 residential 区画がちょうど 1 棟に帰属する(単棟=1区画1棟、連棟=k区画1棟。spanParcelIds の全単射)、中心建築(role center)が末尾に 1 棟(PHASE 5a)", () => {
     // 契約「連棟(rowhouse)の性質」による 1:1 の改訂: 建物は区画と
     // 単射ではなく、spanParcelIds による全単射(区画集合の分割)になる。
+    // Phase D 追補(契約「全単射の対象範囲」。D1a で確定・D2a で実装が
+    // 追いつく): この全単射は kind "residential" の区画のみを対象とする。
+    // kind "farmland" の区画は建物を持たない(下記の別テストで検証)。
     for (const seed of SEEDS) {
       const model = cached(seed);
       const generals = general(model);
@@ -108,9 +111,12 @@ describe("buildings: 骨格データの性質", () => {
       expect(centers[0]?.parts.length).toBeGreaterThan(0);
       expect(centers[0]?.spanParcelIds).toEqual([]);
 
-      const parcelIds = new Set(model.parcels.map((p) => p.id));
-      // spanParcelIds による全単射: 全採択区画の和集合を過不足なく覆い、
-      // 区画の重複帰属がない(区画集合の分割)
+      const residentialParcels = model.parcels.filter(
+        (p) => p.kind === "residential",
+      );
+      const parcelIds = new Set(residentialParcels.map((p) => p.id));
+      // spanParcelIds による全単射: 全採択 residential 区画の和集合を
+      // 過不足なく覆い、区画の重複帰属がない(区画集合の分割)
       const covered = new Set<string>();
       let rowhouseCount = 0;
       for (const b of generals) {
@@ -136,13 +142,35 @@ describe("buildings: 骨格データの性質", () => {
           covered.add(pid);
         }
       }
-      // 全採択区画がちょうど1棟に帰属(過不足なし)
-      expect(covered.size).toBe(model.parcels.length);
-      for (const p of model.parcels) expect(covered.has(p.id)).toBe(true);
+      // 全採択 residential 区画がちょうど1棟に帰属(過不足なし)
+      expect(covered.size).toBe(residentialParcels.length);
+      for (const p of residentialParcels) expect(covered.has(p.id)).toBe(true);
       // このテストが空検証にならないことの記録用(rowhouseCount は
       // seed によっては 0 のことがあるため厳密な下限は課さない)
       expect(rowhouseCount).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it("farmland 区画は建物を 0 棟持つ(Phase D。contracts/buildings.md「全単射の対象範囲」)", () => {
+    // Settlement を下げて farmland の実測件数を確保する(既定 Settlement=50
+    // では seed によって farmland が 0 件のことがあるため、このテストは
+    // farmland が確実に生じる Settlement=0 で検証する)
+    let totalFarmland = 0;
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 0 });
+      const farmlandIds = new Set(
+        model.parcels.filter((p) => p.kind === "farmland").map((p) => p.id),
+      );
+      totalFarmland += farmlandIds.size;
+      for (const b of model.buildings) {
+        expect(b.parcelId ? farmlandIds.has(b.parcelId) : false).toBe(false);
+        for (const pid of b.spanParcelIds) {
+          expect(farmlandIds.has(pid)).toBe(false);
+        }
+      }
+    }
+    // このテストが空検証にならないことの記録用
+    expect(totalFarmland).toBeGreaterThan(0);
   });
 
   it("全一般建物が接道正面を持つ(親区画の frontEdge と道路の距離で機械検証)", () => {
