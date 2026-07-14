@@ -16,6 +16,7 @@
 | [network-plaza.md](network-plaza.md) | Density(FieldGrid)・zoning(市街度。Phase B)・Network(street の有機成長・小道を含む)・Plaza・CenterPlan |
 | [wards.md](wards.md) | Wards(結界計画)・結界構造の立体化(commit 17)・魔法灯・浮遊要素・橋の立体化(commit 18) |
 | [buildings.md](buildings.md) | Parcel・Building・Part の変換規約・Part の型語彙(全 commit 分)・インスタンス経路のピース分解・中心建築・水辺建築の拡張 |
+| [facilities.md](facilities.md) | Facility(畑・牧草地・井戸・屋台・風車/水車・桟橋)のスキーマ・kind ごとの配置条件・衝突/帯検証則・RNG ラベル体系・造形の純関数分離(Phase D) |
 | [materials.md](materials.md) | Part の `materialId` の語彙(基準色。art-direction 5.1節と同期) |
 | [vegetation-summary.md](vegetation-summary.md) | Vegetation・Summary |
 | [pipeline.md](pipeline.md) | 生成パイプラインの段構成・段契約・乱数サブストリーム・正規化ハッシュ |

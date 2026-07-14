@@ -17,7 +17,7 @@ interface Vegetation {
 }
 ```
 
-植生の性質(段14「植生」= `pipeline/vegetation.ts` が保証し、
+植生の性質(段15「植生」= `pipeline/vegetation.ts` が保証し、
 後段・メッシュビルダーが前提としてよい):
 
 - **格子走査**: 一辺 `VEG_CELL = 5.0`(実寸)のセル格子を
@@ -52,8 +52,9 @@ interface Vegetation {
   境界(内側 2.2 未満)、水面(湖・池の waterSdf < 1.2)、水路
   (中心線距離 − 幅/2 < 1.2)、道路(edge.path への距離 <
   edge.width/2 + 1.4)、広場(縁 + 1.0)、建物 footprint(縁 + 1.0)、
-  `centerPlan.footprint`(+ 1.5)、結界環(ringPath への距離 < 2.2)、
-  聖域(3.5 未満)・魔導塔(4.0 未満)と衝突しない。
+  施設 footprint(縁 + 1.0。Phase D 追補。下記「回避対象への facilities
+  追加」)、`centerPlan.footprint`(+ 1.5)、結界環(ringPath への距離 <
+  2.2)、聖域(3.5 未満)・魔導塔(4.0 未満)と衝突しない。
   grassPatch は多角形半径ぶんクリアランスへ上乗せして判定する
 - **上限(性能配慮)**: 木 2000 / 低木 1200 / 草むら 320。超過時は
   候補ごとに引いた間引きキー(採択後に 1 値消費)の昇順・同点は id 順で
@@ -65,6 +66,23 @@ interface Vegetation {
   半径 1.6〜3.0 の不整形 6 角形(時計回り)
 - パイプライン内アサーション: 衝突ゼロ・上限維持を検証し、違反は
   throw せず件数を console に出す
+
+#### 回避対象への facilities 追加(Phase D。計画書
+`plans/2026-07-14-worldgen-rework-facilities.md` タスク D1a・実装は D2b)
+
+- 段14「施設」(pipeline.md)は段15「植生」より前に走るため、植生は
+  施設(`model.facilities`)の存在を前提にできる。上記「衝突除外」の
+  施設 footprint クリアランス(縁 + 1.0。既存の建物 footprint と同じ帯
+  幅の流儀)を、trees / shrubs / grassPatches の候補点判定へ追加する
+  (畑・牧草地の畝や柵の中に木が生えることを防ぐ)。
+- farmland 区画自体(`Parcel.kind === "farmland"`)は既存の「建物
+  footprint」判定の対象外(施設 footprint は区画 polygon とほぼ一致する
+  ため、実質的には区画全体が回避対象になる)。residential 区画は従来どおり
+  区画自体は回避対象ではなく、建物 footprint のみが対象(既存契約のまま
+  変更しない)。
+- 施設 footprint のクリアランス値(+1.0)は既存の建物・広場と同じ値を
+  そのまま流用する提案値(施設ごとに個別のクリアランスは設けない。D2b
+  実測で不足があれば本節を同一 commit で更新する)。
 
 **植生の立体化(メッシュビルダー `src/mesh/vegetation.ts`)**:
 Part 語彙は使わず、植生専用の InstancedMesh 2 + マージ 1 で描く
@@ -103,11 +121,19 @@ interface Summary {
 }
 ```
 
-`summary` は段15「サマリー」(`pipeline/summary.ts`)が全フィールドを
+`summary` は段16「サマリー」(`pipeline/summary.ts`)が全フィールドを
 **最終確定**する(中間PHASEの各段は同名フィールドを部分的に先埋めしてよいが、
-段15 が最終状態の WorldModel から機械的に再算出して上書きするため、
-中間の先埋めと最終値の乖離は起こらない)。段15 は乱数サブストリームを
-消費しない(モデル状態からの決定的な集計)。表示名は段15「箱庭を書き留めています…」。
+段16 が最終状態の WorldModel から機械的に再算出して上書きするため、
+中間の先埋めと最終値の乖離は起こらない)。段16 は乱数サブストリームを
+消費しない(モデル状態からの決定的な集計)。表示名は段16「箱庭を書き留めています…」。
+
+**施設カウントの追加(Phase D タスク D6 で実装。本節は枠のみ)**: `Summary`
+は `buildingCounts` と並ぶ施設カウントのフィールド(`facilities.md`
+「kind 一覧」の kind 別集計。`buildingCounts` と同じ
+`Record<kind, count>` 形を想定するが、フィールド名・正確な型は D6 で
+確定する)を追加する。既存フィールド(`buildingCounts` 以下)の型・算出規則
+は変えない。design.md「UI とサマリー」節のサマリー表示項目への反映も D6 の
+スコープ(本書 D1a はスキーマの拡張余地を明記するのみ)。
 
 各フィールドの算出規則:
 
@@ -149,5 +175,5 @@ WorldModel に入れると正規化ハッシュがレンダラー依存になり
 のと同じ量であり、サマリー表示側と重複した WorldModel フィールドは持たない。
 
 `hash` は `pipeline.md` の正規化ハッシュ。`runPipeline` が全段完了後
-(= 段15 の後)に格納する(PHASE 2 で導入し、以降の全PHASEで常時有効)。
+(= 段16 の後)に格納する(PHASE 2 で導入し、以降の全PHASEで常時有効)。
 `hash` 自身はハッシュ計算から除外するため、格納後もハッシュ値は変わらない。

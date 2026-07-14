@@ -52,6 +52,7 @@ interface WorldModel {
   wards: Wards;
   parcels: Parcel[];
   buildings: Building[];
+  facilities: Facility[];       // 施設(畑・牧草地・井戸・屋台・風車/水車・桟橋)。段14「施設」が書く(Phase D。植生・サマリーは段15・16へ繰り下げ)
   vegetation: Vegetation;
   summary: Summary;
 }
@@ -70,6 +71,19 @@ interface WorldModel {
 > 参照のみを持つ(スキーマ定義は buildings.md に 1 箇所だけ置く方針。
 > 本索引冒頭の規約に従う)。実装はタスク C2(groupId)・C5
 > (spanParcelIds)で追いつく。
+
+> **Phase D 註記**(`plans/2026-07-14-worldgen-rework-facilities.md`。
+> タスク D1a): 上記 `facilities` フィールドの `Facility` スキーマは
+> [facilities.md](facilities.md) が正であり、本書は参照のみを持つ
+> (定義は facilities.md に 1 箇所だけ置く方針。本索引冒頭の規約に従う)。
+> `Parcel.kind`(`"residential" | "farmland"`。既定 `"residential"`)の
+> スキーマも同じ方針で [buildings.md](buildings.md)「Parcel / Building」節
+> (Parcel interface)が正であり、本書には追加しない。実装はタスク
+> D2a(`facilities` フィールド・`Parcel.kind` とも導入。この時点では
+> `facilities` は常に空配列、`Parcel.kind` は常に `"residential"`)で
+> 追いつく。それまでコードは `facilities` フィールドを持たず、
+> `Parcel.kind` の区別も持たない(全区画が現行仕様どおり residential 相当
+> として動作する)。
 
 ### Meta(導出設定。PHASE 2〜)
 
