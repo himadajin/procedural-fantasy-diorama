@@ -8,7 +8,13 @@
  * 表示プリセット依存のため WorldModel には持たず、UI が表示時に埋める。
  * three 非依存の純関数。
  */
-import type { BuildingRole, Vec2, WorldModel } from "../model/worldmodel";
+import {
+  FACILITY_KIND_ORDER,
+  type BuildingRole,
+  type FacilityKind,
+  type Vec2,
+  type WorldModel,
+} from "../model/worldmodel";
 import { pathLength } from "../model/geometry";
 
 /** 支配軸ごとの都市の性格語(centerDescription の主文) */
@@ -96,12 +102,21 @@ export function runSummary(model: WorldModel): void {
     buildingCounts[role] = (buildingCounts[role] ?? 0) + 1;
   }
 
+  // 施設数(kind 別内訳)。buildingCounts と異なり全 kind を常にキーに持つ
+  // (0 件の kind も落とさない密な形。contracts/vegetation-summary.md
+  // Summary 節「施設カウントの追加」)
+  const facilityCounts = Object.fromEntries(
+    FACILITY_KIND_ORDER.map((kind) => [kind, 0]),
+  ) as Record<FacilityKind, number>;
+  for (const f of model.facilities) facilityCounts[f.kind] += 1;
+
   // 道路総延長(小道込みの最終総和)
   let roadLength = 0;
   for (const edge of model.network.edges) roadLength += pathLength(edge.path);
 
   model.summary = {
     buildingCounts,
+    facilityCounts,
     centerDescription: buildCenterDescription(model),
     waterOverview: {
       lakes: model.water.lakes.length,
