@@ -2,12 +2,13 @@
  * ギャラリー生成エントリ(`../plans/2026-07-14-gallery.md` G1)。
  * 契約の正は `docs/internal/contracts/pipeline.md`「ギャラリー生成エントリ」節。
  *
- * `runPipeline` と並ぶ第二の正式な生成エントリ。造形(建物、将来は施設・
+ * `runPipeline` と並ぶ第二の正式な生成エントリ。造形(建物・施設。将来は
  * 中心建築)を単体でプロシージャル生成する。`createEmptyWorldModel` +
  * 最小限のフィールド上書き(平坦な地面1枚・区画1枚)で極小 WorldModel を
- * 合成し、本番の生成関数(`buildParcelBuilding` / `createSiteContext`)
- * **のみ**で対象を1体生成する。ギャラリー専用の造形・描画ロジックは
- * 一切持たない(本番の絵と乖離させないための契約の核心)。three 非依存。
+ * 合成し、本番の生成関数(建物 = `buildParcelBuilding` /
+ * `createSiteContext`、施設 = `buildFarmlandFacility`)**のみ**で対象を
+ * 1体生成する。ギャラリー専用の造形・描画ロジックは一切持たない
+ * (本番の絵と乖離させないための契約の核心)。three 非依存。
  */
 import {
   DEFAULT_PARAMS,
@@ -25,6 +26,7 @@ import { computeDerived } from "./derive";
 import { generateZoneMask } from "./ground";
 import { createSiteContext } from "./parcels";
 import { buildParcelBuilding, SINGLE_BUILD_OPTIONS } from "./buildings";
+import { buildFarmlandFacility } from "./facilities";
 import { runSummary } from "./summary";
 
 // --- 極小ワールドの寸法(契約「極小ワールドの合成規約」の実装判断。
@@ -105,7 +107,7 @@ function createWatersidePond(): Polygon {
  * 極小ワールドを合成し、本番の生成関数のみで対象(一般建物1棟)を生成する。
  * 本番のパイプライン段(pipeline/derive 等)は順に実行しない。
  * `computeDerived`(段1「導出設定」の純関数)・`generateZoneMask`(段2
- * 「地面」の純関数。G1b)・`runSummary`(段15「サマリー」。乱数非消費・
+ * 「地面」の純関数。G1b)・`runSummary`(段16「サマリー」。乱数非消費・
  * モデル状態からの決定的な集計)は、対象生成(`buildParcelBuilding`)
  * そのものではなく極小モデルの合成・出力整形の一部として直接呼ぶ
  * (本番の造形・判定ロジックを再実装しないための選択)。
@@ -145,11 +147,67 @@ function buildSingleBuildingWorld(
   return model;
 }
 
+// --- 施設(farmland)対象の極小ワールド(Phase D タスク D2b。
+//     contracts/facilities.md「造形の純関数分離」のギャラリー制約) ---
+/**
+ * ギャラリーの農地区画の間口(実寸)。本番の農地間口帯
+ * (clamp(1.7 × residential 候補間口の中央値, 14, 40)。契約「農地区画の
+ * 寸法帯」)の代表値。奥行きは本番と同じ比 1.6。
+ */
+const FARM_PARCEL_FRONTAGE = 26;
+const FARM_PARCEL_DEPTH = FARM_PARCEL_FRONTAGE * 1.6;
+
+/** 施設(farmland)対象用の農地区画 1 枚(接道正面 z=0。建物側と同じ流儀) */
+function createGalleryFarmParcel(): Parcel {
+  const half = FARM_PARCEL_FRONTAGE / 2;
+  const fl: Vec2 = { x: -half, z: 0 };
+  const fr: Vec2 = { x: half, z: 0 };
+  const br: Vec2 = { x: half, z: FARM_PARCEL_DEPTH };
+  const bl: Vec2 = { x: -half, z: FARM_PARCEL_DEPTH };
+  return {
+    id: "parcel/gallery/L/farm0",
+    roadEdgeId: "gallery",
+    polygon: ensureClockwise([fl, fr, br, bl]),
+    frontEdge: [fl, fr],
+    facing: -Math.PI / 2,
+    waterside: false,
+    canalside: false,
+    groupId: "",
+    kind: "farmland",
+  };
+}
+
+/**
+ * 極小ワールドを合成し、本番の施設生成関数(`buildFarmlandFacility` =
+ * 段14 の本番ループと同一の関数)のみで対象(field / pasture)を 1 件
+ * 生成する。kind の抽選は本番どおり消費した上で対象の kind へ置き換える
+ * (建物の role 強制と同じ「消費は保つが結果は捨てる」意味論)。
+ */
+function buildSingleFacilityWorld(
+  seed: string,
+  params: Params,
+  kind: "field" | "pasture",
+): WorldModel {
+  const model = createEmptyWorldModel(seed, params);
+  model.meta.derived = computeDerived(seed, params);
+  model.ground.boundary = createGalleryBoundary();
+  model.ground.size = WORLD_HALF_EXTENT * 2;
+  model.ground.zoneMask = generateZoneMask(seed, model.ground.size);
+
+  const parcel = createGalleryFarmParcel();
+  model.parcels = [parcel];
+  model.facilities = [buildFarmlandFacility(seed, parcel, kind)];
+
+  runSummary(model);
+  model.summary.hash = hashWorldModel(model);
+  return model;
+}
+
 /**
  * 対象id → 極小ワールド合成関数の対応表(契約「対象idの体系」)。
- * MVP(本タスク G1): 一般建物の全 role(`BuildingRole` から "center" を
- * 除いた6つ)。将来の対象(中心建築 `center`・施設 `facility/<kind>`。
- * Phase D)はこの表に行を足すだけで成立する設計(早すぎる抽象化を避ける)。
+ * MVP(G1): 一般建物の全 role(`BuildingRole` から "center" を除いた6つ)。
+ * Phase D タスク D2b で施設 `facility/field` / `facility/pasture` を追加
+ * (以後の施設 kind は D3〜D5 の各実装タスクが行を足す)。
  */
 const GALLERY_TARGETS: Readonly<
   Record<string, (seed: string, params: Params) => WorldModel>
@@ -166,6 +224,10 @@ const GALLERY_TARGETS: Readonly<
     buildSingleBuildingWorld(seed, params, "warehouse"),
   "building/outskirt": (seed, params) =>
     buildSingleBuildingWorld(seed, params, "outskirt"),
+  "facility/field": (seed, params) =>
+    buildSingleFacilityWorld(seed, params, "field"),
+  "facility/pasture": (seed, params) =>
+    buildSingleFacilityWorld(seed, params, "pasture"),
 };
 
 /** 実装済みの対象id一覧(UI・URL 検証(G2)が使う) */

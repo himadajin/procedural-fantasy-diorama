@@ -20,6 +20,8 @@ WorldModel スキーマ契約の一部(2026-07-07 に worldmodel.md から分割
 | `shingle` | `#7a6a52` | 木羽屋根 |
 | `tile` | `#a0563c` | 瓦屋根 |
 | `slate` | `#5c6b7a` | スレート屋根 |
+| `tilled-soil` | `#63513e` | 耕土(畑の基盤・畝。Phase D タスク D2b。基準色は art-direction 5.5節) |
+| `meadow` | `#94a166` | 牧草(牧草地のパッチ。Phase D タスク D2b。同上) |
 | `glow` | (art-direction 5.4節) | 発光部品(`crystal` / `sigil`)。基準色表は使わず、発光束のマテリアル規範(上記)に従う |
 
 - 色の正はメッシュビルダーの基準色表(`src/mesh/buildings.ts`)とし、

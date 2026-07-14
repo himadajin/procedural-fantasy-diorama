@@ -508,7 +508,7 @@ export interface Vegetation {
 
 /**
  * 生成結果サマリー(contracts/vegetation-summary.md Summary 節)。
- * 段15「サマリー」(pipeline/summary.ts)が全フィールドを最終状態の
+ * 段16「サマリー」(pipeline/summary.ts)が全フィールドを最終状態の
  * WorldModel から機械算出して確定する。生成物と乖離させない。
  * 複雑度(頂点数・インスタンス数・draw call)はレンダラー実測値
  * (renderer.info)であり表示プリセット依存のため WorldModel には持たず、

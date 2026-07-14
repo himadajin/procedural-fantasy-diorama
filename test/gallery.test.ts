@@ -18,10 +18,13 @@ function targetId(role: (typeof ROLES)[number]): string {
   return `building/${role}`;
 }
 
+/** Phase D タスク D2b で対象化した施設 kind(D3〜D5 で kind が増える) */
+const FACILITY_TARGETS = ["facility/field", "facility/pasture"] as const;
+
 describe("gallery: 対象idの体系(契約「対象idの体系」)", () => {
-  it("MVP の対象idは一般建物の全6 role(center を除く)", () => {
+  it("対象idは一般建物の全6 role(center を除く)+ 施設 field / pasture(D2b)", () => {
     expect([...GALLERY_TARGET_IDS].sort()).toEqual(
-      ROLES.map(targetId).sort(),
+      [...ROLES.map(targetId), ...FACILITY_TARGETS].sort(),
     );
   });
 
@@ -170,6 +173,66 @@ describe("gallery: 自明でない生成(seed・params で結果が変わる)", 
       explicit50,
     );
     expect(withDefault.summary.hash).toBe(withExplicit.summary.hash);
+  });
+});
+
+describe("gallery: 施設対象(facility/field・facility/pasture。Phase D D2b)", () => {
+  for (const id of FACILITY_TARGETS) {
+    const kind = id.split("/")[1] as "field" | "pasture";
+    it(`${id}: 同一入力2回で完全一致し、kind どおりの施設1件が生成される`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "everdusk-101", {});
+      expect(a.summary.hash).toBe(b.summary.hash);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+
+      expect(a.buildings.length).toBe(0);
+      expect(a.facilities.length).toBe(1);
+      const facility = a.facilities[0];
+      expect(facility).toBeDefined();
+      if (!facility) return;
+      expect(facility.kind).toBe(kind);
+      expect(facility.parts.length).toBeGreaterThan(0);
+      expect(facility.origin).toEqual({
+        type: "parcel",
+        parcelId: "parcel/gallery/L/farm0",
+      });
+      // footprint は農地区画そのもの(契約: 区画 = 施設の帰属領域)
+      const parcel = a.parcels[0];
+      expect(parcel).toBeDefined();
+      if (!parcel) return;
+      expect(parcel.kind).toBe("farmland");
+      expect(facility.footprint).toEqual(parcel.polygon);
+    });
+
+    it(`${id}: seed を変えるとハッシュが変わる`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "seed-b", {});
+      expect(a.summary.hash).not.toBe(b.summary.hash);
+    });
+  }
+
+  it("field は畝(ground-patch)の列、pasture は単一パッチ+横木2本の柵(D1b 造形)", () => {
+    const field = buildGalleryWorld("facility/field", "everdusk-101", {})
+      .facilities[0]!;
+    const pasture = buildGalleryWorld("facility/pasture", "everdusk-101", {})
+      .facilities[0]!;
+    const patches = (parts: typeof field.parts): typeof field.parts =>
+      parts.filter((p) => p.type === "ground-patch");
+    // field: 基盤 1 + 畝 N(≥ 2)。畝は params.top を持つ
+    expect(patches(field.parts).length).toBeGreaterThan(2);
+    expect(
+      patches(field.parts).filter((p) => p.params?.top !== undefined).length,
+    ).toBeGreaterThan(1);
+    // pasture: パッチはちょうど 1(牧草)
+    expect(patches(pasture.parts).length).toBe(1);
+    expect(patches(pasture.parts)[0]?.materialId).toBe("meadow");
+    // 柵はどちらも beam(木)のみで構成される
+    for (const f of [field, pasture]) {
+      for (const p of f.parts) {
+        expect(["ground-patch", "beam"]).toContain(p.type);
+        if (p.type === "beam") expect(p.materialId).toBe("wood");
+      }
+    }
   });
 });
 

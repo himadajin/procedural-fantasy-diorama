@@ -168,12 +168,21 @@ export function renderSummary(
 }
 
 /**
- * ギャラリー対象id(`building/<role>`)の表示ラベル(日本語の role 名)。
- * 対象セレクタ(G2)と簡易サマリーが共用する
+ * 施設 kind の表示名(内部 kind → 日本語。Phase D。対象化した kind のみ。
+ * D3〜D5 の各実装タスクが行を足す)
+ */
+const FACILITY_LABELS: Record<string, string> = {
+  field: "畑",
+  pasture: "牧草地",
+};
+
+/**
+ * ギャラリー対象id(`building/<role>` / `facility/<kind>`)の表示ラベル
+ * (日本語名)。対象セレクタ(G2)と簡易サマリーが共用する
  */
 export function galleryTargetLabel(targetId: string): string {
-  const role = targetId.split("/")[1] ?? targetId;
-  return ROLE_LABELS[role] ?? role;
+  const name = targetId.split("/")[1] ?? targetId;
+  return ROLE_LABELS[name] ?? FACILITY_LABELS[name] ?? name;
 }
 
 /**
@@ -187,14 +196,15 @@ export function renderGallerySummary(
   model: WorldModel,
 ): void {
   container.replaceChildren();
-  const building = model.buildings[0];
+  // 対象は建物または施設(Phase D)。どちらも parts を持つ
+  const target = model.buildings[0] ?? model.facilities[0];
 
   container.appendChild(
     row("対象", `${galleryTargetLabel(targetId)} (${targetId})`),
   );
   container.appendChild(row("seed", model.meta.seed));
   container.appendChild(
-    row("部品数", building ? fmtInt(building.parts.length) : "—"),
+    row("部品数", target ? fmtInt(target.parts.length) : "—"),
   );
   container.appendChild(row("ハッシュ", `#${model.summary.hash}`));
 }

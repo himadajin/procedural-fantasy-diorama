@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { FLOOR_HEIGHT } from "../src/model/worldmodel";
+import {
+  FLOOR_HEIGHT,
+  type Polygon,
+  type WorldModel,
+} from "../src/model/worldmodel";
 import { buildGalleryWorld, GALLERY_TARGET_IDS } from "../src/pipeline/gallery";
 import {
   computeGalleryFraming,
@@ -15,13 +19,42 @@ function homeDistance(size: number): number {
   return size * HOME_DISTANCE_RATIO;
 }
 
+/**
+ * 検証用: 対象(建物または施設。Phase D で施設対象を追加)の footprint・
+ * 全高の見積もり・facing。framing 側の実装を再利用せず素朴に導出する
+ */
+function targetInfo(model: WorldModel): {
+  footprint: Polygon;
+  top: number;
+  facing: number;
+} {
+  const b = model.buildings[0];
+  if (b) {
+    return {
+      footprint: b.footprint,
+      top: b.foundation.plinthHeight + b.floors * FLOOR_HEIGHT,
+      facing: b.facing,
+    };
+  }
+  const f = model.facilities[0];
+  if (!f) throw new Error("gallery world has no target");
+  let top = 0.5;
+  for (const p of f.parts) {
+    top = Math.max(
+      top,
+      p.transform.position[1] + Math.abs(p.transform.scale[1]),
+    );
+  }
+  return { footprint: f.footprint, top, facing: f.facing };
+}
+
 describe("framing: ギャラリー初期構図(対象寸法駆動。G2b)", () => {
   it("全対象: 外接球(footprintバウンディングボックス+全高見積もり)が視野に余白つきで収まる距離になる", () => {
     for (const targetId of GALLERY_TARGET_IDS) {
       for (const aspect of [DESKTOP_ASPECT, MOBILE_ASPECT]) {
         const model = buildGalleryWorld(targetId, "everdusk-101", {});
         const f = computeGalleryFraming(model, CAMERA_FOV, aspect);
-        const building = model.buildings[0]!;
+        const info = targetInfo(model);
 
         // 対象の外接半径の下限(パディング・屋根見積もりを除いた素の寸法)。
         // framing の距離が「この下限がぴったり収まる距離」以上であることを、
@@ -30,7 +63,7 @@ describe("framing: ギャラリー初期構図(対象寸法駆動。G2b)", () =>
         let maxX = -Infinity;
         let minZ = Infinity;
         let maxZ = -Infinity;
-        for (const p of building.footprint) {
+        for (const p of info.footprint) {
           minX = Math.min(minX, p.x);
           maxX = Math.max(maxX, p.x);
           minZ = Math.min(minZ, p.z);
@@ -38,9 +71,7 @@ describe("framing: ギャラリー初期構図(対象寸法駆動。G2b)", () =>
         }
         const w = maxX - minX;
         const d = maxZ - minZ;
-        const wallTop =
-          building.foundation.plinthHeight + building.floors * FLOOR_HEIGHT;
-        const rawR = Math.hypot(w / 2, d / 2, wallTop / 2);
+        const rawR = Math.hypot(w / 2, d / 2, info.top / 2);
 
         const halfV = ((CAMERA_FOV / 2) * Math.PI) / 180;
         const halfH = Math.atan(Math.tan(halfV) * aspect);
@@ -94,14 +125,14 @@ describe("framing: ギャラリー初期構図(対象寸法駆動。G2b)", () =>
     for (const targetId of GALLERY_TARGET_IDS) {
       const model = buildGalleryWorld(targetId, "everdusk-101", {});
       const f = computeGalleryFraming(model, CAMERA_FOV, DESKTOP_ASPECT);
-      const building = model.buildings[0]!;
+      const info = targetInfo(model);
       // カメラは target + (sin az, cos az)×距離 に立つ(orbit.ts)。
       // そのオフセット方向と正面方向 (cos facing, sin facing) の内積が
       // 正なら、カメラは正面側の半空間にいる
       const camDir = { x: Math.sin(f.azimuth), z: Math.cos(f.azimuth) };
       const front = {
-        x: Math.cos(building.facing),
-        z: Math.sin(building.facing),
+        x: Math.cos(info.facing),
+        z: Math.sin(info.facing),
       };
       const dot = camDir.x * front.x + camDir.z * front.z;
       expect(dot).toBeGreaterThan(0);

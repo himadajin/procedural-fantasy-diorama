@@ -1,6 +1,6 @@
 /**
  * 生成パイプラインの段構成(contracts/pipeline.md の段契約)。
- * 段1「導出設定」〜段15「サマリー」まで。
+ * 段1「導出設定」〜段16「サマリー」まで。
  * 表示名は Generating インジケーターにそのまま使う(art-direction 9.5節)。
  */
 import type { PipelineStep } from "./run";
@@ -17,6 +17,7 @@ import { runPaving } from "./paving";
 import { runParcels } from "./parcels";
 import { runBuildings } from "./buildings";
 import { runLanes } from "./lanes";
+import { runFacilities } from "./facilities";
 import { runVegetation } from "./vegetation";
 import { runSummary } from "./summary";
 
@@ -35,6 +36,7 @@ export function buildSteps(): PipelineStep[] {
     { name: "敷地を区切っています…", run: runParcels },
     { name: "家々を建てています…", run: runBuildings },
     { name: "小道を通しています…", run: runLanes },
+    { name: "暮らしの気配を配っています…", run: runFacilities },
     { name: "草木を茂らせています…", run: runVegetation },
     { name: "箱庭を書き留めています…", run: runSummary },
   ];

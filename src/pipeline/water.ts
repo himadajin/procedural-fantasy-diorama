@@ -437,7 +437,7 @@ export function runWater(model: WorldModel): void {
     params.water < 15 ? 0 : clamp((params.water - 15) / 85, 0, 1) * 0.85;
   model.ground.edgeStyle = edgeRoll < waterEdgeChance ? "water" : "fog";
 
-  // サマリー(段15 の担当だが、中間PHASEでは部分的に埋める)
+  // サマリー(段16 の担当だが、中間PHASEでは部分的に埋める)
   model.summary.waterOverview.lakes = lakes.length;
   model.summary.waterOverview.ponds = ponds.length;
 

@@ -1,5 +1,5 @@
 /**
- * 段15「サマリー」: 生成結果サマリー(contracts/vegetation-summary.md Summary 節)。
+ * 段16「サマリー」: 生成結果サマリー(contracts/vegetation-summary.md Summary 節)。
  * 最終状態の WorldModel から機械的に全フィールドを再算出して確定する。
  * 中間PHASEの各段は同名フィールドを部分的に先埋めするが、本段が最終値で
  * 上書きするため、サマリーは常に生成物と一致する(乖離しない)。
@@ -87,7 +87,7 @@ export function buildCenterDescription(model: WorldModel): string {
   return `${main}${tail}を持つ。`;
 }
 
-/** 段15「サマリー」の実体: summary 全フィールドを最終確定する */
+/** 段16「サマリー」の実体: summary 全フィールドを最終確定する */
 export function runSummary(model: WorldModel): void {
   // 建物数(役割別内訳)。出現した役割のみキーを持つ
   const buildingCounts: Record<string, number> = {};
