@@ -584,15 +584,41 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                     94790fdf → 9b96a6dd
   //   seed-b {}                     c682f116 → fc152906
   //   seed-b {water:70}             bfa32c09 → 98d588bf
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D2b
+  // (畑・牧草地の生成)による意図的な更新(2026-07-14):
+  // (1) 段14「施設」の新設(contracts/pipeline.md 段契約表。植生 15・
+  //     サマリー 16 へ繰り下げ): farmland 区画ごとに施設 1 件
+  //     (field 0.68 / pasture 0.32 のコイン抽選)を生成し
+  //     `model.facilities` へ書く。乱数は新設ストリーム
+  //     `facility/farmland/<parcelId>` のみを消費し、既存の全ストリームの
+  //     消費列は不変(contracts/facilities.md「RNG ラベル体系」)。
+  // (2) 造形(contracts/facilities.md「kind ごとの造形の性質」D1b):
+  //     field = 耕土の基盤+作物の緑の畝列+post-and-rail の木柵、
+  //     pasture = 牧草パッチ+横木 2 本の柵。parts が facilities 配下に
+  //     入るためモデル内容が変わりハッシュが更新される。
+  // (3) 植生の回避対象に施設 footprint(縁 + 1.0)を追加
+  //     (contracts/vegetation-summary.md「回避対象への facilities 追加」。
+  //     乱数消費は不変で採択のみ変わる)。
+  // worldScale:0 の組は farmland が 1 件も切られず(D2a 実測)、施設 0・
+  // 植生の回避対象も空のため、ハッシュは D2a から不変。
+  // 新旧対応(D2a → D2b):
+  //   everdusk-101 {}               2a39c640 → d7c292ce
+  //   everdusk-101 {water:0}        a388ba50 → 07a31f4e
+  //   everdusk-101 {water:95}       b8c119eb → f6914e3e
+  //   everdusk-101 {worldScale:0}   1ad27f0e → 1ad27f0e(不変)
+  //   everdusk-101 {worldScale:100} 22074c19 → 9071f16c
+  //   seed-a {}                     9b96a6dd → f018e8cc
+  //   seed-b {}                     fc152906 → f28f4d06
+  //   seed-b {water:70}             98d588bf → 5430d443
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "2a39c640"],
-    ["everdusk-101", { water: 0 }, "a388ba50"],
-    ["everdusk-101", { water: 95 }, "b8c119eb"],
+    ["everdusk-101", {}, "d7c292ce"],
+    ["everdusk-101", { water: 0 }, "07a31f4e"],
+    ["everdusk-101", { water: 95 }, "f6914e3e"],
     ["everdusk-101", { worldScale: 0 }, "1ad27f0e"],
-    ["everdusk-101", { worldScale: 100 }, "22074c19"],
-    ["seed-a", {}, "9b96a6dd"],
-    ["seed-b", {}, "fc152906"],
-    ["seed-b", { water: 70 }, "98d588bf"],
+    ["everdusk-101", { worldScale: 100 }, "9071f16c"],
+    ["seed-a", {}, "f018e8cc"],
+    ["seed-b", {}, "f28f4d06"],
+    ["seed-b", { water: 70 }, "5430d443"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

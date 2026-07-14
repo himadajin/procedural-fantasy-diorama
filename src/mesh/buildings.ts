@@ -60,10 +60,13 @@ export const MATERIAL_COLORS: Record<string, string> = {
   shingle: "#7a6a52",
   tile: "#a0563c",
   slate: "#5c6b7a",
+  // --- 施設(Phase D。art-direction 5.5節) ---
+  "tilled-soil": "#63513e",
+  meadow: "#94a166",
 };
 
 /** 屋根系 materialId(「屋根」束へマージ。それ以外は「躯体」束) */
-const ROOF_MATERIAL_IDS = new Set(["thatch", "shingle", "tile", "slate"]);
+export const ROOF_MATERIAL_IDS = new Set(["thatch", "shingle", "tile", "slate"]);
 
 /** 明度ムラの振幅(±8%。art-direction 5.1節) */
 const MOTTLE_AMP = 0.08;
@@ -164,7 +167,7 @@ export function hash3(x: number, y: number, z: number): number {
 }
 
 /** マージ用のジオメトリバッファ(マテリアル束ごと) */
-interface GeoBuffer {
+export interface GeoBuffer {
   positions: number[];
   normals: number[];
   colors: number[];
@@ -172,16 +175,16 @@ interface GeoBuffer {
 }
 
 /** ローカル点 */
-type L = [number, number, number];
+export type L = [number, number, number];
 /** ワールド点 */
-type W = [number, number, number];
+export type W = [number, number, number];
 
 /**
  * 部品の変換(contracts/buildings.md「Part の変換規約」):
  * ローカル [-0.5,0.5]×[0,1]×[-0.5,0.5] → scale → Y回転(three.js の
  * rotateY と同義: +x → (cosθ, 0, −sinθ))→ position(底面中心)。
  */
-function makeXform(part: Part): (p: L) => W {
+export function makeXform(part: Part): (p: L) => W {
   const [px, py, pz] = part.transform.position;
   const [sx, sy, sz] = part.transform.scale;
   const cos = Math.cos(part.transform.rotation);
@@ -282,7 +285,7 @@ function faceMottle(verts: W[]): number {
 }
 
 /** 面の押し込み(面ムラ算出込み)のショートハンド */
-function face(
+export function face(
   buf: GeoBuffer,
   xf: (p: L) => W,
   locals: L[],
@@ -298,7 +301,7 @@ function face(
  * 直方体(plinth / wall)。footAo は下端頂点の焼き込み係数
  * (壁足元・基壇下端の頂点カラーAO。art-direction 3節)。
  */
-function boxPart(
+export function boxPart(
   part: Part,
   buf: GeoBuffer,
   base: THREE.Color,
@@ -898,7 +901,7 @@ function archWindowPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
  * 行う(PHASE 4b commit 15 で window / door / beam / chimney を
  * INSTANCED_TYPES へ移行済み)。
  */
-const MERGE_HANDLERS: Record<
+export const MERGE_HANDLERS: Record<
   string,
   (part: Part, buf: GeoBuffer, base: THREE.Color) => void
 > = {
@@ -996,7 +999,7 @@ const INSTANCED_TYPES: Record<
   },
 };
 
-function buildGeoBuffer(buf: GeoBuffer): THREE.BufferGeometry {
+export function buildGeoBuffer(buf: GeoBuffer): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
@@ -1014,7 +1017,7 @@ function buildGeoBuffer(buf: GeoBuffer): THREE.BufferGeometry {
   return geometry;
 }
 
-function materialColor(id: string): THREE.Color {
+export function materialColor(id: string): THREE.Color {
   const hex = MATERIAL_COLORS[id];
   // 未知の materialId は石にフォールバック(語彙違反は warn 済み扱いにしない
   // ため、ここでは黙って規律内の色に収める)

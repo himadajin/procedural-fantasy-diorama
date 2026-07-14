@@ -3,12 +3,20 @@
  * 適した初期カメラ距離は実装判断でよい(対象1体が画面に収まる距離)」の
  * 実装。G2b で固定距離から対象寸法駆動へ改めた)。
  *
- * 対象(建物1体)の寸法を WorldModel から見積もり、外接球が視野に
- * 余白つきで収まるカメラ距離・注視点・方位を導出する純関数。
+ * 対象(建物または施設1体。施設は Phase D タスク D2b で追加)の寸法を
+ * WorldModel から見積もり、外接球が視野に余白つきで収まるカメラ距離・
+ * 注視点・方位を導出する純関数。
  * 表示専用のロジックであり、WorldModel には一切書き込まない。
  * three 非依存(viewer 内だが数学のみ。テスト可能な純関数として分離)。
  */
-import { FLOOR_HEIGHT, type Building, type WorldModel } from "../model/worldmodel";
+import {
+  FLOOR_HEIGHT,
+  type Building,
+  type Facility,
+  type Part,
+  type Polygon,
+  type WorldModel,
+} from "../model/worldmodel";
 import { CAMERA_INITIAL_AZIMUTH } from "./constants";
 
 /**
@@ -82,7 +90,7 @@ interface Box {
  * footprint バウンディングボックス(壁体上端 = 基壇+階数×階高)との
  * 和集合を取り、部品が空のモデルでも成立させる。
  */
-function estimateBounds(b: Building): Box | null {
+function footprintBox(footprint: Polygon): Box | null {
   const box: Box = {
     minX: Infinity,
     maxX: -Infinity,
@@ -91,17 +99,18 @@ function estimateBounds(b: Building): Box | null {
     minZ: Infinity,
     maxZ: -Infinity,
   };
-  for (const p of b.footprint) {
+  for (const p of footprint) {
     box.minX = Math.min(box.minX, p.x);
     box.maxX = Math.max(box.maxX, p.x);
     box.minZ = Math.min(box.minZ, p.z);
     box.maxZ = Math.max(box.maxZ, p.z);
   }
   if (!Number.isFinite(box.minX)) return null;
-  box.minY = Math.min(0, b.foundation.bottomY);
-  box.maxY = b.foundation.plinthHeight + b.floors * FLOOR_HEIGHT;
+  return box;
+}
 
-  for (const part of b.parts) {
+function extendByParts(box: Box, parts: readonly Part[]): void {
+  for (const part of parts) {
     const [px, py, pz] = part.transform.position;
     const [sx, sy, sz] = part.transform.scale;
     const half = (Math.abs(sx) + Math.abs(sz)) / 2;
@@ -112,6 +121,28 @@ function estimateBounds(b: Building): Box | null {
     box.minY = Math.min(box.minY, py);
     box.maxY = Math.max(box.maxY, py + Math.abs(sy));
   }
+}
+
+function estimateBounds(b: Building): Box | null {
+  const box = footprintBox(b.footprint);
+  if (!box) return null;
+  box.minY = Math.min(0, b.foundation.bottomY);
+  box.maxY = b.foundation.plinthHeight + b.floors * FLOOR_HEIGHT;
+  extendByParts(box, b.parts);
+  return box;
+}
+
+/**
+ * 施設(Phase D タスク D2b)のバウンディングボックス。施設は階数・基礎を
+ * 持たないため、footprint(高さの既定は接地する低い構造 0〜0.5)と部品の
+ * 和集合で見積もる。
+ */
+function estimateFacilityBounds(f: Facility): Box | null {
+  const box = footprintBox(f.footprint);
+  if (!box) return null;
+  box.minY = 0;
+  box.maxY = 0.5;
+  extendByParts(box, f.parts);
   return box;
 }
 
@@ -133,10 +164,16 @@ export function computeGalleryFraming(
   fovDeg: number,
   aspect: number,
 ): GalleryFraming {
-  const b = model.buildings[0];
-  if (!b) return FALLBACK;
-  const box = estimateBounds(b);
-  if (!box) return FALLBACK;
+  // 対象は建物または施設(Phase D)。どちらも「対象1体」の極小ワールド
+  const b = model.buildings[0] ?? null;
+  const f = b ? null : (model.facilities[0] ?? null);
+  const facing = b?.facing ?? f?.facing;
+  const box = b
+    ? estimateBounds(b)
+    : f
+      ? estimateFacilityBounds(f)
+      : null;
+  if (!box || facing === undefined) return FALLBACK;
 
   const target = {
     x: (box.minX + box.maxX) / 2,
@@ -157,6 +194,6 @@ export function computeGalleryFraming(
   return {
     size: distance / HOME_DISTANCE_RATIO,
     target,
-    azimuth: Math.PI / 2 - b.facing + AZIMUTH_OFFSET,
+    azimuth: Math.PI / 2 - facing + AZIMUTH_OFFSET,
   };
 }
