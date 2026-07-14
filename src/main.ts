@@ -35,6 +35,7 @@ import {
   type GalleryFraming,
 } from "./viewer/framing";
 import { CAMERA_INITIAL_AZIMUTH } from "./viewer/constants";
+import { updateSpinners } from "./viewer/spin";
 import {
   DEFAULT_PARAMS,
   WATER_SURFACE_Y,
@@ -289,9 +290,10 @@ if (!viewer) {
     });
   }
 
-  // 水面の揺らぎ・発光の明滅・浮遊の上下動はビューワー側の時間 uniform で
-  // 行う(WorldModel に時間を持ち込まない。contracts/pipeline.md)。
-  // reduced-motion では静止させ、低プリセットでは更新間隔を間引く。
+  // 水面の揺らぎ・発光の明滅・浮遊の上下動・風車/水車の回転はビューワー側の
+  // 時間で行う(WorldModel に時間を持ち込まない。contracts/pipeline.md、
+  // contracts/facilities.md「表示演出」)。reduced-motion では静止させ
+  // (回転部品は初期角のまま)、低プリセットでは更新間隔を間引く。
   // 非アクティブ側も含め両シーンを更新する(タブ切替時に位相が飛ばないため)
   let lastTimePush = -Infinity;
   viewer.onFrame((_dt, elapsed) => {
@@ -303,6 +305,10 @@ if (!viewer) {
         | WaterTimeUniform
         | undefined;
       if (uniform) uniform.value = elapsed;
+      const spinners = scene.group?.userData.spinners as
+        | THREE.Object3D[]
+        | undefined;
+      if (spinners) updateSpinners(spinners, elapsed);
     }
   });
 

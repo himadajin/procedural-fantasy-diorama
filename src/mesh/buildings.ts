@@ -67,6 +67,7 @@ export const MATERIAL_COLORS: Record<string, string> = {
   "awning-madder": "#8f6350",
   "awning-slate": "#6b7a8c",
   void: "#352c22",
+  "wet-wood": "#4a3c2e",
 };
 
 /** 屋根系 materialId(「屋根」束へマージ。それ以外は「躯体」束) */

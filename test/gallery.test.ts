@@ -21,16 +21,22 @@ function targetId(role: (typeof ROLES)[number]): string {
 
 /** Phase D タスク D2b で対象化した farmland 施設 kind */
 const FACILITY_TARGETS = ["facility/field", "facility/pasture"] as const;
-/** Phase D タスク D3 で対象化した広場施設 kind(D4〜D5 で kind が増える) */
+/** Phase D タスク D3 で対象化した広場施設 kind */
 const PLAZA_FACILITY_TARGETS = ["facility/well", "facility/stall"] as const;
+/** Phase D タスク D4 で対象化した施設 kind(D5 で pier が増える) */
+const MILL_FACILITY_TARGETS = [
+  "facility/windmill",
+  "facility/watermill",
+] as const;
 
 describe("gallery: 対象idの体系(契約「対象idの体系」)", () => {
-  it("対象idは一般建物の全6 role(center を除く)+ 施設 field / pasture / well / stall", () => {
+  it("対象idは一般建物の全6 role(center を除く)+ 施設 8 kind 中 6(D4 時点)", () => {
     expect([...GALLERY_TARGET_IDS].sort()).toEqual(
       [
         ...ROLES.map(targetId),
         ...FACILITY_TARGETS,
         ...PLAZA_FACILITY_TARGETS,
+        ...MILL_FACILITY_TARGETS,
       ].sort(),
     );
   });
@@ -39,9 +45,7 @@ describe("gallery: 対象idの体系(契約「対象idの体系」)", () => {
     expect(() =>
       buildGalleryWorld("building/center", "seed-x", {}),
     ).toThrow();
-    expect(() =>
-      buildGalleryWorld("facility/windmill", "seed-x", {}),
-    ).toThrow();
+    expect(() => buildGalleryWorld("facility/pier", "seed-x", {})).toThrow();
   });
 });
 
@@ -321,6 +325,76 @@ describe("gallery: 広場施設対象(facility/well・facility/stall。Phase D D
       prosperity: 100,
     });
     expect(high.facilities.length).toBeGreaterThan(low.facilities.length);
+  });
+});
+
+describe("gallery: 風車・水車対象(facility/windmill・facility/watermill。Phase D D4)", () => {
+  for (const id of MILL_FACILITY_TARGETS) {
+    it(`${id}: 同一入力2回で完全一致し、seed でハッシュが変わる`, () => {
+      const a = buildGalleryWorld(id, "everdusk-101", {});
+      const b = buildGalleryWorld(id, "everdusk-101", {});
+      expect(a.summary.hash).toBe(b.summary.hash);
+      expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+      const c = buildGalleryWorld(id, "seed-b", {});
+      expect(c.summary.hash).not.toBe(a.summary.hash);
+    });
+  }
+
+  it("windmill: 塔 + キャップ + ロータ(4 枚羽根・静的 phase)+ 扉・窓(D1b 造形)", () => {
+    const model = buildGalleryWorld("facility/windmill", "everdusk-101", {});
+    expect(model.facilities.length).toBe(1);
+    const windmill = model.facilities[0]!;
+    expect(windmill.kind).toBe("windmill");
+    const types = windmill.parts.map((p) => p.type);
+    expect(types).toEqual(["tower", "gable", "windmill-rotor", "door", "window"]);
+    const rotor = windmill.parts.find((p) => p.type === "windmill-rotor")!;
+    expect(rotor.params?.blades).toBe(4);
+    expect(rotor.params?.phase).toBeGreaterThanOrEqual(0);
+    expect(rotor.params?.phase).toBeLessThanOrEqual(Math.PI / 2);
+    // ロータ直径 = 塔高の約 1.2 倍の誇張(D1b。±8% 揺らぎ込みの帯)
+    const dia = rotor.transform.scale[0];
+    expect(dia).toBeGreaterThanOrEqual(9.0 * 0.92 - 1e-9);
+    expect(dia).toBeLessThanOrEqual(9.0 * 1.08 + 1e-9);
+    // footprint 長軸 = 直径 + 0.6(ロータ掃引域込み)
+    let maxSpan = 0;
+    for (const a of windmill.footprint) {
+      for (const b of windmill.footprint) {
+        maxSpan = Math.max(maxSpan, Math.hypot(a.x - b.x, a.z - b.z));
+      }
+    }
+    expect(maxSpan).toBeGreaterThan(dia);
+  });
+
+  it("watermill: 小屋 + 軸 + 水輪(下端が水面下)。footprint 頂点は陸上(D1a 水域例外)", () => {
+    const model = buildGalleryWorld("facility/watermill", "everdusk-101", {});
+    expect(model.facilities.length).toBe(1);
+    const mill = model.facilities[0]!;
+    expect(mill.kind).toBe("watermill");
+    const types = mill.parts.map((p) => p.type);
+    expect(types).toEqual([
+      "plinth",
+      "wall",
+      "gable",
+      "door",
+      "window",
+      "beam",
+      "water-wheel",
+    ]);
+    const wheel = mill.parts.find((p) => p.type === "water-wheel")!;
+    expect(wheel.materialId).toBe("wet-wood");
+    expect(wheel.params?.paddles).toBe(8);
+    // 軸 y 0.70・下端 = 0.70 − 直径/2 が水面(−0.6)より下
+    const axleY = wheel.transform.position[1];
+    const dia = wheel.transform.scale[1];
+    expect(axleY).toBeCloseTo(0.7, 6);
+    expect(axleY - dia / 2).toBeLessThan(-0.6);
+    // footprint(小屋)は全頂点が陸上 = 池の外
+    const pond = model.water.ponds[0]!;
+    for (const v of mill.footprint) {
+      expect(polygonSignedDistance(v.x, v.z, pond)).toBeGreaterThanOrEqual(
+        -1e-9,
+      );
+    }
   });
 });
 
