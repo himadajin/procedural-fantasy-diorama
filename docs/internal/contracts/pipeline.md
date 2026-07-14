@@ -76,8 +76,9 @@ interface Rng {
 | 11 | 区画 | pipeline/parcels | 〜舗装 | density.final、parcels |
 | 12 | 建物 | pipeline/buildings | 〜parcels | buildings(骨格+部品リスト。中心建築を含む)、plazas(中庭 "courtyard" の追記) |
 | 13 | 小道 | pipeline/lanes | 〜buildings | network.nodes/edges(lane の追記のみ)、ground.zoneMask(小道の舗装追記)、summary.scale.roadLength(加算) |
-| 14 | 植生 | pipeline/vegetation | 〜lanes | vegetation |
-| 15 | サマリー | pipeline/summary | 全部 | summary |
+| 14 | 施設 | pipeline/facilities | 〜lanes(parcels / plazas / network.nodes / water.canals / water.shoreline) | facilities |
+| 15 | 植生 | pipeline/vegetation | 〜facilities | vegetation |
+| 16 | サマリー | pipeline/summary | 全部 | summary |
 
 - 各段はパイプライン内アサーション(データ検証)を持ってよい。
   違反は throw せず件数を console に出し、生成は続行する
@@ -132,22 +133,46 @@ interface Rng {
   buildings.md「水辺建築の拡張」)。乱数は派生サブストリーム
   `"building/<id>/waterfront"` のみを消費し、既存の
   `"building/<id>"` 系ストリームの消費は変えない。
-- 段14「植生」(PHASE 6 commit 20)は段13「小道」の後に走り、
-  `vegetation` のみを書く(他フィールドには触れない)。散布はセル格子の
-  マスクベース(森リング > 外縁草地 > 水辺低木・湿地植生 >
-  道・広場周辺 > 結界内僅少。vegetation-summary.md Vegetation 節)で、
-  建物・道路・広場・水面・水路バッファとの衝突をハード除外する。
-  乱数はセルごとの独立サブストリーム `"vegetation/<ix>_<iz>"` のみを
-  消費する。表示名は段14「草木を茂らせています…」。
-- 段15「サマリー」(PHASE 7 commit 21)は全段の後に走り、`summary` の
-  全フィールドを最終状態の WorldModel から機械的に**再算出**して確定する
-  (中間PHASEの各段の部分先埋めを上書きするため、乖離は起こらない。
-  vegetation-summary.md Summary 節)。`buildingCounts`(役割別集計)・
-  `centerDescription`(支配軸+特徴からの記述文)・`waterOverview` /
-  `wardOverview` / `scale` を書く。複雑度(頂点数・インスタンス数・
-  draw call)は表示依存の実測値のため WorldModel に持たず UI が
-  `renderer.info` から埋める(同節の設計判断)。段15 は乱数サブストリームを
-  消費しない(決定的な集計)。表示名は段15「箱庭を書き留めています…」。
+- 段11「区画」(Phase D。計画書 `plans/2026-07-14-worldgen-rework-facilities.md`
+  タスク D2a)は、農村ゾーン(`zoning` の urbanity < 0.45)の道路沿いに
+  `Parcel.kind: "farmland"` の区画を追加で切り出す(既存の residential
+  区画の切り出しロジックには手を入れない。facilities.md「field(畑)・
+  pasture(牧草地)」節)。乱数は既存の `"parcel/<id>"` ストリームのみを
+  消費する(farmland 区画の抽選も同じ要素独立サブストリームの流儀に従う)。
+- 段14「施設」(Phase D。計画書
+  `plans/2026-07-14-worldgen-rework-facilities.md` タスク D2a〜D5)は
+  段13「小道」の後・段15「植生」の前に走り、`facilities` のみを書く
+  (他フィールドには触れない。植生が施設を回避できるようにするための
+  順序。facilities.md を正とする)。畑・牧草地(farmland 区画へ)、
+  井戸・屋台(広場・農村道路ノードへ)、風車・水車(農村外縁・水路/湖岸へ)、
+  桟橋(汀線へ)を、facilities.md「kind 一覧・配置条件」の配置条件・
+  数量式・衝突/帯検証則に従って生成する。乱数は新設ストリーム
+  `"facility/<...>"`(facilities.md「RNG ラベル体系」)のみを消費し、
+  既存の全ストリームの消費列は変えない。桟橋は段12「建物」の水辺拡張が
+  確定した `claimedRegions` を読み、重ならない位置のみ採択する
+  (facilities.md「waterfront claimed 検査への参加」。buildings.md の
+  `claimedRegions` 配列自体には追記しない片方向参照)。表示名は
+  段14「暮らしの気配を配っています…」(提案値。D2a〜D6 で調整しうる)。
+- 段15「植生」(PHASE 6 commit 20。Phase D で段14 から繰り下げ)は
+  段14「施設」の後に走り、`vegetation` のみを書く(他フィールドには
+  触れない)。散布はセル格子のマスクベース(森リング > 外縁草地 >
+  水辺低木・湿地植生 > 道・広場周辺 > 結界内僅少。
+  vegetation-summary.md Vegetation 節)で、建物・道路・広場・水面・
+  水路バッファ・**施設**(facilities。vegetation-summary.md「回避対象への
+  facilities 追加」)との衝突をハード除外する。乱数はセルごとの独立
+  サブストリーム `"vegetation/<ix>_<iz>"` のみを消費する。表示名は
+  段15「草木を茂らせています…」。
+- 段16「サマリー」(PHASE 7 commit 21。Phase D で段15 から繰り下げ)は
+  全段の後に走り、`summary` の全フィールドを最終状態の WorldModel から
+  機械的に**再算出**して確定する(中間PHASEの各段の部分先埋めを上書きする
+  ため、乖離は起こらない。vegetation-summary.md Summary 節)。
+  `buildingCounts`(役割別集計)・`centerDescription`(支配軸+特徴からの
+  記述文)・`waterOverview` / `wardOverview` / `scale` に加え、施設カウント
+  (Phase D タスク D6 で追加。vegetation-summary.md Summary 節「施設カウント
+  の追加」)を書く。複雑度(頂点数・インスタンス数・draw call)は表示依存の
+  実測値のため WorldModel に持たず UI が `renderer.info` から埋める
+  (同節の設計判断)。段16 は乱数サブストリームを消費しない(決定的な集計)。
+  表示名は段16「箱庭を書き留めています…」。
 
 ## チャンク実行フレームワーク
 
@@ -211,7 +236,13 @@ runPipeline(seed: string, params: Params, opts?: {
   唯一の主中心を表す特別な役割のため、MVPでは対象に含めない)。
 - 将来の拡張(本計画のG0では実装しない。対象対応表に行を足すのみで
   成立させる): 中心建築 `center`、施設 `facility/<kind>`(Phase D。
-  `../plans/2026-07-14-worldgen-rework-facilities.md`)。
+  `../plans/2026-07-14-worldgen-rework-facilities.md`。kind は
+  `facilities.md`「Facility スキーマ」の一覧 — `field` / `pasture` /
+  `well` / `stall` / `windmill` / `watermill` / `pier`。対象idの体系・
+  造形の純関数分離は同書「造形の純関数分離」節が正)。facility/<kind> の
+  対象化(対象対応表への追加・ギャラリーからの本番造形関数の呼び出し)は
+  D1a では行わず、D2b(field/pasture)以降の各実装タスクが kind ごとに
+  行う(3.8b 節の造形フロー: ギャラリーでの単体調整 → ワールド配置確認)。
 - 対象idは URL(`../specs/implementation-spec.md`「1.11 ギャラリー」節)の
   `?gallery=<対象id>` にそのまま使う。
 
