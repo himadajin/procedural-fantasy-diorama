@@ -135,15 +135,31 @@ function estimateBounds(b: Building): Box | null {
 /**
  * 施設(Phase D タスク D2b)のバウンディングボックス。施設は階数・基礎を
  * 持たないため、footprint(高さの既定は接地する低い構造 0〜0.5)と部品の
- * 和集合で見積もる。
+ * 和集合で見積もる。複数の施設(屋台の列。D3)は全体の和集合を取る
+ * (列全体が 1 つの鑑賞対象)。
  */
-function estimateFacilityBounds(f: Facility): Box | null {
-  const box = footprintBox(f.footprint);
-  if (!box) return null;
-  box.minY = 0;
-  box.maxY = 0.5;
-  extendByParts(box, f.parts);
-  return box;
+function estimateFacilitiesBounds(
+  facilities: readonly Facility[],
+): Box | null {
+  let union: Box | null = null;
+  for (const f of facilities) {
+    const box = footprintBox(f.footprint);
+    if (!box) continue;
+    box.minY = 0;
+    box.maxY = 0.5;
+    extendByParts(box, f.parts);
+    if (!union) {
+      union = box;
+    } else {
+      union.minX = Math.min(union.minX, box.minX);
+      union.maxX = Math.max(union.maxX, box.maxX);
+      union.minZ = Math.min(union.minZ, box.minZ);
+      union.maxZ = Math.max(union.maxZ, box.maxZ);
+      union.minY = Math.min(union.minY, box.minY);
+      union.maxY = Math.max(union.maxY, box.maxY);
+    }
+  }
+  return union;
 }
 
 /**
@@ -164,15 +180,11 @@ export function computeGalleryFraming(
   fovDeg: number,
   aspect: number,
 ): GalleryFraming {
-  // 対象は建物または施設(Phase D)。どちらも「対象1体」の極小ワールド
+  // 対象は建物または施設(Phase D)。施設は複数(屋台の列)でも
+  // 全体の和集合を 1 つの鑑賞対象として収める
   const b = model.buildings[0] ?? null;
-  const f = b ? null : (model.facilities[0] ?? null);
-  const facing = b?.facing ?? f?.facing;
-  const box = b
-    ? estimateBounds(b)
-    : f
-      ? estimateFacilityBounds(f)
-      : null;
+  const facing = b?.facing ?? model.facilities[0]?.facing;
+  const box = b ? estimateBounds(b) : estimateFacilitiesBounds(model.facilities);
   if (!box || facing === undefined) return FALLBACK;
 
   const target = {

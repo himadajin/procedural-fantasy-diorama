@@ -22,6 +22,10 @@ WorldModel スキーマ契約の一部(2026-07-07 に worldmodel.md から分割
 | `slate` | `#5c6b7a` | スレート屋根 |
 | `tilled-soil` | `#63513e` | 耕土(畑の基盤・畝。Phase D タスク D2b。基準色は art-direction 5.5節) |
 | `meadow` | `#94a166` | 牧草(牧草地のパッチ。Phase D タスク D2b。同上) |
+| `canvas` | `#c9b48e` | 帆布(生成りの天幕・風車の帆。Phase D タスク D3。同上) |
+| `awning-madder` | `#8f6350` | 茜の天幕(屋台。Phase D タスク D3。同上) |
+| `awning-slate` | `#6b7a8c` | 青灰の天幕(屋台。Phase D タスク D3。同上) |
+| `void` | `#352c22` | 開口暗色(井戸の井桁内の暗がり。Phase D タスク D3。開口の奥面と同色) |
 | `glow` | (art-direction 5.4節) | 発光部品(`crystal` / `sigil`)。基準色表は使わず、発光束のマテリアル規範(上記)に従う |
 
 - 色の正はメッシュビルダーの基準色表(`src/mesh/buildings.ts`)とし、

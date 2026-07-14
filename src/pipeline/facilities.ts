@@ -4,25 +4,30 @@
  * 契約の正は docs/internal/contracts/facilities.md(kind 一覧・配置条件・
  * 衝突/帯検証則・RNG ラベル体系・造形の純関数分離・kind ごとの造形の性質)。
  *
- * D2b の範囲: field(畑)/ pasture(牧草地)— farmland 区画への生成。
- * well / stall / windmill / watermill / pier は D3〜D5 で追う。
+ * D2b: field(畑)/ pasture(牧草地)— farmland 区画への生成。
+ * D3: well(井戸)/ stall(市場屋台)— 市街広場・農村道路ノードへの生成。
+ * windmill / watermill / pier は D4〜D5 で追う。
  *
  * 造形は「入力(寸法・向き・当該施設の rng サブストリーム)→ Part[]」の
- * 純関数(buildFieldParts / buildPastureParts)として配置ロジックから
- * 分離する(契約 3.8b。ギャラリーは buildFarmlandFacility を経由して
- * この本番の造形関数のみを呼ぶ)。乱数は新設ストリーム
- * `"facility/farmland/<parcelId>"` のみを消費し、既存ストリームの消費列は
- * 変えない。
+ * 純関数(buildXxxParts)として配置ロジックから分離する(契約 3.8b。
+ * ギャラリーは buildFarmlandFacility / buildPlazaWellFacility /
+ * buildPlazaStallFacilities を経由してこの本番の造形関数のみを呼ぶ)。
+ * 乱数は新設ストリーム `"facility/<...>"` のみを消費し、既存ストリームの
+ * 消費列は変えない。
  */
 import { makeRng, type Rng } from "../rng";
 import type {
   Facility,
   Parcel,
   Part,
+  Plaza,
   Vec2,
   WorldModel,
 } from "../model/worldmodel";
-import { polygonSignedDistance } from "../model/waterfield";
+import { distToPolyline, polygonSignedDistance } from "../model/waterfield";
+import { sampleFieldGrid } from "../model/fieldgrid";
+import { ensureClockwise } from "../model/geometry";
+import { createSiteContext } from "./parcels";
 
 // --- field / pasture の造形数値(すべて提案値。contracts/facilities.md
 //     「kind ごとの造形の性質」。調整時は契約を同一 commit で更新する) ---
@@ -440,6 +445,624 @@ export function buildFarmlandFacility(
   };
 }
 
+// --- well / stall の造形数値(すべて提案値。contracts/facilities.md
+//     「kind ごとの造形の性質」D1b。調整時は契約を同一 commit で更新する) ---
+/** 井戸: 石環(外形・厚み・高さと ±10% 揺らぎ) */
+const WELL_RING_OUTER = 1.9;
+const WELL_RING_T = 0.3;
+const WELL_RING_H = 0.7;
+/** 井戸: 内面の暗色板(1.3 角・高さ 0.02・y 0.35) */
+const WELL_VOID_SIZE = 1.3;
+const WELL_VOID_H = 0.02;
+const WELL_VOID_Y = 0.35;
+/** 井戸: 柱(0.16 角 × 高さ 2.10。石環の外側 0.1)と轆轤(0.14 角・y 1.55) */
+const WELL_POST_SIZE = 0.16;
+const WELL_POST_H = 2.1;
+const WELL_POST_GAP = 0.1;
+const WELL_BAR_SIZE = 0.14;
+const WELL_BAR_Y = 1.55;
+/** 井戸: 小屋根(棟長 2.5 × スパン 1.7・pitch 54・底面 y 1.95) */
+const WELL_ROOF_RIDGE = 2.5;
+const WELL_ROOF_SPAN = 1.7;
+const WELL_ROOF_PITCH = 54;
+const WELL_ROOF_Y = 1.95;
+/** 井戸: footprint(石環外形 + 0.15 の正方形)・向き揺らぎ ±4° */
+const WELL_FOOT_HALF = (WELL_RING_OUTER + 0.3) / 2;
+const WELL_FACING_JITTER = (4 * Math.PI) / 180;
+
+/** 屋台: 台(幅 × 奥行き × 高さ。高さは ±8% 揺らぎ) */
+const STALL_TABLE_W = 2.6;
+const STALL_TABLE_D = 1.4;
+const STALL_TABLE_H = 0.85;
+/** 屋台: 柱(0.12 角。台の四隅の外 0.1。前 1.85 / 後 2.30) */
+const STALL_POST_SIZE = 0.12;
+const STALL_POST_OFFSET = 0.1;
+const STALL_FRONT_POST_H = 1.85;
+const STALL_REAR_POST_H = 2.3;
+/** 屋台: 天幕(間口 3.0 × 奥行き 2.0。高い縁 y 2.30・前へ 0.4 張り出し) */
+const STALL_CANOPY_W = 3.0;
+const STALL_CANOPY_D = 2.0;
+const STALL_CANOPY_TOP_Y = 2.3;
+const STALL_CANOPY_FRONT_OVERHANG = 0.4;
+/** 屋台: footprint(台+柱の外形) */
+const STALL_FOOT_W = 2.9;
+const STALL_FOOT_D = 1.6;
+/** 天幕色の重み(生成り 0.5 / 茜 0.3 / 青灰 0.2。art-direction 5.5節) */
+const AWNING_IDS = ["canvas", "awning-madder", "awning-slate"] as const;
+const AWNING_WEIGHTS = [0.5, 0.3, 0.2] as const;
+
+// --- well / stall の配置数値(契約「kind 一覧・配置条件」「衝突・帯検証則」) ---
+/** 広場の縁帯(縁からの距離)と中央円の半径比・通行帯セクターの半角 */
+const PLAZA_EDGE_BAND = 1.0;
+const PLAZA_EDGE_BAND_OUTER = PLAZA_EDGE_BAND * 2.5;
+const PLAZA_CENTER_CIRCLE_RATIO = 0.45;
+const TRAFFIC_SECTOR_HALF = (20 * Math.PI) / 180;
+/** 屋台のスロットピッチ(間口 3.0 + 間隔 1.0)と既配置屋台との最小間隔 */
+const STALL_SLOT_PITCH = 4.0;
+const STALL_MIN_SPACING = 3.2;
+/** 井戸(広場)の合格条件: 縁から 2.7 以上(縁帯 2.5 + マージン 0.2) */
+const WELL_EDGE_MIN = PLAZA_EDGE_BAND_OUTER + 0.2;
+/** 農村井戸の決定論走査(8 方位 × 距離 3 段)と汎用クリアランス */
+const RURAL_WELL_DISTANCES = [3.2, 4.0, 4.8] as const;
+const RURAL_WELL_DIRECTIONS = 8;
+const CLEAR_PARCEL = 1.0;
+const CLEAR_ROAD = 1.0;
+const CLEAR_PLAZA = 1.0;
+const CLEAR_FACILITY = 1.0;
+const CLEAR_CENTER = 1.5;
+const CLEAR_BOUNDARY = 2.0;
+const CLEAR_WATER = 1.0;
+const RING_BUFFER = 2.5;
+/** 農村ゾーン判定(urbanity < 0.45。contracts/network-plaza.md) */
+const RURAL_URBANITY = 0.45;
+
+/** 井戸の造形純関数の入力(契約「造形の純関数分離」) */
+export interface WellShapeInput {
+  /** 井戸の中心 */
+  center: Vec2;
+  /** 正面方位(向き揺らぎ込み。facing に直交する対辺に柱が立つ) */
+  facing: number;
+  /** 当該施設の rng(採否・位置ジッターの続き) */
+  rng: Rng;
+}
+
+/**
+ * 井戸(well)の造形純関数(契約「well(井戸)」)。
+ * parts 配列順: 石環 4(前 → 右 → 奥 → 左)→ 内面 1 → 柱 2(+s → −s)→
+ * 轆轤 1 → 小屋根 1。
+ * rng 消費(列挙順に固定): (1) 石環高さ ±10%(向き揺らぎは呼び出し側で
+ * facing へ畳み込み済み — 契約 D3 実装補足)。
+ */
+export function buildWellParts(input: WellShapeInput): Part[] {
+  const { center, facing, rng } = input;
+  const ringH = WELL_RING_H * rng.range(0.9, 1.1);
+  const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  const at = (u: number, v: number): Vec2 => ({
+    x: center.x + s.x * u + f.x * v,
+    z: center.z + s.z * u + f.z * v,
+  });
+  const rotS = Math.atan2(-s.z, s.x);
+  const rotF = Math.atan2(-f.z, f.x);
+  const half = WELL_RING_OUTER / 2;
+  const mid = half - WELL_RING_T / 2;
+  const innerLen = WELL_RING_OUTER - WELL_RING_T * 2;
+
+  const parts: Part[] = [];
+  // 石環(口の字。前(+f)→ 右(+s)→ 奥(−f)→ 左(−s))。前後 = 全長、
+  // 左右 = 内側の残り(コーナーの重複なし)
+  parts.push(
+    makePart("fence", "stone", at(0, mid), 0, rotS, WELL_RING_OUTER, ringH, WELL_RING_T),
+    makePart("fence", "stone", at(mid, 0), 0, rotF, innerLen, ringH, WELL_RING_T),
+    makePart("fence", "stone", at(0, -mid), 0, rotS, WELL_RING_OUTER, ringH, WELL_RING_T),
+    makePart("fence", "stone", at(-mid, 0), 0, rotF, innerLen, ringH, WELL_RING_T),
+  );
+  // 内面(井桁内の暗がり。水面・発光の表現はしない)
+  parts.push(
+    makePart(
+      "ground-patch",
+      "void",
+      center,
+      WELL_VOID_Y,
+      rotS,
+      WELL_VOID_SIZE,
+      WELL_VOID_H,
+      WELL_VOID_SIZE,
+    ),
+  );
+  // 柱(facing に直交する対辺の外側中点。石環から 0.1)と轆轤
+  const postU = half + WELL_POST_GAP + WELL_POST_SIZE / 2;
+  parts.push(
+    makePart("beam", "wood", at(postU, 0), 0, rotS, WELL_POST_SIZE, WELL_POST_H, WELL_POST_SIZE),
+    makePart("beam", "wood", at(-postU, 0), 0, rotS, WELL_POST_SIZE, WELL_POST_H, WELL_POST_SIZE),
+  );
+  parts.push(
+    makePart(
+      "beam",
+      "wood",
+      center,
+      WELL_BAR_Y - WELL_BAR_SIZE / 2,
+      rotS,
+      postU * 2,
+      WELL_BAR_SIZE,
+      WELL_BAR_SIZE,
+    ),
+  );
+  // 小屋根(棟 = 柱を結ぶ軸 = s 方向)。棟高 = tan(pitch) × スパン / 2
+  const ridgeH = Math.tan((WELL_ROOF_PITCH * Math.PI) / 180) * (WELL_ROOF_SPAN / 2);
+  parts.push(
+    makePart(
+      "gable",
+      "shingle",
+      center,
+      WELL_ROOF_Y,
+      rotS,
+      WELL_ROOF_RIDGE,
+      ridgeH,
+      WELL_ROOF_SPAN,
+      { pitch: WELL_ROOF_PITCH },
+    ),
+  );
+  return parts;
+}
+
+/** 屋台の造形純関数の入力 */
+export interface StallShapeInput {
+  /** 屋台の中心(台の中心) */
+  center: Vec2;
+  /** 正面方位(広場中心向き。前柱・台の正面がこちら) */
+  facing: number;
+  /** 広場の共有 rng(`facility/stall/<plazaId>`。屋台ごとに連番消費) */
+  rng: Rng;
+}
+
+/**
+ * 屋台(stall)の造形純関数(契約「stall(屋台)」)。
+ * parts 配列順: 台 1 → 柱 4(前 2(−s → +s)→ 後 2(−s → +s))→ 天幕 1。
+ * rng 消費(1 屋台あたり固定 3 ロール): (1) 天幕色(重み抽選)
+ * (2) 天幕落差(0.35〜0.55) (3) 台高さ(±8%)。
+ */
+export function buildStallParts(input: StallShapeInput): Part[] {
+  const { center, facing, rng } = input;
+  const awning = rng.weighted(AWNING_IDS, AWNING_WEIGHTS);
+  const drop = rng.range(0.35, 0.55);
+  const tableH = STALL_TABLE_H * rng.range(0.92, 1.08);
+  const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  const at = (u: number, v: number): Vec2 => ({
+    x: center.x + s.x * u + f.x * v,
+    z: center.z + s.z * u + f.z * v,
+  });
+  const rotS = Math.atan2(-s.z, s.x);
+  const rotToFront = Math.atan2(f.x, f.z); // canopy: ローカル +z → f(低い側 = 前)
+
+  const parts: Part[] = [];
+  // 台(plinth を木の台として流用。広場の舗装に直接置く)
+  parts.push(
+    makePart("plinth", "wood", center, 0, rotS, STALL_TABLE_W, tableH, STALL_TABLE_D),
+  );
+  // 柱(台の四隅の外 0.1。前柱 = facing 側が低く、後柱が高い片流れ)
+  const postU = STALL_TABLE_W / 2 + STALL_POST_OFFSET;
+  const postV = STALL_TABLE_D / 2 + STALL_POST_OFFSET;
+  for (const [u, v, h] of [
+    [-postU, postV, STALL_FRONT_POST_H],
+    [postU, postV, STALL_FRONT_POST_H],
+    [-postU, -postV, STALL_REAR_POST_H],
+    [postU, -postV, STALL_REAR_POST_H],
+  ] as const) {
+    parts.push(
+      makePart("beam", "wood", at(u, v), 0, rotS, STALL_POST_SIZE, h, STALL_POST_SIZE),
+    );
+  }
+  // 天幕(canopy)。position = 高い縁(後端)の下端中心、ローカル +z = 前
+  const rearV = STALL_TABLE_D / 2 + STALL_CANOPY_FRONT_OVERHANG - STALL_CANOPY_D;
+  parts.push(
+    makePart(
+      "canopy",
+      awning,
+      at(0, rearV),
+      STALL_CANOPY_TOP_Y,
+      rotToFront,
+      STALL_CANOPY_W,
+      drop,
+      STALL_CANOPY_D,
+    ),
+  );
+  return parts;
+}
+
+// --- 広場・農村ノードへの配置(契約「kind 一覧・配置条件」D3 実装補足) ---
+
+/** 広場中心からのレイと polygon 縁の交点距離(見つからなければ radius) */
+function rayDistanceToPolygon(center: Vec2, angle: number, polygon: Vec2[], fallback: number): number {
+  const dx = Math.cos(angle);
+  const dz = Math.sin(angle);
+  let best = Infinity;
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    if (!a || !b) continue;
+    const ex = b.x - a.x;
+    const ez = b.z - a.z;
+    const denom = dx * ez - dz * ex;
+    if (Math.abs(denom) < 1e-12) continue;
+    const wx = a.x - center.x;
+    const wz = a.z - center.z;
+    const t = (wx * ez - wz * ex) / denom; // レイのパラメータ
+    const u = (dx * wz - dz * wx) / -denom; // 辺のパラメータ
+    if (t > 0 && u >= 0 && u <= 1 && t < best) best = t;
+  }
+  return Number.isFinite(best) ? best : fallback;
+}
+
+/** 通行帯セクターの流入方位の上限(契約 D3 実装補足。提案値) */
+const MAX_TRAFFIC_AZIMUTHS = 4;
+/** 近接する流入方位候補をまとめる角(同上) */
+const AZIMUTH_MERGE = (10 * Math.PI) / 180;
+/** 道路 class の格(main > connector > street。lane は対象外) */
+const ROAD_CLASS_RANK: Record<string, number> = {
+  main: 0,
+  connector: 1,
+  street: 2,
+};
+
+/**
+ * 広場に接続する道路 edge の流入方位(契約 D3 実装補足)。
+ * lane 以外の edge のうち path の端点が広場中心から radius + width 以内の
+ * ものを候補とし、格の高い順(main > connector > street、同格は幅の
+ * 広い順)に最大 4 本を返す(近接 10° はまとめる。決定論・乱数非消費)。
+ */
+export function plazaInflowAzimuths(model: WorldModel, plaza: Plaza): number[] {
+  const candidates: { azimuth: number; rank: number; width: number }[] = [];
+  const c = plaza.position;
+  for (const edge of model.network.edges) {
+    // lane(裏手の小道・岸沿い道)は市場の通行帯を作らない(契約 D3
+    // 実装補足。市街中心では街路の端点が十数本収束するため上限も課す)
+    const rank = ROAD_CLASS_RANK[edge.class];
+    if (rank === undefined) continue;
+    const path = edge.path;
+    if (path.length < 2) continue;
+    for (const fromStart of [true, false]) {
+      const end = fromStart ? path[0] : path[path.length - 1];
+      if (!end) continue;
+      if (Math.hypot(end.x - c.x, end.z - c.z) > plaza.radius + edge.width) {
+        continue;
+      }
+      // 端点から広場の外へ抜ける点を探す
+      let probe: Vec2 | null = null;
+      const idx = (k: number): Vec2 | undefined =>
+        fromStart ? path[k] : path[path.length - 1 - k];
+      for (let k = 1; k < path.length; k++) {
+        const p = idx(k);
+        if (!p) break;
+        probe = p;
+        if (Math.hypot(p.x - c.x, p.z - c.z) >= plaza.radius) break;
+      }
+      if (probe) {
+        candidates.push({
+          azimuth: Math.atan2(probe.z - c.z, probe.x - c.x),
+          rank,
+          width: edge.width,
+        });
+      }
+    }
+  }
+  // 格の高い順 → 幅の広い順 → 方位の昇順(決定論の安定順)
+  candidates.sort(
+    (a, b) => a.rank - b.rank || b.width - a.width || a.azimuth - b.azimuth,
+  );
+  const azimuths: number[] = [];
+  for (const cand of candidates) {
+    if (azimuths.length >= MAX_TRAFFIC_AZIMUTHS) break;
+    let merged = false;
+    for (const az of azimuths) {
+      let d = Math.abs(cand.azimuth - az) % (Math.PI * 2);
+      if (d > Math.PI) d = Math.PI * 2 - d;
+      if (d < AZIMUTH_MERGE) {
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) azimuths.push(cand.azimuth);
+  }
+  return azimuths;
+}
+
+/** 方位が通行帯セクター(流入方位 ±20°)に入るか */
+function inTrafficSector(angle: number, azimuths: readonly number[]): boolean {
+  for (const az of azimuths) {
+    let d = Math.abs(angle - az) % (Math.PI * 2);
+    if (d > Math.PI) d = Math.PI * 2 - d;
+    if (d < TRAFFIC_SECTOR_HALF) return true;
+  }
+  return false;
+}
+
+/** 正方形 footprint(中心・半辺長・向き)を時計回りで作る */
+function squareFootprint(center: Vec2, half: number, facing: number): Vec2[] {
+  const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+  const s: Vec2 = { x: -f.z, z: f.x };
+  return rectFootprint(center, f, s, half, half);
+}
+
+/** 矩形 footprint(中心・正面方向 f・接線方向 s・半幅 u/v)。時計回りは呼び出し側の座標系に依らず ensure 不要(判定にのみ使う) */
+function rectFootprint(center: Vec2, f: Vec2, s: Vec2, halfU: number, halfV: number): Vec2[] {
+  return [
+    { x: center.x + s.x * halfU + f.x * halfV, z: center.z + s.z * halfU + f.z * halfV },
+    { x: center.x - s.x * halfU + f.x * halfV, z: center.z - s.z * halfU + f.z * halfV },
+    { x: center.x - s.x * halfU - f.x * halfV, z: center.z - s.z * halfU - f.z * halfV },
+    { x: center.x + s.x * halfU - f.x * halfV, z: center.z + s.z * halfU - f.z * halfV },
+  ];
+}
+
+/** footprint の全コーナーが広場 polygon の内側か(縁から margin 以上) */
+function cornersInsidePlaza(footprint: Vec2[], plaza: Plaza, margin: number): boolean {
+  for (const c of footprint) {
+    if (polygonSignedDistance(c.x, c.z, plaza.polygon) > -margin) return false;
+  }
+  return true;
+}
+
+/**
+ * 広場井戸 1 基の生成(段14 の本番ループとギャラリーが共用。契約
+ * 「well(井戸)」D3 実装補足)。
+ *
+ * 消費列(固定): 採否 chance → 位置ジッター 2 ロール → 造形(D1b)。
+ * `adoptOverride` 非 null のときも採否の消費は行い、値だけ置き換える
+ * (ギャラリーの kind 強制と同じ意味論)。合格位置が無ければ null。
+ */
+export function buildPlazaWellFacility(
+  seed: string,
+  settle: number,
+  plaza: Plaza,
+  trafficAzimuths: readonly number[],
+  adoptOverride: boolean | null = null,
+): Facility | null {
+  const rng = makeRng(seed, `facility/well/${plaza.id}`);
+  const wellRate = Math.min(0.9, Math.max(0.3, 0.3 + 0.6 * settle));
+  const rolled = rng.chance(wellRate);
+  const jitterAngle = rng.range(0, Math.PI * 2);
+  const jitterRadial = rng.range(0.52, 0.72);
+  if (!(adoptOverride ?? rolled)) return null;
+
+  // 決定論の再走査(乱数を追加消費しない): 角 16 分割 × 半径係数 3 段
+  const centerR = plaza.radius * PLAZA_CENTER_CIRCLE_RATIO;
+  let pos: Vec2 | null = null;
+  outer: for (const radial of [jitterRadial, jitterRadial - 0.08, jitterRadial + 0.08]) {
+    for (let k = 0; k < 16; k++) {
+      const angle = jitterAngle + (k / 16) * Math.PI * 2;
+      const p: Vec2 = {
+        x: plaza.position.x + Math.cos(angle) * plaza.radius * radial,
+        z: plaza.position.z + Math.sin(angle) * plaza.radius * radial,
+      };
+      // 中央円の外(位置の条件。契約 D3 実装補足)
+      const distC = Math.hypot(p.x - plaza.position.x, p.z - plaza.position.z);
+      if (distC < centerR) continue;
+      // 縁帯(屋台の帯)より内側(広場縁から 2.7 以上)
+      if (polygonSignedDistance(p.x, p.z, plaza.polygon) > -WELL_EDGE_MIN) {
+        continue;
+      }
+      // 通行帯セクター外
+      if (inTrafficSector(angle, trafficAzimuths)) continue;
+      // footprint 全コーナーが polygon 内
+      if (!cornersInsidePlaza(squareFootprint(p, WELL_FOOT_HALF, angle), plaza, 0.05)) {
+        continue;
+      }
+      pos = p;
+      break outer;
+    }
+  }
+  if (!pos) return null;
+
+  // facing = 井戸位置 → 広場中心(既定規約)± 揺らぎ(D1b。facing へ畳み込む)
+  const baseFacing = Math.atan2(plaza.position.z - pos.z, plaza.position.x - pos.x);
+  const facing = baseFacing + rng.range(-WELL_FACING_JITTER, WELL_FACING_JITTER);
+  const parts = buildWellParts({ center: pos, facing, rng });
+  return {
+    id: `facility/well/${plaza.id}`,
+    kind: "well",
+    footprint: ensureClockwise(squareFootprint(pos, WELL_FOOT_HALF, facing)),
+    facing,
+    parts,
+    origin: { type: "plaza", plazaId: plaza.id },
+  };
+}
+
+/**
+ * 広場の屋台列の生成(段14 の本番ループとギャラリーが共用。契約
+ * 「stall(屋台)」D3 実装補足)。
+ *
+ * 配置スロットは決定論の等角走査(乱数非消費)。乱数は配置が確定した
+ * 屋台の造形バリエーションのみに、`facility/stall/<plazaId>` から
+ * 連番消費する(1 屋台 3 ロール固定)。
+ */
+export function buildPlazaStallFacilities(
+  seed: string,
+  prosper: number,
+  plaza: Plaza,
+  trafficAzimuths: readonly number[],
+): Facility[] {
+  const stallCount = Math.round(Math.min(12, Math.max(3, 3 + 9 * prosper)));
+  const bandCenter = (PLAZA_EDGE_BAND + PLAZA_EDGE_BAND_OUTER) / 2;
+  const bandRadius = Math.max(1, plaza.radius - bandCenter);
+  const slots = Math.max(8, Math.floor((Math.PI * 2 * bandRadius) / STALL_SLOT_PITCH));
+  const rng = makeRng(seed, `facility/stall/${plaza.id}`);
+
+  const out: Facility[] = [];
+  const placed: Vec2[] = [];
+  for (let k = 0; k < slots && out.length < stallCount; k++) {
+    const angle = (k / slots) * Math.PI * 2;
+    if (inTrafficSector(angle, trafficAzimuths)) continue;
+    const rim = rayDistanceToPolygon(plaza.position, angle, plaza.polygon, plaza.radius);
+    const dist = rim - bandCenter;
+    if (dist <= 0) continue;
+    const pos: Vec2 = {
+      x: plaza.position.x + Math.cos(angle) * dist,
+      z: plaza.position.z + Math.sin(angle) * dist,
+    };
+    // 縁帯の実距離(polygon の非円形ぶんの検算)
+    const edgeDist = -polygonSignedDistance(pos.x, pos.z, plaza.polygon);
+    if (edgeDist < PLAZA_EDGE_BAND || edgeDist > PLAZA_EDGE_BAND_OUTER) continue;
+    // 既配置の屋台との間隔
+    let tooClose = false;
+    for (const q of placed) {
+      if (Math.hypot(q.x - pos.x, q.z - pos.z) < STALL_MIN_SPACING) {
+        tooClose = true;
+        break;
+      }
+    }
+    if (tooClose) continue;
+    // facing = 広場中心向き(既定規約)。footprint 全コーナーが polygon 内
+    const facing = Math.atan2(plaza.position.z - pos.z, plaza.position.x - pos.x);
+    const f: Vec2 = { x: Math.cos(facing), z: Math.sin(facing) };
+    const s: Vec2 = { x: -f.z, z: f.x };
+    const footprint = rectFootprint(pos, f, s, STALL_FOOT_W / 2, STALL_FOOT_D / 2);
+    if (!cornersInsidePlaza(footprint, plaza, 0.05)) continue;
+
+    const parts = buildStallParts({ center: pos, facing, rng });
+    out.push({
+      id: `facility/stall/${plaza.id}/${out.length}`,
+      kind: "stall",
+      footprint: ensureClockwise(footprint),
+      facing,
+      parts,
+      origin: { type: "plaza", plazaId: plaza.id },
+    });
+    placed.push(pos);
+  }
+  return out;
+}
+
+/** 農村井戸の汎用クリアランス検査に使う周辺環境 */
+interface RuralWellContext {
+  model: WorldModel;
+  waterBodySdf: (x: number, z: number) => number;
+  canalSdf: (x: number, z: number) => number;
+  boundaryInside: (x: number, z: number) => number;
+  nodeDegree: Map<string, number>;
+}
+
+function buildRuralWellContext(model: WorldModel): RuralWellContext {
+  const site = createSiteContext(model);
+  const nodeDegree = new Map<string, number>();
+  for (const edge of model.network.edges) {
+    nodeDegree.set(edge.from, (nodeDegree.get(edge.from) ?? 0) + 1);
+    nodeDegree.set(edge.to, (nodeDegree.get(edge.to) ?? 0) + 1);
+  }
+  return {
+    model,
+    waterBodySdf: site.waterBodySdf,
+    canalSdf: site.canalSdf,
+    boundaryInside: site.boundaryInside,
+    nodeDegree,
+  };
+}
+
+/** 農村井戸の候補位置が汎用クリアランス(契約「衝突・帯検証則」)を満たすか */
+function ruralWellSiteOk(
+  ctx: RuralWellContext,
+  center: Vec2,
+  facilities: readonly Facility[],
+): boolean {
+  const { model } = ctx;
+  const h = WELL_FOOT_HALF;
+  // プローブ: 角 4 + 辺中点 4 + 中心 1(区画・建物の衝突検査と同じ流儀)
+  const probes: Vec2[] = [center];
+  for (const [du, dv] of [
+    [-h, -h],
+    [h, -h],
+    [h, h],
+    [-h, h],
+    [0, -h],
+    [h, 0],
+    [0, h],
+    [-h, 0],
+  ] as const) {
+    probes.push({ x: center.x + du, z: center.z + dv });
+  }
+  const ring = model.wards.ringPath;
+  for (const p of probes) {
+    if (ctx.boundaryInside(p.x, p.z) < CLEAR_BOUNDARY) return false;
+    if (ctx.waterBodySdf(p.x, p.z) < CLEAR_WATER) return false;
+    if (ctx.canalSdf(p.x, p.z) < CLEAR_WATER) return false;
+    for (const edge of model.network.edges) {
+      if (distToPolyline(p.x, p.z, edge.path) < edge.width / 2 + CLEAR_ROAD) {
+        return false;
+      }
+    }
+    for (const parcel of model.parcels) {
+      if (polygonSignedDistance(p.x, p.z, parcel.polygon) < CLEAR_PARCEL) {
+        return false;
+      }
+    }
+    for (const plaza of model.plazas) {
+      if (polygonSignedDistance(p.x, p.z, plaza.polygon) < CLEAR_PLAZA) {
+        return false;
+      }
+    }
+    for (const facility of facilities) {
+      if (polygonSignedDistance(p.x, p.z, facility.footprint) < CLEAR_FACILITY) {
+        return false;
+      }
+    }
+    if (model.wards.wardLevel >= 1 && ring.length >= 3) {
+      if (Math.abs(polygonSignedDistance(p.x, p.z, ring)) < RING_BUFFER) {
+        return false;
+      }
+    }
+    const foot = model.centerPlan.footprint;
+    if (foot.length >= 3) {
+      if (polygonSignedDistance(p.x, p.z, foot) < CLEAR_CENTER) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 農村井戸の生成(契約「well(井戸)」(b)・D3 実装補足)。
+ * 消費列(固定): 採否 chance → 造形(D1b。位置は決定論走査で乱数非消費)。
+ */
+function buildRuralWellFacility(
+  ctx: RuralWellContext,
+  node: { id: string; position: Vec2 },
+  settle: number,
+  facilities: readonly Facility[],
+): Facility | null {
+  const { model } = ctx;
+  const rng = makeRng(model.meta.seed, `facility/well/${node.id}`);
+  const rate = Math.min(0.4, Math.max(0.05, 0.05 + 0.35 * settle));
+  if (!rng.chance(rate)) return null;
+
+  // 決定論走査: 8 方位 × 距離 3 段の最初の合格点(乱数非消費)
+  let pos: Vec2 | null = null;
+  outer: for (const d of RURAL_WELL_DISTANCES) {
+    for (let k = 0; k < RURAL_WELL_DIRECTIONS; k++) {
+      const angle = (k / RURAL_WELL_DIRECTIONS) * Math.PI * 2;
+      const p: Vec2 = {
+        x: node.position.x + Math.cos(angle) * d,
+        z: node.position.z + Math.sin(angle) * d,
+      };
+      if (!ruralWellSiteOk(ctx, p, facilities)) continue;
+      pos = p;
+      break outer;
+    }
+  }
+  if (!pos) return null;
+
+  // facing = 井戸位置 → ノード(道路の方を向く)± 揺らぎ
+  const baseFacing = Math.atan2(node.position.z - pos.z, node.position.x - pos.x);
+  const facing = baseFacing + rng.range(-WELL_FACING_JITTER, WELL_FACING_JITTER);
+  const parts = buildWellParts({ center: pos, facing, rng });
+  return {
+    id: `facility/well/${node.id}`,
+    kind: "well",
+    footprint: ensureClockwise(squareFootprint(pos, WELL_FOOT_HALF, facing)),
+    facing,
+    parts,
+    origin: { type: "node", nodeId: node.id },
+  };
+}
+
 /**
  * 施設 parts の footprint 帯検証(契約「衝突・帯検証則」: 全 parts は
  * footprint から 0.9 を超えてはみ出さない)。部品の回転込みの 4 隅で
@@ -452,11 +1075,15 @@ function partBandViolations(facility: Facility): number {
     const [sx, , sz] = part.transform.scale;
     const cos = Math.cos(part.transform.rotation);
     const sin = Math.sin(part.transform.rotation);
+    // canopy はローカル z が 0(高い縁 = position)〜 +1(低い縁)の
+    // 非対称レンジ(契約「施設部品の語彙」の position 規約)
+    const z0 = part.type === "canopy" ? 0 : -sz / 2;
+    const z1 = part.type === "canopy" ? sz : sz / 2;
     for (const [lx, lz] of [
-      [-sx / 2, -sz / 2],
-      [sx / 2, -sz / 2],
-      [sx / 2, sz / 2],
-      [-sx / 2, sz / 2],
+      [-sx / 2, z0],
+      [sx / 2, z0],
+      [sx / 2, z1],
+      [-sx / 2, z1],
     ] as const) {
       const x = px + lx * cos + lz * sin;
       const z = pz - lx * sin + lz * cos;
@@ -470,16 +1097,73 @@ function partBandViolations(facility: Facility): number {
 
 /**
  * パイプライン段の実体: facilities を埋める(他フィールドには触れない。
- * contracts/pipeline.md 段14)。走査順は farmland 区画の parcels 配列内
- * 出現順(契約「順序非依存の走査順」)。
+ * contracts/pipeline.md 段14)。配列順序は契約「Facility スキーマ」の
+ * 走査順: field/pasture(farmland 区画の parcels 配列順)→ well
+ * (広場 = plazas 配列順、続いて農村 = network.nodes 配列順)→ stall
+ * (plazas 配列順)。
  */
 export function runFacilities(model: WorldModel): void {
   const seed = model.meta.seed;
+  const { settlement, prosperity } = model.meta.params;
+  const settle = settlement / 100;
+  const prosper = prosperity / 100;
   const facilities: Facility[] = [];
+
+  // --- field / pasture(D2b) ---
   for (const parcel of model.parcels) {
     if (parcel.kind !== "farmland") continue;
     facilities.push(buildFarmlandFacility(seed, parcel));
   }
+
+  // --- well: 市街の広場(center / crossing。plazas 配列順) ---
+  const plazaAzimuths = new Map<string, number[]>();
+  const marketPlazas = model.plazas.filter(
+    (p) => p.kind === "center" || p.kind === "crossing",
+  );
+  for (const plaza of marketPlazas) {
+    plazaAzimuths.set(plaza.id, plazaInflowAzimuths(model, plaza));
+  }
+  for (const plaza of marketPlazas) {
+    const well = buildPlazaWellFacility(
+      seed,
+      settle,
+      plaza,
+      plazaAzimuths.get(plaza.id) ?? [],
+    );
+    if (well) facilities.push(well);
+  }
+
+  // --- well: 農村の道路ノード(network.nodes 配列順。採択総数に上限) ---
+  const ruralCtx = buildRuralWellContext(model);
+  const ruralWellCountMax = Math.ceil(2 + 4 * settle);
+  let ruralWells = 0;
+  for (const node of model.network.nodes) {
+    if (ruralWells >= ruralWellCountMax) break;
+    const degree = ruralCtx.nodeDegree.get(node.id) ?? 0;
+    if (degree > 2) continue;
+    const urbanity = model.zoning
+      ? sampleFieldGrid(model.zoning, node.position.x, node.position.z)
+      : 0;
+    if (urbanity >= RURAL_URBANITY) continue;
+    const well = buildRuralWellFacility(ruralCtx, node, settle, facilities);
+    if (well) {
+      facilities.push(well);
+      ruralWells++;
+    }
+  }
+
+  // --- stall: 市街の広場の縁帯(plazas 配列順) ---
+  for (const plaza of marketPlazas) {
+    facilities.push(
+      ...buildPlazaStallFacilities(
+        seed,
+        prosper,
+        plaza,
+        plazaAzimuths.get(plaza.id) ?? [],
+      ),
+    );
+  }
+
   model.facilities = facilities;
 
   // --- パイプライン内アサーション(throw せず件数を console に出す) ---
@@ -487,7 +1171,13 @@ export function runFacilities(model: WorldModel): void {
   const farmlandCount = model.parcels.filter(
     (p) => p.kind === "farmland",
   ).length;
-  if (facilities.length !== farmlandCount) violations++;
+  const farmFacilities = facilities.filter(
+    (f) => f.kind === "field" || f.kind === "pasture",
+  ).length;
+  if (farmFacilities !== farmlandCount) violations++;
+  if (facilities.filter((f) => f.kind === "well" && f.origin.type === "node").length > ruralWellCountMax) {
+    violations++;
+  }
   for (const facility of facilities) {
     if (facility.parts.length === 0) violations++;
     violations += partBandViolations(facility);

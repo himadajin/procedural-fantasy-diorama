@@ -600,25 +600,41 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //     (contracts/vegetation-summary.md「回避対象への facilities 追加」。
   //     乱数消費は不変で採択のみ変わる)。
   // worldScale:0 の組は farmland が 1 件も切られず(D2a 実測)、施設 0・
-  // 植生の回避対象も空のため、ハッシュは D2a から不変。
-  // 新旧対応(D2a → D2b):
-  //   everdusk-101 {}               2a39c640 → d7c292ce
-  //   everdusk-101 {water:0}        a388ba50 → 07a31f4e
-  //   everdusk-101 {water:95}       b8c119eb → f6914e3e
-  //   everdusk-101 {worldScale:0}   1ad27f0e → 1ad27f0e(不変)
-  //   everdusk-101 {worldScale:100} 22074c19 → 9071f16c
-  //   seed-a {}                     9b96a6dd → f018e8cc
-  //   seed-b {}                     fc152906 → f28f4d06
-  //   seed-b {water:70}             98d588bf → 5430d443
+  // 植生の回避対象も空のため、ハッシュは D2a から不変だった(D2b 時点)。
+  //
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D3
+  // (井戸と市場屋台)による意図的な更新(2026-07-14):
+  // (1) 段14「施設」に well / stall を追加(contracts/facilities.md
+  //     「well(井戸)」「stall(市場屋台)」+ D3 実装補足): 市街の広場
+  //     (center / crossing)に井戸(settle 駆動の採否)と屋台列
+  //     (prosper 駆動の数量式。縁帯・中央円・通行帯セクターの帯規則)、
+  //     農村の道路ノード近傍に井戸(settle 駆動・上限つき)。乱数は新設
+  //     ストリーム facility/well/<plazaId|nodeId>・facility/stall/<plazaId>
+  //     のみを消費し、既存の全ストリームの消費列は不変。
+  // (2) 造形(D1b): 井戸 = 石環 fence×4 + 内面(void)+ 柱・轆轤 +
+  //     小屋根(shingle)、屋台 = 台(plinth 木)+ 柱 4 + canopy 天幕
+  //     (3 色重み抽選)。facilities 配下のモデル内容が変わりハッシュが
+  //     更新される(worldScale:0 も広場は存在するため今回は全 8 組更新)。
+  // (3) 植生の回避は D2b の施設 footprint 判定がそのまま well / stall にも
+  //     効く(乱数消費は不変で採択のみ変わる)。
+  // 新旧対応(D2b → D3):
+  //   everdusk-101 {}               d7c292ce → 4ba27dfa
+  //   everdusk-101 {water:0}        07a31f4e → d8dbc7a4
+  //   everdusk-101 {water:95}       f6914e3e → 1f478a96
+  //   everdusk-101 {worldScale:0}   1ad27f0e → 4424d838
+  //   everdusk-101 {worldScale:100} 9071f16c → 03ce4e79
+  //   seed-a {}                     f018e8cc → 75d72ddf
+  //   seed-b {}                     f28f4d06 → 60f80a00
+  //   seed-b {water:70}             5430d443 → c4dd589d
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "d7c292ce"],
-    ["everdusk-101", { water: 0 }, "07a31f4e"],
-    ["everdusk-101", { water: 95 }, "f6914e3e"],
-    ["everdusk-101", { worldScale: 0 }, "1ad27f0e"],
-    ["everdusk-101", { worldScale: 100 }, "9071f16c"],
-    ["seed-a", {}, "f018e8cc"],
-    ["seed-b", {}, "f28f4d06"],
-    ["seed-b", { water: 70 }, "5430d443"],
+    ["everdusk-101", {}, "4ba27dfa"],
+    ["everdusk-101", { water: 0 }, "d8dbc7a4"],
+    ["everdusk-101", { water: 95 }, "1f478a96"],
+    ["everdusk-101", { worldScale: 0 }, "4424d838"],
+    ["everdusk-101", { worldScale: 100 }, "03ce4e79"],
+    ["seed-a", {}, "75d72ddf"],
+    ["seed-b", {}, "60f80a00"],
+    ["seed-b", { water: 70 }, "c4dd589d"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

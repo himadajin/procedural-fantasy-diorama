@@ -15,6 +15,7 @@ import {
   type BuildingRole,
   type Params,
   type Parcel,
+  type Plaza,
   type Polygon,
   type Vec2,
   type WorldModel,
@@ -24,9 +25,14 @@ import { hashWorldModel } from "../model/hash";
 import { ensureClockwise } from "../model/geometry";
 import { computeDerived } from "./derive";
 import { generateZoneMask } from "./ground";
+import { runPaving } from "./paving";
 import { createSiteContext } from "./parcels";
 import { buildParcelBuilding, SINGLE_BUILD_OPTIONS } from "./buildings";
-import { buildFarmlandFacility } from "./facilities";
+import {
+  buildFarmlandFacility,
+  buildPlazaStallFacilities,
+  buildPlazaWellFacility,
+} from "./facilities";
 import { runSummary } from "./summary";
 
 // --- 極小ワールドの寸法(契約「極小ワールドの合成規約」の実装判断。
@@ -203,11 +209,82 @@ function buildSingleFacilityWorld(
   return model;
 }
 
+// --- 施設(広場)対象の極小ワールド(Phase D タスク D3) ---
+/**
+ * ギャラリーの広場の半径(実寸)。crossing 広場の帯(4〜6.5)よりやや
+ * 大きめに取り、屋台列(prosper 100 で 12 基)が縁帯に収まる代表値
+ */
+const GALLERY_PLAZA_RADIUS = 9;
+/** ギャラリー広場の頂点数(本番の PLAZA_VERTICES と同じ 12 角形) */
+const GALLERY_PLAZA_VERTICES = 12;
+
+/**
+ * 施設(広場)対象用の広場 1 枚。本番の広場は不整形 n 角形だが、
+ * ギャラリーは単体鑑賞用の整った正 12 角形とする(polygon は radius の
+ * 円内という Plaza 契約の範囲内。道路接続を持たないため通行帯セクターは
+ * 空 = 縁帯の全周が候補になる)
+ */
+function createGalleryPlaza(): Plaza {
+  const polygon: Vec2[] = [];
+  for (let i = 0; i < GALLERY_PLAZA_VERTICES; i++) {
+    const a = -(i / GALLERY_PLAZA_VERTICES) * Math.PI * 2; // 時計回り
+    polygon.push({
+      x: Math.cos(a) * GALLERY_PLAZA_RADIUS,
+      z: Math.sin(a) * GALLERY_PLAZA_RADIUS,
+    });
+  }
+  return {
+    id: "plaza/gallery",
+    kind: "crossing",
+    position: { x: 0, z: 0 },
+    radius: GALLERY_PLAZA_RADIUS,
+    polygon,
+  };
+}
+
+/**
+ * 極小ワールド(広場 1 枚)を合成し、本番の施設生成関数のみで対象
+ * (well = 1 基 / stall = 縁帯の列)を生成する。広場の舗装は段10 の
+ * `runPaving`(乱数非消費の決定的な zoneMask 描き込み。`runSummary` を
+ * 直接呼ぶのと同じ許容の範囲)で本番と同じ材質にする。
+ * well は採否抽選を本番どおり消費した上で採択へ置き換える
+ * (kind / role 強制と同じ「消費は保つが結果は捨てる」意味論)。
+ */
+function buildPlazaFacilityWorld(
+  seed: string,
+  params: Params,
+  kind: "well" | "stall",
+): WorldModel {
+  const model = createEmptyWorldModel(seed, params);
+  model.meta.derived = computeDerived(seed, params);
+  model.ground.boundary = createGalleryBoundary();
+  model.ground.size = WORLD_HALF_EXTENT * 2;
+  model.ground.zoneMask = generateZoneMask(seed, model.ground.size);
+
+  const plaza = createGalleryPlaza();
+  model.plazas = [plaza];
+  runPaving(model);
+
+  if (kind === "well") {
+    const settle = params.settlement / 100;
+    const well = buildPlazaWellFacility(seed, settle, plaza, [], true);
+    model.facilities = well ? [well] : [];
+  } else {
+    const prosper = params.prosperity / 100;
+    model.facilities = buildPlazaStallFacilities(seed, prosper, plaza, []);
+  }
+
+  runSummary(model);
+  model.summary.hash = hashWorldModel(model);
+  return model;
+}
+
 /**
  * 対象id → 極小ワールド合成関数の対応表(契約「対象idの体系」)。
  * MVP(G1): 一般建物の全 role(`BuildingRole` から "center" を除いた6つ)。
- * Phase D タスク D2b で施設 `facility/field` / `facility/pasture` を追加
- * (以後の施設 kind は D3〜D5 の各実装タスクが行を足す)。
+ * Phase D タスク D2b で施設 `facility/field` / `facility/pasture` を、
+ * D3 で `facility/well` / `facility/stall` を追加(以後の施設 kind は
+ * D4〜D5 の各実装タスクが行を足す)。
  */
 const GALLERY_TARGETS: Readonly<
   Record<string, (seed: string, params: Params) => WorldModel>
@@ -228,6 +305,10 @@ const GALLERY_TARGETS: Readonly<
     buildSingleFacilityWorld(seed, params, "field"),
   "facility/pasture": (seed, params) =>
     buildSingleFacilityWorld(seed, params, "pasture"),
+  "facility/well": (seed, params) =>
+    buildPlazaFacilityWorld(seed, params, "well"),
+  "facility/stall": (seed, params) =>
+    buildPlazaFacilityWorld(seed, params, "stall"),
 };
 
 /** 実装済みの対象id一覧(UI・URL 検証(G2)が使う) */

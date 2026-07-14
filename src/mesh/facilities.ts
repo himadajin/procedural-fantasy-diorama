@@ -39,6 +39,11 @@ const CROP_COLORS: Record<number, THREE.Color> = {
 /** 柵の柱・横木(beam)の足元の焼き込み(建物の石垣と同じ帯の控えめな値) */
 const BEAM_FOOT_AO = 0.85;
 
+/** 天幕(canopy)の厚み(実寸固定。契約「施設部品の語彙」) */
+const CANOPY_T = 0.06;
+/** 天幕の裏面(下面)の沈み(布の陰。軒裏の焼き込みと同じ流儀の控えめな値) */
+const CANOPY_UNDERSIDE_SHADE = 0.78;
+
 /**
  * ground-patch: 地面に接する薄い直方体(畑の基盤・畝・牧草パッチ等)。
  * `params.top` で上面のみ作物の緑に塗り分け、側面は materialId のまま
@@ -94,6 +99,105 @@ function groundPatchPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
 }
 
 /**
+ * canopy: 片流れの布屋根(屋台の天幕)。厚み 0.06(実寸固定)の薄板が
+ * ローカル +z へ流れ落ちる。position は高い縁の下端中心、scale =
+ * 間口 × 落差(高い縁と低い縁の y 差)× 奥行き(契約「施設部品の語彙」)。
+ * 下面は頂点カラーで一段沈める(布の陰。軒裏の焼き込みと同じ流儀)。
+ */
+function canopyPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  const sy = Math.max(Math.abs(part.transform.scale[1]), 1e-6);
+  const t = CANOPY_T / sy; // 厚み(ローカル y 単位)
+  // ローカル z は 0(高い縁 = position)〜 +1(低い縁)。y は 0(高い縁の
+  // 下端)から低い縁の −1 へ流れ落ちる(contract の position 規約)
+  const inside = xf([0, -0.5 + t / 2, 0.5]);
+  const s4 = [1, 1, 1, 1];
+  const sh = CANOPY_UNDERSIDE_SHADE;
+  const sh4 = [sh, sh, sh, sh];
+  // 上面(高い縁 y = t → 低い縁 y = −1 + t)
+  face(
+    buf,
+    xf,
+    [
+      [-0.5, t, 0],
+      [0.5, t, 0],
+      [0.5, -1 + t, 1],
+      [-0.5, -1 + t, 1],
+    ],
+    s4,
+    inside,
+    base,
+  );
+  // 下面(一段沈める)
+  face(
+    buf,
+    xf,
+    [
+      [-0.5, 0, 0],
+      [0.5, 0, 0],
+      [0.5, -1, 1],
+      [-0.5, -1, 1],
+    ],
+    sh4,
+    inside,
+    base,
+  );
+  // 縁 4 面(高い側・低い側・左右)
+  face(
+    buf,
+    xf,
+    [
+      [-0.5, 0, 0],
+      [0.5, 0, 0],
+      [0.5, t, 0],
+      [-0.5, t, 0],
+    ],
+    s4,
+    inside,
+    base,
+  );
+  face(
+    buf,
+    xf,
+    [
+      [-0.5, -1, 1],
+      [0.5, -1, 1],
+      [0.5, -1 + t, 1],
+      [-0.5, -1 + t, 1],
+    ],
+    s4,
+    inside,
+    base,
+  );
+  face(
+    buf,
+    xf,
+    [
+      [-0.5, 0, 0],
+      [-0.5, -1, 1],
+      [-0.5, -1 + t, 1],
+      [-0.5, t, 0],
+    ],
+    s4,
+    inside,
+    base,
+  );
+  face(
+    buf,
+    xf,
+    [
+      [0.5, 0, 0],
+      [0.5, -1, 1],
+      [0.5, -1 + t, 1],
+      [0.5, t, 0],
+    ],
+    s4,
+    inside,
+    base,
+  );
+}
+
+/**
  * WorldModel の facilities を三角形化する。躯体束と屋根束の最大 2 つの
  * マージメッシュを返す(facilities が空なら空配列)。
  */
@@ -122,6 +226,10 @@ export function buildFacilities(model: WorldModel): THREE.Object3D[] {
       }
       if (part.type === "beam") {
         boxPart(part, solid, base, BEAM_FOOT_AO);
+        continue;
+      }
+      if (part.type === "canopy") {
+        canopyPart(part, solid, base);
         continue;
       }
       const handler = MERGE_HANDLERS[part.type];
