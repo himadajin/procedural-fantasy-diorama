@@ -1,8 +1,8 @@
 # WorldModel スキーマ契約 — 素材(materialId の語彙)
 
 WorldModel スキーマ契約の一部(2026-07-07 に worldmodel.md から分割)。
-本書は Part の `materialId` の語彙(基準色)の正であり、art-direction 5.1節と
-同期する。
+本書は Part の `materialId` の語彙(基準色)の正であり、art-direction 5.1節・
+5.5節と同期する。
 スキーマの変更はコードより先に本書を更新する。
 索引と節→ファイルの対応表は [README.md](README.md) を参照。
 関連: この語彙を使う Part の型・変換規約は [buildings.md](buildings.md) を参照。
