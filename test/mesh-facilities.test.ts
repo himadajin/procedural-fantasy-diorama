@@ -6,47 +6,15 @@
  * 検証する。
  */
 import { describe, expect, it, vi } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { DEFAULT_PARAMS, type Params, type WorldModel } from "../src/model/worldmodel";
 import { DEFAULT_SEED } from "../src/defaults";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
-import { runParcels } from "../src/pipeline/parcels";
-import { runBuildings } from "../src/pipeline/buildings";
-import { runLanes } from "../src/pipeline/lanes";
 import { runFacilities } from "../src/pipeline/facilities";
 import { buildGalleryWorld } from "../src/pipeline/gallery";
 import { buildFacilities } from "../src/mesh/facilities";
+import { buildUpTo } from "./helpers";
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  runBuildings(model);
-  runLanes(model);
-  runFacilities(model);
-  return model;
+  return buildUpTo(runFacilities, seed, over);
 }
 
 /** facility の全部品型(順序非依存の集合として比較するため Set で返す) */

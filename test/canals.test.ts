@@ -1,30 +1,14 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import { createWaterField, distToPolyline } from "../src/model/waterfield";
 import { pathLength, pointAlong, waterCrossings } from "../src/model/geometry";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
 import { runCanals } from "../src/pipeline/canals";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  return model;
+  return buildUpTo(runCanals, seed, over);
 }
 
 describe("canals: 決定性", () => {

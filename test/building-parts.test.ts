@@ -5,9 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_PARAMS,
   SHORE_SKIRT_BOTTOM_Y,
-  createEmptyWorldModel,
   type Building,
   type Params,
   type Part,
@@ -15,18 +13,9 @@ import {
 } from "../src/model/worldmodel";
 import { ZONE_KINDS, sampleZoneMask } from "../src/model/zonemask";
 import { polygonSignedDistance } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
 import { runParcels } from "../src/pipeline/parcels";
 import { FLOOR_HEIGHT, runBuildings } from "../src/pipeline/buildings";
+import { buildUpTo, makeCached } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
@@ -78,37 +67,14 @@ function isBackyard(p: Part): boolean {
 }
 
 function buildUntilParcels(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  return model;
+  return buildUpTo(runParcels, seed, over);
 }
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = buildUntilParcels(seed, over);
-  runBuildings(model);
-  return model;
+  return buildUpTo(runBuildings, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
 /** 水辺込みの組(杭・張り出しの検証が空にならないよう Water を振る) */
 const COMBOS: [string, Partial<Params>][] = SEEDS.flatMap((seed) => [

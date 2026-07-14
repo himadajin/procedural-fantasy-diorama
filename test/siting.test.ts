@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import {
   createBoundaryRadius,
   createWaterField,
@@ -12,20 +7,13 @@ import {
   polygonArea,
 } from "../src/model/waterfield";
 import { makeRng } from "../src/rng";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
 import { runSiting } from "../src/pipeline/siting";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  return model;
+  return buildUpTo(runSiting, seed, over);
 }
 
 describe("siting: 決定性", () => {

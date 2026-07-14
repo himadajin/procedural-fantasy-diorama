@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type Polygon,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type Polygon, type WorldModel } from "../src/model/worldmodel";
 import { ZONE_KINDS } from "../src/model/zonemask";
 import {
   createWaterField,
@@ -13,20 +7,16 @@ import {
   polygonArea,
   waterBodies,
 } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
 import { runGround } from "../src/pipeline/ground";
 import { runWater } from "../src/pipeline/water";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
 /** 湖・池が確実に生じる代表 seed(water=70。事前に確認済み) */
 const WATER_SEEDS = ["seed-b", "seed-c"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  return model;
+  return buildUpTo(runWater, seed, over);
 }
 
 describe("water: 決定性", () => {
@@ -153,9 +143,7 @@ describe("water: 面積上限(waterAreaCap)", () => {
 
   it("導出値が上限を超える入力でも湖・池の半径縮小でクリップされる", () => {
     for (const seed of SEEDS) {
-      const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, water: 95 });
-      runDerive(model);
-      runGround(model);
+      const model = buildUpTo(runGround, seed, { water: 95 });
       // 意図的に過大な水域を要求する(段契約上 runWater は meta と ground のみ読む)。
       // 単体では境界内に配置できる程度の半径(0.2)にしつつ、湖+池4個の合計で
       // waterAreaCap(0.35)を大きく超えさせ、面積クリップの縮小を誘発する

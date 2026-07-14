@@ -1,22 +1,13 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type Vec2,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type Vec2, type WorldModel } from "../src/model/worldmodel";
 import { ZONE_KINDS, sampleZoneMask } from "../src/model/zonemask";
-import { runDerive } from "../src/pipeline/derive";
 import { runGround } from "../src/pipeline/ground";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  return model;
+  return buildUpTo(runGround, seed, over);
 }
 
 /** shoelace 符号(x, z)。時計回りの契約は負(contracts/worldmodel-core.md) */

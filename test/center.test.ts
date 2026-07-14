@@ -6,9 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_PARAMS,
   FLOOR_HEIGHT,
-  createEmptyWorldModel,
   type Building,
   type Params,
   type Part,
@@ -16,17 +14,6 @@ import {
 } from "../src/model/worldmodel";
 import { polygonArea, polygonSignedDistance } from "../src/model/waterfield";
 import { polygonsOverlap } from "../src/model/geometry";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
-import { runParcels } from "../src/pipeline/parcels";
 import { runBuildings } from "../src/pipeline/buildings";
 import {
   CENTER_GLOW_SHARE,
@@ -34,6 +21,7 @@ import {
   glowPartArea,
   rankCenterAxes,
 } from "../src/pipeline/center";
+import { buildUpTo, makeCached } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
@@ -59,32 +47,10 @@ const CENTER_PART_TYPES = new Set([
 const GLOW_TYPES = new Set(["crystal", "sigil", "glow-window"]);
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  runBuildings(model);
-  return model;
+  return buildUpTo(runBuildings, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
 function center(model: WorldModel): Building {
   const b = model.buildings.find((x) => x.role === "center");

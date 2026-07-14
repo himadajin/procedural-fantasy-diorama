@@ -1,16 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  type Derived,
-  type Params,
-} from "../src/model/worldmodel";
+import { DEFAULT_PARAMS, type Derived, type Params } from "../src/model/worldmodel";
 import { computeDerived } from "../src/pipeline/derive";
+import { withParams } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
-
-function withParams(over: Partial<Params>): Params {
-  return { ...DEFAULT_PARAMS, ...over };
-}
 
 describe("computeDerived: 決定性", () => {
   it("同一入力で深い等価の Derived を返す", () => {

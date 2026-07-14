@@ -9,10 +9,7 @@ import {
 import { runPipeline } from "../src/pipeline/run";
 import { buildCenterDescription, runSummary } from "../src/pipeline/summary";
 import { pathLength } from "../src/model/geometry";
-
-function withParams(over: Partial<Params>): Params {
-  return { ...DEFAULT_PARAMS, ...over };
-}
+import { withParams } from "./helpers";
 
 /** buildCenterDescription を単体検証するための最小モデル */
 function modelWithAxes(

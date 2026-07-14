@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_PARAMS, type Params } from "../src/model/worldmodel";
 import { hashWorldModel } from "../src/model/hash";
 import { runPipeline } from "../src/pipeline/run";
-
-function withParams(over: Partial<Params>): Params {
-  return { ...DEFAULT_PARAMS, ...over };
-}
+import { withParams } from "./helpers";
 
 describe("hashWorldModel: 決定性(contracts/pipeline.md)", () => {
   it("同一入力の2回生成でハッシュが一致し、summary.hash に格納される", async () => {
