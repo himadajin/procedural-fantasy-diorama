@@ -84,6 +84,7 @@ function createGalleryParcel(waterside: boolean): Parcel {
     waterside,
     canalside: false,
     groupId: "",
+    kind: "residential",
   };
 }
 

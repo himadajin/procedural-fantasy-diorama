@@ -134,11 +134,23 @@ interface Rng {
   `"building/<id>/waterfront"` のみを消費し、既存の
   `"building/<id>"` 系ストリームの消費は変えない。
 - 段11「区画」(Phase D。計画書 `plans/2026-07-14-worldgen-rework-facilities.md`
-  タスク D2a)は、農村ゾーン(`zoning` の urbanity < 0.45)の道路沿いに
-  `Parcel.kind: "farmland"` の区画を追加で切り出す(既存の residential
-  区画の切り出しロジックには手を入れない。facilities.md「field(畑)・
-  pasture(牧草地)」節)。乱数は既存の `"parcel/<id>"` ストリームのみを
-  消費する(farmland 区画の抽選も同じ要素独立サブストリームの流儀に従う)。
+  タスク D2a。2026-07-14 の D2a 差し戻しで切り出し順を改訂)は、農村ゾーン
+  (`zoning` の urbanity < 0.45)の道路沿いに `Parcel.kind: "farmland"` の
+  区画を residential より**先**に切り出す(農地が農村の道路沿いを先取りし、
+  residential が残りを埋める。residential のループ自体は無改変で、既採択の
+  farmland 区画との既存の衝突棄却で自然に避ける。走査則・寸法帯・採択率は
+  facilities.md「field(畑)・pasture(牧草地)」節が正)。乱数は既存の
+  `"parcel/<id>"` ストリームの流儀のみを使う(farmland の id は
+  `parcel/<roadEdgeId>/<L|R>/farm<slot>` の専用 slot 空間。消費順も
+  residential と同一)。farmland の先取りにより residential の採択結果
+  (区画数・位置)は farmland の有無に依存して変わる(旧規定「residential
+  の切り出しロジックには手を入れない」はループ無改変の意味では維持されるが、
+  出力の不変は差し戻しで撤回。実測は facilities.md 同節)。
+  段12「建物」は `kind: "farmland"` の区画を建物生成・クラスタリングの
+  対象から除外する(farmland 区画に対して RNG を消費しない。
+  buildings.md「全単射の対象範囲」実装補足)ため、段12 の既存 RNG
+  ストリーム契約(本節の他の箇条)は residential 区画に対してのみ従来どおり
+  適用される。
 - 段14「施設」(Phase D。計画書
   `plans/2026-07-14-worldgen-rework-facilities.md` タスク D2a〜D5)は
   段13「小道」の後・段15「植生」の前に走り、`facilities` のみを書く

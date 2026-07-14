@@ -536,15 +536,63 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   //   seed-a {}                     9d5b26ea → 94790fdf
   //   seed-b {}                     b832272a → c682f116
   //   seed-b {water:70}             9f347408 → bfa32c09
+  // 計画書 2026-07-14-worldgen-rework-facilities.md タスク D2a
+  // (差し戻し 1 回を含む最終構成)で更新。意図した変更:
+  // (1) スキーマ追加: `model.facilities: Facility[]`(常に空配列。段14
+  //     「施設」の実装は D2b 以降)、`Parcel.kind: "residential" |
+  //     "farmland"`(既定 residential)。WorldModel 直下・Parcel の新規
+  //     フィールドであり正規化ハッシュの直列化対象に加わるため、区画が
+  //     1件でも存在する組はすべてハッシュが変わる(groupId 導入時の C2 と
+  //     同型)。全 8 組が対象。
+  // (2) 農地区画の切り出し(段11「区画」の拡張。contracts/facilities.md
+  //     「field(畑)・pasture(牧草地)」実装補足): farmland 区画を
+  //     residential より先に切り出し、農村ゾーン(zoning の urbanity <
+  //     0.45。確定判定は縮小ステップごとの実候補中心)の道路沿いを
+  //     先取りする。id は parcel/<edge>/<L|R>/farm<slot> の専用 slot
+  //     空間、乱数は "parcel/<id>" ストリームの流儀(奥行き揺らぎ →
+  //     採択ロールの固定消費順)。間口 clamp(1.7 × residential 候補間口の
+  //     中央値, 14, 40)・奥行き比 1.6・採択率 farmlandRate =
+  //     clamp(0.25+0.55×(1−settle), 0.25, 0.8)。候補走査は両側不成立の
+  //     位置を 1/4 間口刻みで再試行する(決定論・乱数非消費)。farmland の
+  //     先取りにより residential の採択結果(区画数・位置)も変わる
+  //     (D2a 差し戻しの判定基準による設計変更。当初の残地方式は
+  //     Settlement 30 以降で農地が構造的に 0 件になるため棄却された)。
+  // (3) 区画グループ(groupId)の run 検出に kind 一致条件を追加した
+  //     (parcels.ts assignGroupIds)。residential のみの入力では常に真に
+  //     なるため無挙動(既存の区画グループ化ロジックは不変)。
+  // (4) 全単射契約の読み替え(contracts/buildings.md「全単射の対象範囲」。
+  //     D1a で確定済み): 段12「建物」(buildings.ts の
+  //     planGroupLayouts・runBuildings)は kind "farmland" の区画を建物
+  //     生成・クラスタリングの対象から除外する(farmland 区画は建物 0。
+  //     farmland 区画に対して "building/<id>" 系の RNG を消費しない)。
+  // 農地区画の実測(6 seed × 既定 World Scale。差し戻しの判定基準):
+  // settle0 平均 11.7 件/seed(最小 7)、settle20 平均 9.3(最小 7)、
+  // settle50 平均 2.2(最小 1・0 件 seed なし)、settle100 は 0 件。
+  // 農地の最小間口 / residential 実測中央値の比は全条件 1.68〜1.95
+  // (基準 1.5 以上)。residential 区画数への影響: settle0 で 2〜7 件/seed
+  // 減・settle50 で 0〜2 件減・settle100 で不変(農村の住居が農地に
+  // 置き換わる)。worldScale:0 の組は farmland が 1 件も切られず
+  // residential も不変のため、(1) のスキーマ追加ぶんのみの差となる。
+  // farmland の量・走査則は提案値(facilities.md)であり、D7 の実測
+  // スイープで調整しうる。
+  // 新旧対応(T3 → D2a):
+  //   everdusk-101 {}               ff09b628 → 2a39c640
+  //   everdusk-101 {water:0}        8fe1e5e2 → a388ba50
+  //   everdusk-101 {water:95}       0443ad8d → b8c119eb
+  //   everdusk-101 {worldScale:0}   6ecaca07 → 1ad27f0e
+  //   everdusk-101 {worldScale:100} 52e0c8e7 → 22074c19
+  //   seed-a {}                     94790fdf → 9b96a6dd
+  //   seed-b {}                     c682f116 → fc152906
+  //   seed-b {water:70}             bfa32c09 → 98d588bf
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "ff09b628"],
-    ["everdusk-101", { water: 0 }, "8fe1e5e2"],
-    ["everdusk-101", { water: 95 }, "0443ad8d"],
-    ["everdusk-101", { worldScale: 0 }, "6ecaca07"],
-    ["everdusk-101", { worldScale: 100 }, "52e0c8e7"],
-    ["seed-a", {}, "94790fdf"],
-    ["seed-b", {}, "c682f116"],
-    ["seed-b", { water: 70 }, "bfa32c09"],
+    ["everdusk-101", {}, "2a39c640"],
+    ["everdusk-101", { water: 0 }, "a388ba50"],
+    ["everdusk-101", { water: 95 }, "b8c119eb"],
+    ["everdusk-101", { worldScale: 0 }, "1ad27f0e"],
+    ["everdusk-101", { worldScale: 100 }, "22074c19"],
+    ["seed-a", {}, "9b96a6dd"],
+    ["seed-b", {}, "fc152906"],
+    ["seed-b", { water: 70 }, "98d588bf"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {
