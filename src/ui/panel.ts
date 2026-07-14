@@ -3,6 +3,12 @@
  * 大画面=浮く右サイドパネル(開閉トグル)、
  * モバイル=浮くボトムシート(半開/全開。半開は seed + Randomize + Generate のみ)。
  * 造形・文言の方針は art-direction 9節、スライダーの定義は design.md を正とする。
+ *
+ * パネル上部の「箱庭 / ギャラリー」タブ(design.md「UI とサマリー」節、
+ * 「ギャラリー(語彙の単体鑑賞)」節、計画書2026-07-14-gallery.md 3.4節)で
+ * 2つの表示を切り替える。タブは表示の切替のみを行い、箱庭とギャラリーの
+ * 生成状態(seed・パラメータ・入力欄の値)は互いに独立に保持する
+ * (共有状態を作らない。同計画3.8節のリスク表)。
  */
 import { DEFAULT_PARAMS, type Params } from "../model/worldmodel";
 
@@ -46,12 +52,51 @@ const SLIDERS: SliderDef[] = [
   },
 ];
 
+/**
+ * ギャラリーで公開するスライダー(計画書3.4節「関連パラメータ(Prosperity /
+ * Settlement 等、造形に効くもののみ)」・G2指示書)。対象1体の生成
+ * (`buildParcelBuilding`)に実際に効く2キーのみ(`pipeline/derive.ts`
+ * computeDerived: wallTier/roofTier/detailAmount/tidiness ← Prosperity、
+ * floorsBias ← Settlement)。他4キーは対象の造形に影響しないため含めない
+ */
+const GALLERY_SLIDER_KEYS: (keyof Params)[] = ["prosperity", "settlement"];
+const GALLERY_SLIDERS = SLIDERS.filter((d) => GALLERY_SLIDER_KEYS.includes(d.key));
+
+export type TabKey = "world" | "gallery";
+
+export interface GalleryTarget {
+  /** 対象id(`building/<role>` 等。contracts/pipeline.md「対象idの体系」) */
+  id: string;
+  /** 表示ラベル(日本語の role 名) */
+  label: string;
+}
+
+export interface GalleryPanelInit {
+  targets: readonly GalleryTarget[];
+  defaultTargetId: string;
+  defaultSeed: string;
+  /** 初期スライダー値(URL起動時はここに反映済みの値を渡す) */
+  defaultParams: Params;
+  onGenerate: (targetId: string, seed: string, params: Params) => void;
+}
+
 export interface Panel {
   getSeed(): string;
   setSeed(seed: string): void;
   getParams(): Params;
   /** サマリー領域(生成結果・デバッグ表示の描画先) */
   summaryElement: HTMLElement;
+
+  gallery: {
+    getTargetId(): string;
+    getSeed(): string;
+    getParams(): Params;
+    /** ギャラリー用の簡易サマリー領域(描画先) */
+    summaryElement: HTMLElement;
+  };
+
+  /** タブを切り替える(表示のみ。生成状態には触れない) */
+  setActiveTab(tab: TabKey): void;
 }
 
 /** Math.random を使わない seed 生成(implementation-spec 1.4節の規約) */
@@ -72,10 +117,85 @@ const DICE_SVG = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none" ar
   <circle cx="13" cy="13" r="1.4" fill="currentColor"/>
 </svg>`;
 
+/** seed 入力欄+Randomize Seed(ダイス)の行。Randomize は欄を更新するのみ(再生成しない) */
+function buildSeedRow(idPrefix: string, initialSeed: string): {
+  row: HTMLElement;
+  input: HTMLInputElement;
+} {
+  const seedRow = document.createElement("div");
+  seedRow.className = "pfd-seed-row";
+  const seedLabel = document.createElement("label");
+  seedLabel.className = "pfd-seed-label";
+  seedLabel.htmlFor = `${idPrefix}-seed`;
+  seedLabel.textContent = "seed";
+  const seedInput = document.createElement("input");
+  seedInput.id = `${idPrefix}-seed`;
+  seedInput.className = "pfd-seed-input";
+  seedInput.type = "text";
+  seedInput.spellcheck = false;
+  seedInput.autocomplete = "off";
+  seedInput.value = initialSeed;
+  const dice = document.createElement("button");
+  dice.type = "button";
+  dice.className = "pfd-ghost-btn";
+  dice.title = "Randomize Seed";
+  dice.setAttribute("aria-label", "Randomize Seed(seed欄を新しい値にする。再生成はしない)");
+  dice.innerHTML = DICE_SVG;
+  dice.addEventListener("click", () => {
+    seedInput.value = randomSeed();
+  });
+  seedRow.append(seedLabel, seedInput, dice);
+  return { row: seedRow, input: seedInput };
+}
+
+/** スライダー1個ぶんの行(値の反映は呼び出し側の Generate 押下時のみ) */
+function buildSliderRow(
+  idPrefix: string,
+  def: SliderDef,
+  initial: number,
+): { wrap: HTMLElement; range: HTMLInputElement } {
+  const wrap = document.createElement("div");
+  wrap.className = "pfd-param";
+  const head = document.createElement("div");
+  head.className = "pfd-param-head";
+  const name = document.createElement("label");
+  name.className = "pfd-param-name";
+  name.htmlFor = `${idPrefix}-param-${def.key}`;
+  name.textContent = def.name;
+  const value = document.createElement("output");
+  value.className = "pfd-param-value";
+  value.textContent = String(initial);
+  head.append(name, value);
+
+  const range = document.createElement("input");
+  range.id = `${idPrefix}-param-${def.key}`;
+  range.className = "pfd-range";
+  range.type = "range";
+  range.min = "0";
+  range.max = "100";
+  range.step = "1";
+  range.value = String(initial);
+  range.style.setProperty("--fill", `${initial}%`);
+  range.addEventListener("input", () => {
+    value.textContent = range.value;
+    range.style.setProperty("--fill", `${range.value}%`);
+  });
+
+  const desc = document.createElement("p");
+  desc.className = "pfd-param-desc";
+  desc.textContent = def.description;
+
+  wrap.append(head, range, desc);
+  return { wrap, range };
+}
+
 export function createPanel(
   root: HTMLElement,
   defaultSeed: string,
   onGenerate: (seed: string, params: Params) => void,
+  galleryInit: GalleryPanelInit,
+  initialTab: TabKey = "world",
+  onTabChange?: (tab: TabKey) => void,
 ): Panel {
   root.dataset.panelOpen = "true";
   root.dataset.sheet = "half";
@@ -97,74 +217,38 @@ export function createPanel(
   title.className = "pfd-title";
   title.textContent = "Procedural Fantasy Diorama";
 
-  // seed 行
-  const seedRow = document.createElement("div");
-  seedRow.className = "pfd-seed-row";
-  const seedLabel = document.createElement("label");
-  seedLabel.className = "pfd-seed-label";
-  seedLabel.htmlFor = "pfd-seed";
-  seedLabel.textContent = "seed";
-  const seedInput = document.createElement("input");
-  seedInput.id = "pfd-seed";
-  seedInput.className = "pfd-seed-input";
-  seedInput.type = "text";
-  seedInput.spellcheck = false;
-  seedInput.autocomplete = "off";
-  seedInput.value = defaultSeed;
-  const dice = document.createElement("button");
-  dice.type = "button";
-  dice.className = "pfd-ghost-btn";
-  dice.title = "Randomize Seed";
-  dice.setAttribute("aria-label", "Randomize Seed(seed欄を新しい値にする。再生成はしない)");
-  dice.innerHTML = DICE_SVG;
-  // Randomize Seed は seed 入力欄だけを更新する。再生成は Generate 押下時のみ
-  dice.addEventListener("click", () => {
-    seedInput.value = randomSeed();
-  });
-  seedRow.append(seedLabel, seedInput, dice);
+  // --- タブ(箱庭 / ギャラリー)。パネル上部・半開/全開どちらでも常に見える ---
+  const tabs = document.createElement("div");
+  tabs.className = "pfd-tabs";
+  tabs.setAttribute("role", "tablist");
+  const worldTabBtn = document.createElement("button");
+  worldTabBtn.type = "button";
+  worldTabBtn.className = "pfd-tab";
+  worldTabBtn.setAttribute("role", "tab");
+  worldTabBtn.textContent = "箱庭";
+  const galleryTabBtn = document.createElement("button");
+  galleryTabBtn.type = "button";
+  galleryTabBtn.className = "pfd-tab";
+  galleryTabBtn.setAttribute("role", "tab");
+  galleryTabBtn.textContent = "ギャラリー";
+  tabs.append(worldTabBtn, galleryTabBtn);
 
-  // スライダー群(値の反映は Generate 押下時のみ。変更では再生成しない)
+  // --- 箱庭タブの内容(既存のパネル一式) ---
+  const worldView = document.createElement("div");
+  worldView.className = "pfd-view";
+  worldView.setAttribute("role", "tabpanel");
+
+  const { row: seedRow, input: seedInput } = buildSeedRow("pfd-world", defaultSeed);
+
   const sliders = document.createElement("div");
   sliders.className = "pfd-sliders";
   const inputs = new Map<keyof Params, HTMLInputElement>();
   for (const def of SLIDERS) {
-    const wrap = document.createElement("div");
-    wrap.className = "pfd-param";
-    const head = document.createElement("div");
-    head.className = "pfd-param-head";
-    const name = document.createElement("label");
-    name.className = "pfd-param-name";
-    name.htmlFor = `pfd-param-${def.key}`;
-    name.textContent = def.name;
-    const value = document.createElement("output");
-    value.className = "pfd-param-value";
-    value.textContent = String(DEFAULT_PARAMS[def.key]);
-    head.append(name, value);
-
-    const range = document.createElement("input");
-    range.id = `pfd-param-${def.key}`;
-    range.className = "pfd-range";
-    range.type = "range";
-    range.min = "0";
-    range.max = "100";
-    range.step = "1";
-    range.value = String(DEFAULT_PARAMS[def.key]);
-    range.style.setProperty("--fill", `${DEFAULT_PARAMS[def.key]}%`);
-    range.addEventListener("input", () => {
-      value.textContent = range.value;
-      range.style.setProperty("--fill", `${range.value}%`);
-    });
-
-    const desc = document.createElement("p");
-    desc.className = "pfd-param-desc";
-    desc.textContent = def.description;
-
-    wrap.append(head, range, desc);
+    const { wrap, range } = buildSliderRow("pfd-world", def, DEFAULT_PARAMS[def.key]);
     sliders.appendChild(wrap);
     inputs.set(def.key, range);
   }
 
-  // Generate(パネル内唯一の塗りボタン)
   const generate = document.createElement("button");
   generate.type = "button";
   generate.className = "pfd-generate";
@@ -175,12 +259,90 @@ export function createPanel(
   const hairline2 = document.createElement("hr");
   hairline2.className = "pfd-hairline";
 
-  // サマリー(読み取り専用。内容は後続PHASEで埋める)
   const summary = document.createElement("div");
   summary.className = "pfd-summary";
   summary.setAttribute("aria-live", "polite");
 
-  scroll.append(title, seedRow, hairline1, sliders, generate, hairline2, summary);
+  worldView.append(seedRow, hairline1, sliders, generate, hairline2, summary);
+
+  // --- ギャラリータブの内容(対象・seed・関連パラメータ・生成・再抽選・簡易サマリー) ---
+  const galleryView = document.createElement("div");
+  galleryView.className = "pfd-view";
+  galleryView.setAttribute("role", "tabpanel");
+
+  const targetRow = document.createElement("div");
+  targetRow.className = "pfd-gallery-target-row";
+  const targetLabel = document.createElement("label");
+  targetLabel.className = "pfd-seed-label";
+  targetLabel.htmlFor = "pfd-gallery-target";
+  targetLabel.textContent = "対象";
+  const targetSelect = document.createElement("select");
+  targetSelect.id = "pfd-gallery-target";
+  targetSelect.className = "pfd-select";
+  for (const t of galleryInit.targets) {
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = t.label;
+    targetSelect.appendChild(opt);
+  }
+  targetSelect.value = galleryInit.defaultTargetId;
+  targetRow.append(targetLabel, targetSelect);
+
+  const { row: gallerySeedRow, input: gallerySeedInput } = buildSeedRow(
+    "pfd-gallery",
+    galleryInit.defaultSeed,
+  );
+
+  const galleryHairline1 = document.createElement("hr");
+  galleryHairline1.className = "pfd-hairline";
+  const galleryHairline2 = document.createElement("hr");
+  galleryHairline2.className = "pfd-hairline";
+
+  const gallerySliders = document.createElement("div");
+  gallerySliders.className = "pfd-sliders";
+  const galleryInputs = new Map<keyof Params, HTMLInputElement>();
+  for (const def of GALLERY_SLIDERS) {
+    const { wrap, range } = buildSliderRow(
+      "pfd-gallery",
+      def,
+      galleryInit.defaultParams[def.key],
+    );
+    gallerySliders.appendChild(wrap);
+    galleryInputs.set(def.key, range);
+  }
+
+  const galleryActions = document.createElement("div");
+  galleryActions.className = "pfd-gallery-actions";
+  const galleryGenerate = document.createElement("button");
+  galleryGenerate.type = "button";
+  galleryGenerate.className = "pfd-generate";
+  galleryGenerate.textContent = "Generate";
+  const galleryReroll = document.createElement("button");
+  galleryReroll.type = "button";
+  galleryReroll.className = "pfd-ghost-btn";
+  galleryReroll.title = "Reroll";
+  galleryReroll.setAttribute(
+    "aria-label",
+    "次の個体を生成する(seedを送って直ちに再生成する)",
+  );
+  galleryReroll.textContent = "↻";
+  galleryActions.append(galleryGenerate, galleryReroll);
+
+  const gallerySummary = document.createElement("div");
+  gallerySummary.className = "pfd-summary";
+  gallerySummary.setAttribute("aria-live", "polite");
+
+  galleryView.append(
+    targetRow,
+    gallerySeedRow,
+    galleryHairline1,
+    gallerySliders,
+    galleryActions,
+    galleryHairline2,
+    gallerySummary,
+  );
+
+  scroll.append(tabs, title, worldView, galleryView);
 
   // 大画面用: パネルを閉じるトグル
   const close = document.createElement("div");
@@ -239,6 +401,21 @@ export function createPanel(
   });
   setSheet("half");
 
+  // --- タブ切替(表示のみ。生成状態には触れない) ---
+  function setActiveTab(tab: TabKey): void {
+    worldView.hidden = tab !== "world";
+    galleryView.hidden = tab !== "gallery";
+    worldTabBtn.setAttribute("aria-selected", tab === "world" ? "true" : "false");
+    galleryTabBtn.setAttribute(
+      "aria-selected",
+      tab === "gallery" ? "true" : "false",
+    );
+    onTabChange?.(tab);
+  }
+  worldTabBtn.addEventListener("click", () => setActiveTab("world"));
+  galleryTabBtn.addEventListener("click", () => setActiveTab("gallery"));
+  setActiveTab(initialTab);
+
   const getParams = (): Params => {
     const params = { ...DEFAULT_PARAMS };
     for (const [key, input] of inputs) {
@@ -247,8 +424,32 @@ export function createPanel(
     return params;
   };
 
+  const getGalleryParams = (): Params => {
+    const params = { ...DEFAULT_PARAMS };
+    for (const [key, input] of galleryInputs) {
+      params[key] = Number(input.value);
+    }
+    return params;
+  };
+
   generate.addEventListener("click", () => {
     onGenerate(seedInput.value.trim() || "0", getParams());
+  });
+
+  galleryGenerate.addEventListener("click", () => {
+    galleryInit.onGenerate(
+      targetSelect.value,
+      gallerySeedInput.value.trim() || "0",
+      getGalleryParams(),
+    );
+  });
+
+  // 再抽選(seed 送り): Randomize Seed と異なり、seed 欄を更新した直後に
+  // 直ちに再生成する(計画書3.4節「再抽選(seed 送り)」)
+  galleryReroll.addEventListener("click", () => {
+    const seed = randomSeed();
+    gallerySeedInput.value = seed;
+    galleryInit.onGenerate(targetSelect.value, seed, getGalleryParams());
   });
 
   root.append(panel, open);
@@ -260,5 +461,12 @@ export function createPanel(
     },
     getParams,
     summaryElement: summary,
+    gallery: {
+      getTargetId: () => targetSelect.value,
+      getSeed: () => gallerySeedInput.value.trim() || "0",
+      getParams: getGalleryParams,
+      summaryElement: gallerySummary,
+    },
+    setActiveTab,
   };
 }

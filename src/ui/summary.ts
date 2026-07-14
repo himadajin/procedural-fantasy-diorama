@@ -32,8 +32,11 @@ const PARAM_LABELS: { key: keyof Params; label: string }[] = [
   { key: "monumentality", label: "Monumentality" },
 ];
 
-/** 建物役割の表示名(内部 role → 日本語) */
-const ROLE_LABELS: Record<string, string> = {
+/**
+ * 建物役割の表示名(内部 role → 日本語)。ギャラリーの対象セレクタ
+ * (G2)がラベル(role の日本語名)として再利用する
+ */
+export const ROLE_LABELS: Record<string, string> = {
   house: "住居",
   waterside: "水辺",
   bridgehead: "橋詰め",
@@ -162,4 +165,36 @@ export function renderSummary(
       if (cxValue) cxValue.textContent = complexityText(next);
     },
   };
+}
+
+/**
+ * ギャラリー対象id(`building/<role>`)の表示ラベル(日本語の role 名)。
+ * 対象セレクタ(G2)と簡易サマリーが共用する
+ */
+export function galleryTargetLabel(targetId: string): string {
+  const role = targetId.split("/")[1] ?? targetId;
+  return ROLE_LABELS[role] ?? role;
+}
+
+/**
+ * ギャラリーの簡易サマリー(design.md「ギャラリー」節・計画書3.4節)。
+ * 対象・seed・部品数・ハッシュのみの読み取り専用表示(本番サマリーの
+ * 複雑度・水辺・結界などの箱庭スケールの情報は持たない)。
+ */
+export function renderGallerySummary(
+  container: HTMLElement,
+  targetId: string,
+  model: WorldModel,
+): void {
+  container.replaceChildren();
+  const building = model.buildings[0];
+
+  container.appendChild(
+    row("対象", `${galleryTargetLabel(targetId)} (${targetId})`),
+  );
+  container.appendChild(row("seed", model.meta.seed));
+  container.appendChild(
+    row("部品数", building ? fmtInt(building.parts.length) : "—"),
+  );
+  container.appendChild(row("ハッシュ", `#${model.summary.hash}`));
 }

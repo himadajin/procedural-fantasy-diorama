@@ -80,8 +80,18 @@ export class OrbitController {
    * パン範囲はワールド境界(ground.size)に、極角制限の基準は
    * 水面高さ(floorY。地面より低い)に接続する(implementation-spec PHASE 2)。
    * 視点は動かさない。構図へ戻すには resetCamera を呼ぶ。
+   *
+   * `target` は初期構図の注視点(既定は原点。ワールド側は常にこれで良い)。
+   * ギャラリー(G2)は対象1体が区画の原点寄りにオフセットして立つため、
+   * 対象の概略中心(footprint重心+高さの半分)を渡して画面に収める
+   * (`../../docs/internal/plans/2026-07-14-gallery.md`「ギャラリー表示に
+   * 適した初期カメラ距離は実装判断でよい」)
    */
-  configure(worldSize: number, floorY = 0): void {
+  configure(
+    worldSize: number,
+    floorY = 0,
+    target: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 },
+  ): void {
     this.minDistance = worldSize * 0.06;
     this.maxDistance = worldSize * 1.5;
     this.panBound = worldSize * 0.55;
@@ -90,7 +100,7 @@ export class OrbitController {
       azimuth: CAMERA_INITIAL_AZIMUTH,
       pitch: CAMERA_INITIAL_PITCH,
       distance: worldSize * 0.75,
-      target: new THREE.Vector3(0, 0, 0),
+      target: new THREE.Vector3(target.x, target.y, target.z),
     };
   }
 
