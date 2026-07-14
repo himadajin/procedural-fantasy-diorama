@@ -5,10 +5,10 @@
  * 造形・文言の方針は art-direction 9節、スライダーの定義は design.md を正とする。
  *
  * パネル上部の「箱庭 / ギャラリー」タブ(design.md「UI とサマリー」節、
- * 「ギャラリー(語彙の単体鑑賞)」節、計画書2026-07-14-gallery.md 3.4節)で
- * 2つの表示を切り替える。タブは表示の切替のみを行い、箱庭とギャラリーの
- * 生成状態(seed・パラメータ・入力欄の値)は互いに独立に保持する
- * (共有状態を作らない。同計画3.8節のリスク表)。
+ * 「ギャラリー(語彙の単体鑑賞)」節)で2つの表示を切り替える。
+ * タブは表示の切替のみを行い、箱庭とギャラリーの生成状態
+ * (seed・パラメータ・入力欄の値)は互いに独立に保持する
+ * (共有状態を作らない)。
  */
 import { DEFAULT_PARAMS, type Params } from "../model/worldmodel";
 
@@ -55,10 +55,11 @@ const SLIDERS: SliderDef[] = [
 ];
 
 /**
- * ギャラリーで公開するスライダー(計画書3.4節「関連パラメータ(Prosperity /
- * Settlement 等、造形に効くもののみ)」・G2指示書)。対象1体の生成
- * (`buildParcelBuilding`)に実際に効く2キーのみ(`pipeline/derive.ts`
- * computeDerived: wallTier/roofTier/detailAmount/tidiness ← Prosperity、
+ * ギャラリーで公開するスライダー(contracts/pipeline.md
+ * 「ギャラリー生成エントリ」節の入力定義「関連パラメータ(造形に効く
+ * もののみ)」)。対象1体の生成(`buildParcelBuilding`)に実際に効く
+ * 2キーのみ(`pipeline/derive.ts` computeDerived:
+ * wallTier/roofTier/detailAmount/tidiness ← Prosperity、
  * floorsBias ← Settlement)。他4キーは対象の造形に影響しないため含めない
  */
 const GALLERY_SLIDER_KEYS: (keyof Params)[] = ["prosperity", "settlement"];
@@ -447,7 +448,7 @@ export function createPanel(
   });
 
   // 再抽選(seed 送り): Randomize Seed と異なり、seed 欄を更新した直後に
-  // 直ちに再生成する(計画書3.4節「再抽選(seed 送り)」)
+  // 直ちに再生成する
   galleryReroll.addEventListener("click", () => {
     const seed = randomSeed();
     gallerySeedInput.value = seed;

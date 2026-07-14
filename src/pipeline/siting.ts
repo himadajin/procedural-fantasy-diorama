@@ -2,17 +2,15 @@
  * 段4「立地評価」: 主中心の位置・中心建築の予定地(占有範囲)・4軸スコアと、
  * 外縁の進入点を確定する。
  * データの正は docs/internal/contracts/network-plaza.md(CenterPlan / Network 節)、
- * 設計は implementation-spec 1.3節(段4)・1.7節・PHASE 3。
+ * 設計は implementation-spec 1.3節(段4)・1.7節。
  *
  * - 主中心のスコア = 水辺近接×√Water + 中央寄り + 進入点からのアクセス性
  *   − 水中ペナルティ。Water項は平方根で飽和させ、Water の微小変化で
  *   主中心が跳ばないようにする。seed はタイブレーク(格子ハッシュノイズの
  *   微小加点)にのみ使う
  * - 進入点は外縁上に derived.entryPointCount 点(2〜4)。水域を避けて配置する
- *   (対岸への強制移設は行わない。contracts/network-plaza.md「道路網の性質」
- *   Phase A 註記)
- * - centerPlan.facing / heightHint は段9「広場」(PHASE 3 commit 10)の担当。
- *   本段では 0 のまま
+ *   (対岸への強制移設は行わない。contracts/network-plaza.md「道路網の性質」)
+ * - centerPlan.facing / heightHint は段9「広場」の担当。本段では 0 のまま
  */
 import { makeRng } from "../rng";
 import type { Polygon, Vec2, WorldModel } from "../model/worldmodel";
@@ -48,7 +46,7 @@ const ENTRY_CANDIDATES = 96;
  * 進入点を外縁上に置く。基準角+等間隔+進入点ごとの揺らぎ
  * (乱数は安定ID `siting/entry/<i>` のサブストリーム)。
  * 水域(河口)を避ける(決定論的な候補角探索。乱数は消費しない)。
- * 対岸への強制移設は行わない(contracts/network-plaza.md Phase A 註記)。
+ * 対岸への強制移設は行わない(contracts/network-plaza.md「道路網の性質」)。
  */
 function placeEntryPoints(
   model: WorldModel,
@@ -207,7 +205,7 @@ export function runSiting(model: WorldModel): void {
       (1 - monument) * (1 - settle) + rng.range(-AXES_JITTER, AXES_JITTER),
     ),
   };
-  // facing / heightHint は段9「広場」(PHASE 3 commit 10)が
+  // facing / heightHint は段9「広場」が
   // 中心前広場・主道の収束方向の確定後に埋める。ここでは 0 のまま
 
   // パイプライン内アサーション: 違反は throw せず件数を console に出す

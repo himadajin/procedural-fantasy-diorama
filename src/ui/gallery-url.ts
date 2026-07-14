@@ -5,7 +5,8 @@
  * DOM に依存しない純粋なロジックのみを持ち(URLSearchParams の入出力のみ)、
  * main.ts / panel.ts から呼ばれる。
  *
- * 関連パラメータは「造形に効くもの」に限る(計画書3.4節・G2指示書)。
+ * 関連パラメータは「造形に効くもの」に限る(contracts/pipeline.md
+ * 「ギャラリー生成エントリ」節の入力定義)。
  * 現状は Prosperity / Settlement のみが対象生成(buildParcelBuilding)に
  * 影響するため、この2キーのみを URL の対象とする。省略項目・不正値は
  * design.md の既定値(50)を補う。

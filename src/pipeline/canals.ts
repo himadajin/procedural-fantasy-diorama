@@ -2,19 +2,18 @@
  * 段6「水路」: canalScore 発火で湖・池から分岐して中心域を通る水路を計画し、
  * 道路との交差区間を BridgeSite として仮追加する。
  * データの正は docs/internal/contracts/ground-water.md(Water 節)、
- * 設計は implementation-spec 1.3節(段6)・PHASE 3・9節(リスクと対策)。
+ * 設計は implementation-spec 1.3節(段6)・9節(リスクと対策)。
  *
  * - 水路は waterfield・岸線・zoneMask に影響させない(護岸で縁取られた
  *   掘り込みチャネルとして扱う設計判断。contracts/ground-water.md)。
- *   立体化(水面+護岸+杭)と zoneMask 上書きは PHASE 3 commit 11 の担当
+ *   立体化(水面+護岸+杭)と zoneMask 上書きは mesh 側(mesh/paving.ts)の担当
  * - 水路 1 本が生む BridgeSite は最大 3。超過時は経路と蛇行を縮めて交差が
  *   減る方向へ再サンプルし、25 回のリトライで収まらなければ棄却する
  *   (リトライ回数も乱数ストリーム "canals/canal/<i>" から消費して決定性を保つ。
- *   2026-07-12 タスク A7 で形状健全性検査を追加した際、3 回から 25 回へ
- *   引き上げた。contracts/ground-water.md「水路の性質」)
+ *   contracts/ground-water.md「水路の性質」)
  * - 単一交差の渡り長は max(18, 幅×6) 以下。超える交差(道路との長距離の
- *   並走・重なり)を生む試行は交差超過と同様に棄却する(2026-07-12 追記)
- * - 形状健全性(2026-07-12 追記): 自己近接・既存水路との重なり・迂曲率
+ *   並走・重なり)を生む試行は交差超過と同様に棄却する
+ * - 形状健全性: 自己近接・既存水路との重なり・迂曲率
  *   (経路長÷始終点直線距離)を受理条件に加える。違反は交差超過と同様に
  *   棄却する。経由点は水路 index ごとに異なる主道間隙へ向けて束なりを
  *   緩和する(contracts/ground-water.md「水路の性質」形状健全性)
@@ -56,12 +55,9 @@ const CANAL_COUNT_MAX = 3;
 /** 水路 1 本が生む BridgeSite の上限(implementation-spec 9節) */
 const CANAL_MAX_BRIDGES = 3;
 /**
- * 再サンプルのリトライ回数(初回+25回=最大26試行)。2026-07-12 タスク A7 で
- * 形状健全性検査(自己近接・既存水路との重なり・迂曲率)を受理条件に
- * 追加した際、旧・3回のリトライでは(anchors の組み合わせが少ない
- * seed で)条件を満たす候補もフォールバック堀留の候補も見つからず
- * 水路が全滅する個体が実測で複数見つかったため、3 から 25 へ引き上げた
- * (contracts/ground-water.md「水路の性質」)
+ * 再サンプルのリトライ回数(初回+25回=最大26試行)。形状健全性検査
+ * (自己近接・既存水路との重なり・迂曲率)を満たす候補の探索に必要な
+ * 試行数の実測に基づく値(contracts/ground-water.md「水路の性質」)
  */
 const CANAL_RETRIES = 25;
 /** 交差抽出の標本間隔(段5の橋抽出と同じ) */
@@ -88,8 +84,8 @@ const FOOTPRINT_CLEARANCE = 3;
 /** 境界内へのクリアランス */
 const BOUNDARY_CLEARANCE = 3;
 /**
- * 形状健全性(2026-07-12 追記。contracts/ground-water.md「水路の性質」)。
- * 受け入れ検収で発見した自己ヘアピン・水路間の重なり・とぐろ状の迂曲を
+ * 形状健全性(contracts/ground-water.md「水路の性質」)。
+ * 自己ヘアピン・水路間の重なり・とぐろ状の迂曲を
  * 受理条件で排除するための係数
  */
 const CANAL_SELF_PROXIMITY_ARC_RATIO = 6;
@@ -155,7 +151,7 @@ function buildAnchors(model: WorldModel, field: WaterField): Vec2[] {
  * 最大 CANAL_GAP_CANDIDATES 件返す。水路の経由点を間隙へ向けることで
  * 道路交差(=BridgeSite)を抑える。
  *
- * 2026-07-12 追記(A7): 単一の最大間隙だけを返すと全水路の経由点が
+ * 単一の最大間隙だけを返すと全水路の経由点が
  * 同じ方向へ束なり、水路どうしが密集・交差しやすくなる(実測:
  * everdusk-102 / water=100 で水路間距離 0.0)。呼び出し元
  * (runCanals)は水路 index ごとに `gaps[index % gaps.length]` で
@@ -167,7 +163,7 @@ function mainRoadGaps(model: WorldModel): { mid: number; width: number }[] {
   const c = model.centerPlan.position;
   const dirs: number[] = [];
   for (const edge of model.network.edges) {
-    // main(進入点→中心)のみを対象とする(Phase B: street 追加後も、中心に
+    // main(進入点→中心)のみを対象とする(street 導入後も、中心に
     // 直結する道路は構成上 main のみのため実質差分は無いが、明示しておく)
     if (edge.class !== "main") continue;
     const path = edge.path;
@@ -279,7 +275,7 @@ function angularDiff(a: number, b: number): number {
  * 割り当てられた間隙の方向が始端・終端アンカー対の方位(中心から見た
  * アンカー対の中点方向)と大きく食い違う場合、経由点が水域の反対側へ
  * 強制され、経路が一旦大きく逆側へ回り込んでから戻る「とぐろ」状の
- * 迂曲(自己近接・迂曲率超過)を誘発する(2026-07-12 実装中に発見。
+ * 迂曲(自己近接・迂曲率超過)を誘発する(実測:
  * everdusk-101 / seed-b の default 付近で、割り当てられた最大間隙が
  * 池の位置と正反対の方位にあり、4回の全試行が自己近接・迂曲率超過で
  * 棄却され、フォールバック堀留も候補を持てず水路が全滅する実例を確認)。
@@ -351,8 +347,8 @@ function enforceCorridor(
  *
  * - 始端・終端の接続窓(弧長 width×2+4)は水域接続のため押し出さない
  * - 接続窓を除く水中の点は、深さに関わらず**例外なく**岸へ押し出す
- *   (2026-07-11 導入の「深い横断部(waterSdf < −(幅/2+6))は対象外」の例外は
- *   タスク A4 で撤廃した。水域を横断する水路が堤防ごと湖を渡る破綻を防ぐため。
+ *   (「深い横断部(waterSdf < −(幅/2+6))は対象外」の例外は、水域を横断する
+ *   水路が堤防ごと湖を渡る破綻を防ぐため撤廃した。
  *   contracts/ground-water.md「水路の性質」)
  * - 水中の連続区間ごとに平均勾配で「どちらの岸へ出すか」を1回だけ決め、
  *   区間内の全点を同じ側へ押す(点ごとの最近岸に任せると水域を挟んで
@@ -523,10 +519,8 @@ function midLandFraction(
 
 /**
  * 中間部の陸上率の下限(これ未満はリトライ)。全試行が満たさない場合は
- * 棄却する(2026-07-11 撤廃: 旧仕様にあった「陸上率最大の試行を受理する」
- * 救済は行わない。全水路棄却時はフォールバックの堀留へ縮退する。
- * contracts/ground-water.md「水路の性質」。閾値は旧仕様の 0.7 から
- * タスク A4 で 0.95 へ引き上げた)
+ * 棄却する(「陸上率最大の試行を受理する」救済は行わない。全水路棄却時は
+ * フォールバックの堀留へ縮退する。contracts/ground-water.md「水路の性質」)
  */
 const CANAL_MIN_LAND_FRACTION = 0.95;
 
@@ -538,7 +532,7 @@ function canalSdf(points: Vec2[], width: number) {
 
 /**
  * 水路×道路の単一交差(BridgeSite)の渡り長の上限
- * (contracts/ground-water.md「水路の性質」。2026-07-12 追記の並走破綻対策:
+ * (contracts/ground-water.md「水路の性質」。並走破綻対策:
  * 個数上限 3 だけでは、道路と水路が長距離で並走・重なりして 1 つの巨大な
  * 「橋」になる破綻(harbor-1 / water=100 で渡り長 134.6 を実測)を防げない)
  */
@@ -689,7 +683,7 @@ function planCanal(
     const stats = roadCrossingStats(model, points, width, accepted);
     if (stats.count > CANAL_MAX_BRIDGES) continue;
     if (stats.maxLength > crossingLengthLimit(width)) continue;
-    // 形状健全性(2026-07-12 追記。自己近接・既存水路との重なり・迂曲率。
+    // 形状健全性(自己近接・既存水路との重なり・迂曲率。
     // contracts/ground-water.md「水路の性質」)。乱数消費に影響しない
     // 決定論的な検査のみで、違反は交差超過と同様に棄却してリトライする
     if (selfProximityViolation(points, width)) continue;
@@ -703,8 +697,8 @@ function planCanal(
     };
     const landFraction = midLandFraction(points, field, width);
     if (landFraction >= CANAL_MIN_LAND_FRACTION) return canal;
-    // 陸上率が閾値未満の試行は棄却してリトライする(2026-07-11 撤廃:
-    // 「陸上率最大の試行を受理する」救済は行わない。contracts/ground-water.md)
+    // 陸上率が閾値未満の試行は棄却してリトライする
+    // (「陸上率最大の試行を受理する」救済は行わない。contracts/ground-water.md)
   }
   // 全試行が陸上率(または交差上限)を満たさない場合は棄却する。
   // 呼び出し元(runCanals)は全水路棄却時にフォールバックの堀留へ縮退する
@@ -721,12 +715,11 @@ function planCanal(
  * 「水中に留まる最後の地点」を探す(非凸な水域形状でも、途中の陸地に
  * 惑わされず判定できる)。この水中区間が接続窓(弧長 幅×2+4)を超える
  * アンカーは、水域(湖)を大きく突っ切ることになるため採用しない
- * (水域横断の禁止。contracts/ground-water.md「水路の性質」。2026-07-11
- * タスク A4 で発見・修正: 旧実装は終端を勾配で陸側へ押し出す方式で、
- * 巨大な湖では終端が直線から大きく逸れ、始端〜終端の直線が湖の内部を
- * 数百単位横断する経路を生んでいた)
+ * (水域横断の禁止。contracts/ground-water.md「水路の性質」。旧実装は
+ * 終端を勾配で陸側へ押し出す方式で、巨大な湖では終端が直線から大きく
+ * 逸れ、始端〜終端の直線が湖の内部を数百単位横断する経路を生んでいた)
  *
- * 形状健全性(2026-07-12 追記。contracts/ground-water.md「水路の性質」):
+ * 形状健全性(contracts/ground-water.md「水路の性質」):
  * 堀留は始端から中心方向への直線に近い経路のため、自己近接(検査1)・
  * 迂曲率(検査3)は構造上自明に満たす。既存水路との最小間隔(検査2)は
  * `accepted`(呼び出し元 runCanals では他の水路が全滅した場合にのみ
@@ -945,7 +938,7 @@ export function runCanals(model: WorldModel): void {
         assertionViolations++;
       }
     }
-    // 形状健全性(2026-07-12 追記。contracts/ground-water.md「水路の性質」):
+    // 形状健全性(contracts/ground-water.md「水路の性質」):
     // 自己近接・迂曲率は最終的な canals 全体に対して再検査する
     // (受理条件は候補試行の時点で検査済みだが、最終状態への回帰検知として
     // ここでも確認する)

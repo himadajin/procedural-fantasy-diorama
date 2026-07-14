@@ -2,8 +2,8 @@
  * 段9「広場」: 中心前・結界門前・橋詰め・主道交差点の空地ポリゴンを確定し、
  * centerPlan.facing / heightHint を埋める。
  * データの正は docs/internal/contracts/network-plaza.md(Plaza / CenterPlan 節)、
- * 設計は implementation-spec 1.3節(段9)・PHASE 3。舗装の描画と zoneMask
- * 上書きは PHASE 3 commit 11 の担当。
+ * 設計は implementation-spec 1.3節(段9)。舗装の描画と zoneMask
+ * 上書きは段10「舗装」の担当。
  *
  * - 衝突回避: 採択順(center → gate → bridgehead → crossing)で、既採択
  *   広場・水域(水路を含む)・centerPlan.footprint・境界との衝突を検査し、
@@ -52,12 +52,12 @@ const AXIS_HEIGHT_FACTOR = {
 } as const;
 
 /**
- * 中心前広場の接続路(Phase B。契約: network-plaza.md Plaza 節
+ * 中心前広場の接続路(契約: network-plaza.md Plaza 節
  * 「中心前広場の接続路」)。
  *
  * - 流入方位の許容差: 契約は「facing と一致させる」とだけ定め、幾何的な
  *   厳密一致が不可能な場合(水域・footprint による回避)の許容量を定めて
- *   いない。本実装では ±30°(提案値。B7 で調整しうる)を許容し、facing の
+ *   いない。本実装では ±30°(提案値)を許容し、facing の
  *   延長線に最も近い候補から順に試す
  */
 const CONNECTOR_ANGLE_OFFSETS = [
@@ -228,7 +228,7 @@ function buildCenterConnector(
 }
 
 /**
- * 全広場の道路接続保証(Phase B。courtyard を除く)の検証:
+ * 全広場の道路接続保証(courtyard を除く)の検証:
  * 少なくとも1本の道路 edge の path 標本点が広場ポリゴンの周長に接するか
  * 内部を通る(polygonSignedDistance ≤ 許容差)。
  */
@@ -482,7 +482,7 @@ export function runPlazas(model: WorldModel): void {
     if (!placed) assertionViolations++;
   }
 
-  // --- 中心前広場の接続路(Phase B。契約: network-plaza.md Plaza 節
+  // --- 中心前広場の接続路(契約: network-plaza.md Plaza 節
   //     「中心前広場の接続路」)。中心前広場が確定した後、facing の延長線に
   //     最も近い広場縁(±30°まで許容)と、最寄りの道路ノード(全 class)を
   //     決定論的に走査して短い接続路を network へ追記のみで加える ---
@@ -696,7 +696,7 @@ export function runPlazas(model: WorldModel): void {
   }
   if (!(model.centerPlan.heightHint > 0)) assertionViolations++;
   if (!Number.isFinite(model.centerPlan.facing)) assertionViolations++;
-  // 全広場の道路接続保証(Phase B。courtyard を除く。契約:
+  // 全広場の道路接続保証(courtyard を除く。契約:
   // network-plaza.md Plaza 節「全広場の道路接続保証」)。gate / bridgehead /
   // crossing は採択直前の resolveTouchingSite が接触検証+寄せ+棄却まで
   // 済ませており、center は上の接続路が満たすため、ここでは最終防御として

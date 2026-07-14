@@ -1,12 +1,7 @@
 /**
  * 段12「建物」: 役割・footprint・向き・階数・屋根・接地(基壇・杭)の骨格データ。
  * データの正は docs/internal/contracts/buildings.md(Parcel / Building 節)、
- * 設計は implementation-spec 1.3節(段11「建物」相当)・PHASE 4a。
- *
- * PHASE 4a 内の分担(契約): 本段のうち id / parcelId / role / footprint /
- * facing / floors / roof / foundation は commit 12(本実装)が埋める。
- * materials / parts の展開と zoneMask の建物 footprint 上書きは
- * commit 13 の担当(それまで materials は空文字列、parts は空配列)。
+ * 設計は implementation-spec 1.3節(段12「建物」相当)。
  *
  * - 役割は UI 選択なし・文脈から決定(広場面 / 橋詰め / 水辺 / 密度の裾 /
  *   低密度×低Prosperity / 基本住居)
@@ -15,34 +10,31 @@
  *   ±数度の揺らぎ(tidiness 高で減。乱数は "building/<id>" サブストリーム)
  * - 水辺建築は背面の水面(湖・池)へ張り出し、杭または石基礎で
  *   水面下 y=-1.6(岸スカート下端)まで到達する(機械判定可能な契約)
- *
- * PHASE 4a commit 13 の追加分:
  * - materials(wall/roof/trim)を役割+wallTier/roofTier+seed で決定
  *   (基準色の語彙は contracts/materials.md「materialId の語彙」=
  *   art-direction 5.1節)
  * - 骨格文法: footprint を翼(wing)へ分解し、基壇(plinth / 杭 pile)→
  *   壁体(階数×翼)→ 屋根(gable / hip。複合は翼ごとの gable)の
- *   「型+パラメータ」部品リストへ展開する(同「Part の型語彙」)
+ *   「型+パラメータ」部品リストへ展開する(contracts/buildings.md
+ *   「Part の型語彙」)
  * - 建物 footprint による zoneMask の土/舗装上書き(段10 と同じ流儀)
- * - 部品の乱数は派生サブストリーム "building/<id>/parts" のみ消費
- *   (commit 12 の骨格データの乱数消費を変えない)
+ * - 部品の乱数は派生サブストリーム "building/<id>/parts" のみ消費し、
+ *   骨格データの乱数消費(サブストリーム "building/<id>")とは分離する
  *
- * PHASE 4b commit 14(本実装)の追加分(contracts/buildings.md
- * 「PHASE 4b commit 14 の詳細部品の性質」):
+ * 詳細部品の性質(contracts/buildings.md「建物部品の性質」):
  * - 開口: 窓(少なく大きく、整列度と数は detailAmount/役割)・
  *   扉(正面 frontEdge 側に必ず 1 つ。役割で寸法差)
  * - 木組み梁(wall="plaster" の中 Prosperity 帯で顕著)と
  *   ジェッティ(上階張り出し。確率的)
  * - 煙突(Prosperity 駆動。胴幅は実寸比 15% 過大。art-direction 6節)
  * - 付属: 低い石垣・外階段・屋根の小窓(役割・Prosperity で確率的)
- * - 素材階層の移行規約の確定(離散選択+役割補正+±0.6 揺らぎの丸め。
+ * - 素材階層の移行規約(離散選択+役割補正+±0.6 揺らぎの丸め。
  *   木組み梁は plaster 帯に連動)
- * - 詳細の乱数は派生サブストリーム "building/<id>/details" のみ消費
- *   (骨格・materials の乱数消費は commit 13 から不変)
+ * - 詳細の乱数は派生サブストリーム "building/<id>/details" のみ消費する
  * - 小道(lane)の追加と窓・扉・梁・煙突の InstancedMesh 化は
- *   commit 15 の担当(本段のスコープ外であり仮実装ではない)
+ *   contracts/buildings.md「インスタンス経路のピース分解」を参照
  *
- * PHASE 5a commit 16(本実装)の追加分:
+ * 中心建築(contracts/buildings.md「中心建築」)の追加分:
  * - 一般建物の展開後、中心建築 1 棟(role "center"、parcelId null)を
  *   専用の拡張文法(pipeline/center.ts)で展開して buildings の末尾に追加し、
  *   中庭の Plaza(kind "courtyard")を plazas へ追記する
@@ -50,12 +42,12 @@
  *   発光面積の上限をパイプライン内アサーションで検証する
  * - 中心建築は接道正面・道路/広場の重なり検査の対象外(契約の例外)
  *
- * PHASE 6 commit 19 の追加分(contracts/buildings.md「水辺建築の拡張」):
+ * 水辺建築の拡張(contracts/buildings.md「水辺建築の拡張」)の追加分:
  * - waterside 建物の水辺拡張部品(杭繋ぎ梁・杭支持デッキ・張り出し部屋・
  *   水路裏口)を全一般建物の確定後の第2パスで parts へ追記する。
  *   部品はすべて params.waterfront = 1 を持つ
- * - 乱数は派生サブストリーム "building/<id>/waterfront" のみ消費
- *   (骨格・parts・details の消費は commit 16 から不変)
+ * - 乱数は派生サブストリーム "building/<id>/waterfront" のみ消費し、
+ *   骨格・parts・details の消費とは分離する
  * - 採択は watersideRate(Water)駆動。張り出し延長と同じ衝突検査+
  *   全一般建物 footprint・採択済み水辺領域との重なり検査に通った場合のみ
  */
@@ -63,7 +55,6 @@ import { hashString, makeRng, type Rng } from "../rng";
 import {
   FLOOR_HEIGHT,
   SHORE_SKIRT_BOTTOM_Y,
-  ZONE_KINDS,
   type Building,
   type BuildingRole,
   type Derived,
@@ -75,6 +66,7 @@ import {
   type Vec2,
   type WorldModel,
 } from "../model/worldmodel";
+import { ZONE_KINDS } from "../model/zonemask";
 import { polygonArea, polygonSignedDistance } from "../model/waterfield";
 import { sampleFieldGrid } from "../model/fieldgrid";
 import {
@@ -164,8 +156,8 @@ const PILE_SPACING = 2.4;
 const PILE_WIDTH = 0.3;
 const PILE_EDGE_INSET = 0.25;
 
-// --- PHASE 4b commit 14: 開口・木組み・煙突・付属の定数
-//     (contracts/buildings.md「PHASE 4b commit 14 の詳細部品の性質」) ---
+// --- 開口・木組み・煙突・付属の定数
+//     (contracts/buildings.md「建物部品の性質」の詳細部品節) ---
 /** 窓枠の壁面からの突出(セットバックの読み。art-direction 6節) */
 const WINDOW_DEPTH = 0.16;
 /** 窓下端の階床からの高さ */
@@ -198,7 +190,7 @@ const STAIR_STEP_DEPTH = 0.3;
 const DORMER_SIZE: [number, number, number] = [1.2, 1.0, 1.1];
 const DORMER_MIN_SPAN = 4.6;
 
-// --- PHASE 6 commit 19: 水辺建築の拡張(waterfront)の定数
+// --- 水辺建築の拡張(waterfront)の定数
 //     (contracts/buildings.md「水辺建築の拡張」) ---
 /** デッキの奥行き帯・床厚・両側の引き込み */
 const DECK_DEPTH_MIN = 1.8;
@@ -325,26 +317,21 @@ const FLOORS_ROLE_ADJUST: Record<BuildingRole, number> = {
   center: 0,
 };
 
-// --- サイズ勾配(市街中心の一般建物を 4 階まで許容。Phase C。
+// --- サイズ勾配(市街中心の一般建物を 4 階まで許容。
 //     contracts/buildings.md「floors の改訂」) ---
-/** floorsBase の基準定数(2026-07-14 追補。計画書
- * 2026-07-13-worldgen-rework-tuning.md タスク T3。C7 実測で settle100 の
- * 3 階偏重(89%)が判明したため、下記 urbanity 項係数・揺らぎ幅とあわせて
- * 再配分した値) */
+/** floorsBase の基準定数(実測に基づく再配分値。同節参照) */
 const FLOORS_BASE = 0.5;
-/** urbanity 項の係数(2026-07-14 T3 再配分値) */
+/** urbanity 項の係数(同節参照) */
 const FLOORS_URBAN_GAIN = 1.7;
-/** urbanity 正規化 smoothstep の下端・上端(提案値。T3 では不変) */
+/** urbanity 正規化 smoothstep の下端・上端 */
 const FLOORS_URBAN_EDGE0 = 0.55;
 const FLOORS_URBAN_EDGE1 = 0.9;
-/** この urbanity 以上の建物のみ floors 上限 4(それ以外は上限 3。提案値。
- * T3 でも構造として不変) */
+/** この urbanity 以上の建物のみ floors 上限 4(それ以外は上限 3) */
 const FLOORS_URBAN_4F_THRESHOLD = 0.75;
-/** floorsBase の乱数揺らぎの片側幅(2026-07-14 T3 再配分値。中央 0 の対称
- * 揺らぎへ変更。旧: 非対称 [-0.3, 0.5](中心 +0.1)) */
+/** floorsBase の乱数揺らぎの片側幅(中央 0 の対称揺らぎ。同節参照) */
 const FLOORS_NOISE_HALF_RANGE = 0.65;
 
-// --- 同型連続の抑制(位置由来の決定論的変調。Phase C。乱数非消費。
+// --- 同型連続の抑制(位置由来の決定論的変調。乱数非消費。
 //     contracts/buildings.md「同型連続の抑制の設計原理」) ---
 /** house の L 字抽選確率への変調幅(提案値: 0.35 ± 0.25) */
 const SHAPE_L_PARITY_WAVE = 0.25;
@@ -353,7 +340,8 @@ const SHAPE_L_PARITY_WAVE = 0.25;
  * parcel.id ("parcel/<edgeId>/<L|R>/<slot>") 末尾のスロット連番を復元する。
  * groupId は同一 edge・同一側の連続採択 run なので、この絶対スロット値の
  * 偶奇はグループ内の隣接判定にそのまま使える(区画から独立に再導出でき、
- * スキーマは増やさない。計画書 C3「スロット序数」)。
+ * スキーマは増やさない。contracts/buildings.md「同型連続の抑制の設計原理」
+ * のスロット序数)。
  */
 function parcelSlot(parcel: Parcel): number {
   const idx = parcel.id.lastIndexOf("/");
@@ -496,24 +484,20 @@ function decideRole(
 }
 
 // ============================================================
-// グループ計画(クラスタパターンの抽選)。Phase C タスク C4b。
-// contracts/buildings.md「区画グループとクラスタパターン」節・
-// 3.4 節(13)(14)(計画書 2026-07-12-worldgen-rework-layout.md)。
+// グループ計画(クラスタパターンの抽選)。
+// contracts/buildings.md「区画グループとクラスタパターン」節。
 // ============================================================
 
-/** クラスタパターン(契約の抽選表)。C4b では rowhouse・courtyard の当選も
- *  single として扱う(生成は単棟のまま。実装は rowhouse が C5、courtyard が
- *  C4c で追いつく。契約 3.4 節(13): 抽選消費・条件判定は最終形と同一にして
- *  先行固定するための意図的な措置であり、仮実装ではない)。 */
+/** クラスタパターン(契約の抽選表)。抽選消費・条件判定は生成される
+ *  パターンと同一の重みで行う(同節「抽選消費の先行」)。 */
 export type ClusterPattern = "single" | "rowhouse" | "courtyard" | "stagger";
 
 /** グループ長の条件(契約の表) */
 const ROWHOUSE_MIN_LEN = 3;
 const COURTYARD_MIN_LEN = 3;
 /**
- * 中庭型条件「グループ長」上限(契約の表。2026-07-13 追補。計画書
- * `plans/2026-07-13-worldgen-rework-tuning.md` タスク T2)。旧値 5 は
- * C7 実測(中庭当選 18/54 条件)で希少すぎたため 6 へ緩和した。
+ * 中庭型条件「グループ長」上限(契約の表。実測に基づき緩和した値。
+ * 同節参照)。
  */
 const COURTYARD_MAX_LEN = 6;
 const STAGGER_MIN_LEN = 2;
@@ -522,9 +506,7 @@ const ROWHOUSE_URBANITY_MIN = 0.6;
 /**
  * 中庭型条件「奥行き余裕あり」(契約の表)= グループ内の最小 usableD
  * (前面・背面セットバック控除後の可住奥行き。既定 frontSetback=0.5 で評価)
- * が 5 以上(2026-07-13 追補。計画書
- * `plans/2026-07-13-worldgen-rework-tuning.md` タスク T2)。旧値 6 は
- * C7 実測で中庭型の当選が希少すぎたため緩和した。降格側(囲いの帯 1.2・
+ * が 5 以上(実測に基づき緩和した値。同節参照)。降格側(囲いの帯 1.2・
  * 最小寸法)はこの緩和と無関係のまま変更しない。
  */
 const COURTYARD_DEPTH_MARGIN = 5;
@@ -534,21 +516,12 @@ function rowhouseChance(settle: number): number {
   return clamp(0.2 + 0.6 * settle, 0, 0.75);
 }
 /**
- * 中庭型の採択率(2026-07-13〜14 追補。計画書
- * `plans/2026-07-13-worldgen-rework-tuning.md` 3.2 節+追補)。旧式
- * `0.12 + 0.28 × prosper` は C7 実測で中庭型の当選が希少すぎたため緩和した。
+ * 中庭型の採択率(同節参照)。
  *
  * この採択率は「囲いの成立見込み」の事前判定
- * (courtyardEnclosureFeasible。3.2 節追補)とセットで決めた値:
- * 事前判定なしでは、settle100 の当選グループがほぼ構造的に降格して
- * 抽選の重みだけを占有し、連棟(中核語彙)の成立を単調に毀損した
- * (54 条件実測: 連棟成立 C7 基準 184 棟 → 本レートで 146 棟)。
- * 事前判定の導入後は構造的空振りが消え、本レートでも連棟成立 177 棟
- * (基準の 96.2% ≥ 完了条件 95%)・中庭成立 29(≥ 22)を満たす。
- * 事前判定つきの計測で計画書 3.2 節の当初提案値 `0.15+0.35×prosper` は
- * 中庭成立 22・連棟 181、本レートは中庭成立 29・連棟 177 で、いずれも
- * 完了条件を満たすが「連棟の制約内で中庭成立を最大化」する本レートを
- * 採用した(3.2 節追補の指示)。
+ * (courtyardEnclosureFeasible。同節参照)とセットで決めた値であり、
+ * 事前判定なしでは、当選グループがほぼ構造的に降格して抽選の重みだけを
+ * 占有し、連棟(中核語彙)の成立を単調に毀損する(同節の実測を参照)。
  */
 function courtyardChance(prosper: number): number {
   return 0.2 + 0.6 * prosper;
@@ -563,8 +536,8 @@ const STAGGER_SETBACK_FAR = 2.0;
 const STAGGER_YAW_DEG = 4;
 
 // ============================================================
-// 中庭型(courtyard)の実装定数(Phase C タスク C4c。
-// contracts/buildings.md「中庭型(courtyard)の性質」実装補足の提案値)
+// 中庭型(courtyard)の実装定数
+// (contracts/buildings.md「中庭型(courtyard)の性質」実装補足の提案値)
 // ============================================================
 /**
  * 建物サイズ式(役割別)の bd = usableD × [0.72, 0.95] 相当の上限
@@ -594,8 +567,8 @@ const COURTYARD_MIN_DEPTH = 2.5;
  * siteGeometry の usableD 下限・役割別サイズ式の bw/bd 下限(いずれも 2.2)
  * と同じ「最小の家」の床値。囲いの成立見込みの事前判定
  * (courtyardEnclosureFeasible)はこのクランプが**かからない**ことを
- * 適格条件とする(2026-07-14 追補。かかるグループは内側奥行きが
- * 構造的に COURTYARD_MIN_DEPTH を下回る)。
+ * 適格条件とする(かかるグループは内側奥行きが構造的に
+ * COURTYARD_MIN_DEPTH を下回る)。
  */
 const COURTYARD_MEMBER_USABLE_MIN = 2.2;
 /** 帯制約 (12) を満たすための段階的な縮小の試行回数・1回あたりの縮小量 */
@@ -606,8 +579,8 @@ const COURTYARD_SHRINK_STEP_SIZE = 0.6;
 const COURTYARD_PARCEL_BAND = 1.2;
 
 // ============================================================
-// 裏庭(backyard)の実装定数(Phase C タスク C6。
-// contracts/buildings.md「裏庭の性質」実装補足の提案値)
+// 裏庭(backyard)の実装定数
+// (contracts/buildings.md「裏庭の性質」実装補足の提案値)
 // ============================================================
 /** 帯判定の下限(契約: 建物背面〜区画背面の距離 ≥ 2.5) */
 const BACKYARD_MIN_BAND = 2.5;
@@ -629,16 +602,14 @@ const SHED_MIN_DEPTH = 1.2;
 const SHED_MARGIN = 0.4;
 
 // ============================================================
-// 裏庭の帯確保(奥行き絞りの再生成。Phase C 追補タスク T1。
-// contracts/buildings.md「裏庭の性質」実装補足の 2026-07-13 追補の提案値)
+// 裏庭の帯確保(奥行き絞りの再生成)。
+// contracts/buildings.md「裏庭の性質」実装補足「単棟・雁行の帯確保」の提案値
 // ============================================================
 /** 目標帯(提案値。shed(最小奥行き1.2+マージン0.4×2)と塀が余裕を持って
  *  収まる最小十分量) */
 const BACKYARD_TARGET_BAND = 2.9;
-/** 奥行き絞りの上限(元の建物奥行きに対する割合)。計画書 3.1節の提案値
- *  25% では settle100 実測 4.9%(完了条件 ≥10% 未達)だったため、
- *  settle100 スイープの実測に基づき 32% へ調整した(実測 13.8%。契約
- *  「単棟・雁行の帯確保」実装補足に追記済み) */
+/** 奥行き絞りの上限(元の建物奥行きに対する割合。実測に基づき調整した値。
+ *  同節参照) */
 const BACKYARD_REGEN_SHRINK_MAX_FRACTION = 0.32;
 /** 線形近似(band(extra) ≈ band0 + extra × bd0/usableD0)がクランプ
  *  (usableD・bd の下限2.2)でずれた場合の補正刻み・最大反復回数
@@ -851,9 +822,8 @@ function courtyardBackLine(members: readonly Parcel[]): number {
 }
 
 /**
- * 中庭型の適格条件「囲いの成立見込み」の事前判定(2026-07-14 追補。計画書
- * `plans/2026-07-13-worldgen-rework-tuning.md` 3.2 節追補。契約
- * 「区画グループとクラスタパターン」節)。
+ * 中庭型の適格条件「囲いの成立見込み」の事前判定
+ * (契約「区画グループとクラスタパターン」節)。
  *
  * グループの区画データのみから(乱数非消費・順序非依存)、囲いの内側
  * 奥行きが COURTYARD_MIN_DEPTH(2.5)に届く見込みを判定する。判定式は
@@ -864,7 +834,7 @@ function courtyardBackLine(members: readonly Parcel[]): number {
  * (plazaVBack − vFront)がちょうど COURTYARD_MIN_DEPTH 残ることが
  * 逆算式の構成から保証される。クランプがかかるグループは、後退させても
  * 建物背面が vBack に寄り切れず、内側奥行きが構造的に 2.5 を下回る
- * (T2 差し戻しの実測で settle100 の当選グループがほぼ全て
+ * (実測で settle100 の当選グループがほぼ全て
  * vBack − vFront = 2.3〜2.4 で降格していた構造)。
  * 等価な閉形式: minUsableD ≥ COURTYARD_MEMBER_USABLE_MIN ×
  * COURTYARD_DEPTH_FRACTION_MAX + COURTYARD_WALL_INSET +
@@ -884,7 +854,7 @@ function courtyardEnclosureFeasible(members: readonly Parcel[]): boolean {
 
 /** グループ内の 1 区画ぶんの配置計画 */
 export interface ParcelLayout {
-  /** 抽選で当選したパターン(rowhouse/courtyard は C4b 時点では single 同様に扱う) */
+  /** 抽選で当選したパターン */
   pattern: ClusterPattern;
   /** グループ内の位置(0 起点。スロット連番順) */
   indexInGroup: number;
@@ -902,8 +872,7 @@ export interface ParcelLayout {
  * ラベルの使い捨ての新規 rng インスタンスで `decideRole` を先読みする
  * (同一 seed・同一ラベルの `makeRng` は常に同一の分岐を再現する純関数の
  * ため、後で段12 の本番ループが同じラベルで rng を作り直しても消費列は
- * 一切影響を受けない。要素独立乱数の規約を壊さない先読み。破棄済みの
- * 偵察実装で機能実績がある方式)。
+ * 一切影響を受けない。要素独立乱数の規約を壊さない先読み)。
  *
  * 出力はグループ・区画の反復順に依存しない(model.parcels の走査順が
  * 変わっても同一結果。乱数消費は `layout/<groupId>` ごとに 1 回のみ)。
@@ -917,7 +886,7 @@ export function planGroupLayouts(model: WorldModel): Map<string, ParcelLayout> {
 
   const groups = new Map<string, Parcel[]>();
   for (const parcel of model.parcels) {
-    // Phase D: farmland 区画は建物クラスタリングの対象外(建物を持たない。
+    // farmland 区画は建物クラスタリングの対象外(建物を持たない。
     // contracts/buildings.md「全単射の対象範囲」)
     if (!parcel.groupId || parcel.kind !== "residential") continue;
     let bucket = groups.get(parcel.groupId);
@@ -962,14 +931,15 @@ export function planGroupLayouts(model: WorldModel): Map<string, ParcelLayout> {
       avgUrbanity >= ROWHOUSE_URBANITY_MIN &&
       allHouse &&
       !anyWaterside;
-    // 囲いの成立見込みの事前判定(2026-07-14 追補)は区画データのみから
+    // 囲いの成立見込みの事前判定は区画データのみから
     // 決定論的に評価する(courtyardEnclosureFeasible。乱数非消費・順序非依存)
     const courtyardEligible =
       n >= COURTYARD_MIN_LEN &&
       n <= COURTYARD_MAX_LEN &&
       minUsableD >= COURTYARD_DEPTH_MARGIN &&
       courtyardEnclosureFeasible(members);
-    // 3.4 節(14): waterside/canalside を含むグループは雁行の適格から除外する
+    // contracts/buildings.md「雁行(stagger)の性質」waterside / canalside 区画の
+    // 除外: waterside/canalside を含むグループは雁行の適格から除外する
     const staggerEligible = n >= STAGGER_MIN_LEN && !anyWaterside;
 
     // 候補は契約の表の並び順で固定(rowhouse → courtyard → stagger → single)。
@@ -1135,7 +1105,6 @@ function overhangBlocked(
  * 素材の決定(契約: derived の tier + 役割補正 + seed 揺らぎを丸めて添字)。
  * 乱数消費は建物あたり 2 回で固定。基準色の語彙は
  * contracts/materials.md「materialId の語彙」(art-direction 5.1節)。
- * 壁材階層・屋根パレットの本格移行は PHASE 4b(ここは基準色の選定まで)。
  */
 function decideMaterials(
   rng: Rng,
@@ -1207,11 +1176,11 @@ function wallRect(
 
 /**
  * 建築文法: 翼ごとに 基壇(plinth。kind "piles" では杭列)→ 壁体(階数ぶん)→
- * 屋根(gable / hip)の骨格を展開し(commit 13)、続けて
+ * 屋根(gable / hip)の骨格を展開し、続けて
  * 扉 → 窓 → 梁 → ジェッティ床帯 → 煙突 → 屋根小窓 → 石垣 → 外階段 の
- * 詳細部品を展開する(PHASE 4b commit 14。contracts/buildings.md
- * 「建物部品の性質」)。乱数は詳細部品の rng("building/<id>/details")のみ
- * 消費する(骨格は骨格データと materials から決定的)。
+ * 詳細部品を展開する(contracts/buildings.md「建物部品の性質」)。乱数は
+ * 詳細部品の rng("building/<id>/details")のみ消費する(骨格は骨格データと
+ * materials から決定的)。
  */
 function expandParts(
   wings: Wing[],
@@ -1382,7 +1351,7 @@ function expandParts(
     }
   }
 
-  // --- 詳細部品(PHASE 4b commit 14) ---
+  // --- 詳細部品 ---
   const w0 = wings[0];
   if (!w0) return parts;
   expandDetailParts(parts, {
@@ -1510,7 +1479,7 @@ function exteriorFaces(
 }
 
 /**
- * 詳細部品の展開(PHASE 4b commit 14): 扉 → 窓 → 梁 → ジェッティ床帯 →
+ * 詳細部品の展開: 扉 → 窓 → 梁 → ジェッティ床帯 →
  * 煙突 → 屋根小窓 → 石垣 → 外階段 の順(契約の部品配列順)。
  * 乱数は "building/<id>/details" ストリーム(ctx.rng)のみ消費する。
  */
@@ -1840,7 +1809,7 @@ function expandDetailParts(parts: Part[], ctx: DetailContext): void {
   }
 }
 
-// --- PHASE 6 commit 19: 水辺建築の拡張(waterfront) ---
+// --- 水辺建築の拡張(waterfront) ---
 
 /** 水辺拡張が部品を付ける面(正面=接道側は対象外) */
 type WaterfrontSide = "back" | "right" | "left";
@@ -1952,7 +1921,7 @@ function removeWindowsOnFace(
 }
 
 /**
- * 水辺拡張の展開(PHASE 6 commit 19。contracts/buildings.md
+ * 水辺拡張の展開(contracts/buildings.md
  * 「水辺建築の拡張」): 杭繋ぎ梁 → デッキ(床→杭→欄干柱→手すり→扉)→
  * 張り出し部屋(壁→屋根→窓→持ち送り梁)→ 水路裏口(扉→段)の順で
  * waterside 建物の parts へ追記する。乱数は "building/<id>/waterfront"
@@ -2346,7 +2315,7 @@ function expandWaterfrontParts(
 }
 
 /**
- * 水辺拡張の claimed 領域の復元(Phase D タスク D5。contracts/facilities.md
+ * 水辺拡張の claimed 領域の復元(contracts/facilities.md
  * 「pier(桟橋)」実装補足・「waterfront claimed 検査への参加」)。
  *
  * `claimedRegions` は本段(`runBuildings` の水辺拡張パス)のローカル変数で
@@ -2415,14 +2384,14 @@ export function waterfrontClaimedRegions(model: WorldModel): Polygon[] {
 }
 
 /**
- * 段12「建物」の1区画ぶんの生成に与える配置パラメータ(Phase C)。
+ * 段12「建物」の1区画ぶんの生成に与える配置パラメータ。
  * 乱数は一切消費しない(セットバック・向き・矩形固定の変調のみ)。
  *
- * `export`(ギャラリー機能。`../plans/2026-07-14-gallery.md` G1・
- * `docs/internal/contracts/pipeline.md`「ギャラリー生成エントリ」節): この
- * 型と `buildParcelBuilding`・`SINGLE_BUILD_OPTIONS` は `pipeline/gallery.ts`
- * が本番の生成関数として呼ぶために公開する。既存呼び出し(本番ループ・
- * 中庭型・裏庭の再生成)の挙動は一切変えない。
+ * `export`(ギャラリー機能。`docs/internal/contracts/pipeline.md`
+ * 「ギャラリー生成エントリ」節): この型と `buildParcelBuilding`・
+ * `SINGLE_BUILD_OPTIONS` は `pipeline/gallery.ts` が本番の生成関数として
+ * 呼ぶために公開する。既存呼び出し(本番ループ・中庭型・裏庭の再生成)の
+ * 挙動は一切変えない。
  */
 export interface BuildLayoutOptions {
   frontSetback: number;
@@ -2455,11 +2424,10 @@ export interface BuildLayoutOptions {
   /**
    * 非 null の場合、`decideRole` の抽選結果を破棄してこの役割へ**置き換える**
    * (rng 消費は `decideRole` 呼び出しにより通常どおり行われ、結果だけを捨てる。
-   * `forceRectangle`・`sizeOverride` と同じ意味論)。ギャラリー機能
-   * (`../plans/2026-07-14-gallery.md` G1)専用: 対象 id `building/<role>` の
-   * role を確実に反映するための機構。本番ループ(`runBuildings`・
-   * `finalizeCourtyardGroups` 等)は常に `null` を渡し、`decideRole` の抽選を
-   * 一切変えない(契約「ギャラリー生成エントリ」節・G1 実装時の契約追補)。
+   * `forceRectangle`・`sizeOverride` と同じ意味論)。ギャラリー機能専用:
+   * 対象 id `building/<role>` の role を確実に反映するための機構。本番ループ
+   * (`runBuildings`・`finalizeCourtyardGroups` 等)は常に `null` を渡し、
+   * `decideRole` の抽選を一切変えない(契約「ギャラリー生成エントリ」節)。
    */
   roleOverride: BuildingRole | null;
 }
@@ -2491,14 +2459,15 @@ interface BuiltParcelResult {
   foundation: Foundation;
   floors: number;
   roofPitch: number;
-  /** 建物の実奥行き(bd。裏庭の帯確保パス(T1)が絞り量を逆算するために使う) */
+  /** 建物の実奥行き(bd。裏庭の帯確保パスが絞り量を逆算するために使う。
+   *  contracts/buildings.md「裏庭の性質」実装補足「単棟・雁行の帯確保」) */
   bd: number;
-  /** 裏庭の帯判定式の結果(裏庭の採否によらず常に計算する。T1 実装補足) */
+  /** 裏庭の帯判定式の結果(裏庭の採否によらず常に計算する。同節実装補足) */
   backyardBandDepth: number;
 }
 
 /**
- * 1 区画ぶんの建物骨格・素材・部品を生成する(段12「建物」commit 12〜14 の
+ * 1 区画ぶんの建物骨格・素材・部品を生成する(段12「建物」の
  * 本体。従来の段12 本番ループの1反復と同一の計算を、`BuildLayoutOptions`
  * (セットバック・矩形固定・向きの変調)を入力として切り出したもの)。
  * `opts` は乱数を消費しない決定論的な変調のみのため、`"building/<id>"` 系の
@@ -2507,10 +2476,9 @@ interface BuiltParcelResult {
  * 帯制約超過時のグループ全体フォールバック(単棟への再生成)は、この関数を
  * 異なる `opts` で複数回呼び出すことで実現する。
  *
- * `export`(ギャラリー機能。`../plans/2026-07-14-gallery.md` G1・
- * `docs/internal/contracts/pipeline.md`「ギャラリー生成エントリ」節の
- * 「本番の生成関数のみを呼ぶ制約」): `pipeline/gallery.ts` が対象1体の
- * 生成に直接呼ぶ本番関数。
+ * `export`(ギャラリー機能。`docs/internal/contracts/pipeline.md`
+ * 「ギャラリー生成エントリ」節の「本番の生成関数のみを呼ぶ制約」):
+ * `pipeline/gallery.ts` が対象1体の生成に直接呼ぶ本番関数。
  */
 export function buildParcelBuilding(
   model: WorldModel,
@@ -2522,7 +2490,7 @@ export function buildParcelBuilding(
   const final = model.density.final;
   const id = `building/${parcel.id.slice("parcel/".length)}`;
   const rng = makeRng(seed, id);
-  // 同型連続の抑制(Phase C。位置由来・乱数非消費。上記 layoutParity)
+  // 同型連続の抑制(位置由来・乱数非消費。上記 layoutParity)
   const parity = layoutParity(parcel);
 
   // --- 幾何の下ごしらえ(接道フレーム) ---
@@ -2621,7 +2589,7 @@ export function buildParcelBuilding(
   }
 
   // --- 揺らぎ(tidiness 高で減。頂点変位 0.5 以下にクランプ)+
-  //     Phase C の雁行・中庭型の向き変調(乱数非消費) ---
+  //     雁行・中庭型の向き変調(乱数非消費) ---
   let cx = 0;
   let cz = 0;
   for (const v of verts) {
@@ -2735,7 +2703,7 @@ export function buildParcelBuilding(
             else if (best.a === 1) wing0.u1 += ext; // 右側面
             else wing0.u0 -= ext; // 左側面
           }
-          // 水辺拡張(commit 19)がデッキ・張り出し部屋を付ける面
+          // 水辺拡張がデッキ・張り出し部屋を付ける面
           waterExtSide = best.a === 2 ? "back" : best.a === 1 ? "right" : "left";
         }
       }
@@ -2747,7 +2715,7 @@ export function buildParcelBuilding(
   }
 
   // --- 階数(Settlement / Prosperity / 役割 / urbanity。サイズ勾配
-  //     (Phase C。contracts/buildings.md「floors の改訂」)) ---
+  //     (contracts/buildings.md「floors の改訂」)) ---
   const floorsBase =
     FLOORS_BASE +
     derived.floorsBias +
@@ -2792,7 +2760,7 @@ export function buildParcelBuilding(
       }
     : { kind: "plinth", plinthHeight, overWater: false, bottomY: 0 };
 
-  // --- 裏庭(Phase C タスク C6。契約「裏庭の性質」)。既存 "building/<id>"
+  // --- 裏庭(契約「裏庭の性質」)。既存 "building/<id>"
   //     ストリーム(骨格 rng)の末尾への固定追加消費(帯条件を満たさなければ
   //     一切消費しない)。中庭型グループは opts.allowBackyard=false により
   //     常にスキップ(courtyard-wall / courtyard Plaza との重複を避ける)。
@@ -2812,7 +2780,7 @@ export function buildParcelBuilding(
     );
   }
 
-  // --- 素材と部品展開(commit 13。乱数は派生サブストリーム
+  // --- 素材と部品展開(乱数は派生サブストリーム
   //     "building/<id>/parts" のみ・建物あたり固定消費) ---
   const partsRng = makeRng(seed, `${id}/parts`);
   const materials = decideMaterials(
@@ -2822,7 +2790,7 @@ export function buildParcelBuilding(
     derived.roofTier,
     parity,
   );
-  // 詳細部品(PHASE 4b commit 14)は派生サブストリーム
+  // 詳細部品は派生サブストリーム
   // "building/<id>/details" のみ消費する(骨格・materials の消費は不変)
   const detailsRng = makeRng(seed, `${id}/details`);
   const frame: WingFrame = {
@@ -3347,7 +3315,7 @@ function finalizeCourtyardGroups(
 }
 
 // ============================================================
-// 連棟(rowhouse)の合成。Phase C タスク C5(計画書 4 章「C5: 連棟(長屋)」)。
+// 連棟(rowhouse)の合成。
 // contracts/buildings.md「連棟(rowhouse)の性質」+ 実装補足(下記)。
 // ============================================================
 
@@ -3727,7 +3695,7 @@ function finalizeRowhouseGroups(
       });
     }
 
-    // --- 裏庭(Phase C タスク C6。契約「裏庭の性質」)。連棟の共有裏庭は
+    // --- 裏庭(契約「裏庭の性質」)。連棟の共有裏庭は
     //     組成情報(共有奥行き bd・全メンバー)が段12 本番ループの時点では
     //     未確定のため、ここで判定・配置する。住戸(区画)ごとに実際の帯の
     //     奥行きが異なりうるため(bd は全メンバーの最小値)、unitSpans の
@@ -3736,8 +3704,8 @@ function finalizeRowhouseGroups(
     //     (採否・shed)は列全体で 1 回、帯は住戸ごとの最大値で判定する。
     //     乱数は既に生成済みの "building/<compositeId>/details" ストリーム
     //     (detailsRng。ファサード分節・分節縦梁のロール用)の末尾へ追加消費
-    //     する(実装補足: C5 がファサード分節へ専用インスタンスを立てた
-    //     前例と同じ理由による例外) ---
+    //     する(contracts/buildings.md「裏庭の性質」実装補足「乱数消費位置」:
+    //     ファサード分節が専用インスタンスを立てた前例と同じ理由による例外) ---
     const backyardUnits: BackyardUnit[] = unitSpans.map((span, i) => {
       const m = members[i];
       const memberUsableD = m ? siteGeometry(m, FRONT_SETBACK).usableD : bd;
@@ -3811,8 +3779,8 @@ function finalizeRowhouseGroups(
 }
 
 /**
- * 単棟・雁行の裏庭帯確保(奥行き絞りの再生成。Phase C 追補タスク T1。
- * contracts/buildings.md「裏庭の性質」実装補足の 2026-07-13 追補)。
+ * 単棟・雁行の裏庭帯確保(奥行き絞りの再生成。
+ * contracts/buildings.md「裏庭の性質」実装補足「単棟・雁行の帯確保」)。
  *
  * `candidates`(本番ループが収集した区画ごとの opts・実奥行き bd・帯
  * bandDepth)のうち帯が目標 `BACKYARD_TARGET_BAND`(2.9)に満たない建物を
@@ -3924,9 +3892,9 @@ export function runBuildings(model: WorldModel): void {
   const { seed, derived } = model.meta;
   const ctx = createSiteContext(model);
   const buildings: Building[] = [];
-  // 水辺拡張(commit 19)の第2パス入力(建物 id → 展開文脈)
+  // 水辺拡張の第2パス入力(建物 id → 展開文脈)
   const waterfrontSites = new Map<string, WaterfrontSite>();
-  // 裏庭の帯確保(奥行き絞りの再生成。Phase C 追補タスク T1)の第2パス入力
+  // 裏庭の帯確保(奥行き絞りの再生成)の第2パス入力
   // (区画 id → 本番ループで使った opts・実奥行き bd・帯 bandDepth。単棟・
   // 雁行の waterside/canalside を除く非中庭・非連棟建物のみ収集する)
   const backyardBandCandidates = new Map<
@@ -3934,7 +3902,7 @@ export function runBuildings(model: WorldModel): void {
     { opts: BuildLayoutOptions; bd: number; bandDepth: number }
   >();
   let violations = 0;
-  // グループ計画(クラスタパターンの抽選。Phase C C4b)。段12 の本番ループの
+  // グループ計画(クラスタパターンの抽選)。段12 の本番ループの
   // 前に固定消費で決める(契約「抽選消費の先行(13)」)
   const groupLayouts = planGroupLayouts(model);
 
@@ -3960,13 +3928,14 @@ export function runBuildings(model: WorldModel): void {
   }
 
   for (const parcel of model.parcels) {
-    // Phase D: farmland 区画は建物を持たない(0 棟。施設を 1 件持つ。
-    // contracts/buildings.md「全単射の対象範囲」。施設自体の生成は D2b)
+    // farmland 区画は建物を持たない(0 棟。施設を 1 件持つ。
+    // contracts/buildings.md「全単射の対象範囲」)
     if (parcel.kind === "farmland") continue;
     const id = `building/${parcel.id.slice("parcel/".length)}`;
 
-    // --- グループ計画(雁行・中庭型。C4b では rowhouse 当選も単棟同様に
-    //     扱う。パリティはグループ内序数の偶奇=契約「序数パリティ」) ---
+    // --- グループ計画(雁行・中庭型。rowhouse 当選はこの時点では単棟同様に
+    //     生成し、後段の finalizeRowhouseGroups で合成する。パリティは
+    //     グループ内序数の偶奇=契約「序数パリティ」) ---
     const layout = groupLayouts.get(parcel.id);
     let opts: BuildLayoutOptions = SINGLE_BUILD_OPTIONS;
     if (layout?.pattern === "stagger") {
@@ -4018,7 +3987,7 @@ export function runBuildings(model: WorldModel): void {
     const result = buildParcelBuilding(model, ctx, parcel, opts);
     buildings.push(result.building);
 
-    // 裏庭の帯確保(T1)の候補収集: 単棟・雁行(中庭型・連棟は対象外。
+    // 裏庭の帯確保の候補収集: 単棟・雁行(中庭型・連棟は対象外。
     // 中庭型は allowBackyard=false で裏庭を持たない設計、連棟は
     // finalizeRowhouseGroups が別途合成後の共有奥行きで判定するため)かつ
     // waterside/canalside でない区画(帯判定・抽選そのものが非適用)のみ
@@ -4037,7 +4006,7 @@ export function runBuildings(model: WorldModel): void {
       });
     }
 
-    // 水辺拡張(commit 19)の文脈を収集(展開は全一般建物の確定後の
+    // 水辺拡張の文脈を収集(展開は全一般建物の確定後の
     // 第2パス。デッキが後続建物の footprint と重ならないことを保証する)
     if (result.role === "waterside" && result.wing0) {
       waterfrontSites.set(id, {
@@ -4054,7 +4023,7 @@ export function runBuildings(model: WorldModel): void {
     }
   }
 
-  // --- Phase C タスク C5: 連棟(rowhouse)当選グループを k 区画 1 棟へ合成する
+  // --- 連棟(rowhouse)当選グループを k 区画 1 棟へ合成する
   //     (契約「連棟(rowhouse)の性質」)。乱数はファサード分節の
   //     "building/<compositeId>/details" 新規インスタンスのみ消費し、
   //     メンバーの骨格生成(上のループ)が消費した各ストリームの消費数・
@@ -4063,21 +4032,21 @@ export function runBuildings(model: WorldModel): void {
   //     第2パスより前に済ませておく) ---
   finalizeRowhouseGroups(model, ctx, buildings, groupLayouts);
 
-  // --- Phase C タスク C4c: 中庭型グループの端建物の内向きスナップ・塀
+  // --- 中庭型グループの端建物の内向きスナップ・塀
   //     (courtyard-wall)・courtyard Plaza の追記(契約「中庭型(courtyard)
   //     の性質」)。乱数は消費しない(決定論)。水辺拡張の第2パスより前に
   //     行う(courtyard 端建物が waterside の場合は回転を試みず waterfrontSites
   //     の内容もそのまま有効なため、フォールバックの入れ替えとは衝突しない) ---
   finalizeCourtyardGroups(model, ctx, buildings, groupLayouts);
 
-  // --- Phase C 追補タスク T1: 単棟・雁行の裏庭帯確保(奥行き絞りの
-  //     再生成。契約「裏庭の性質」実装補足の 2026-07-13 追補)。中庭型・
-  //     連棟の finalize より後で行う(それらは既に候補から除外済みのため
-  //     順序は本質的に無関係だが、group 単位の再構成が済んだ状態の
+  // --- 単棟・雁行の裏庭帯確保(奥行き絞りの
+  //     再生成。契約「裏庭の性質」実装補足「単棟・雁行の帯確保」)。
+  //     中庭型・連棟の finalize より後で行う(それらは既に候補から除外済みの
+  //     ため順序は本質的に無関係だが、group 単位の再構成が済んだ状態の
   //     buildings 配列に対して building 単位で置き換えるほうが単純) ---
   finalizeBackyardBandGrowth(model, ctx, buildings, backyardBandCandidates);
 
-  // --- 水辺建築の拡張(PHASE 6 commit 19。contracts/buildings.md
+  // --- 水辺建築の拡張(contracts/buildings.md
   //     「水辺建築の拡張」)。乱数は "building/<id>/waterfront" のみ消費 ---
   {
     const claimed: { region: Polygon; owner: number }[] = [];
@@ -4091,14 +4060,14 @@ export function runBuildings(model: WorldModel): void {
     }
   }
 
-  // --- 中心建築(PHASE 5a commit 16。一般建物の後に展開する:
+  // --- 中心建築(一般建物の後に展開する:
   //     スカイライン検証が周辺一般建物の最高点を入力とするため。
-  //     契約は contracts/buildings.md「中心建築(PHASE 5a commit 16)」) ---
+  //     契約は contracts/buildings.md「中心建築」) ---
   const centerBuilding = expandCenterBuilding(model, ctx, buildings);
   buildings.push(centerBuilding);
   model.buildings = buildings;
 
-  // --- 建物 footprint による zoneMask の土/舗装上書き(commit 13) ---
+  // --- 建物 footprint による zoneMask の土/舗装上書き ---
   stampBuildingsZone(model);
 
   // --- パイプライン内アサーション(throw せず件数を console に出す) ---
@@ -4182,7 +4151,7 @@ export function runBuildings(model: WorldModel): void {
     }
   }
 
-  // --- スカイライン契約(PHASE 5a): 中心最高点 ≥ 周辺最高点 × skylineRatio ---
+  // --- スカイライン契約: 中心最高点 ≥ 周辺最高点 × skylineRatio ---
   let peripheralTop = 0;
   for (const b of buildings) {
     if (b.role !== "center") peripheralTop = Math.max(peripheralTop, buildingTopY(b));
@@ -4196,7 +4165,7 @@ export function runBuildings(model: WorldModel): void {
     );
   }
 
-  // --- 発光面積の上限(PHASE 5a): glowAreaCap × 箱庭面積 × 中心の取り分 ---
+  // --- 発光面積の上限: glowAreaCap × 箱庭面積 × 中心の取り分 ---
   let glowArea = 0;
   for (const p of centerBuilding.parts) glowArea += glowPartArea(p);
   const glowBudget =

@@ -1,5 +1,5 @@
 /**
- * 描画プリセット(PHASE 7 commit 22)。
+ * 描画プリセット。
  * 定義・判定規則の正は contracts/pipeline.md「描画プリセット・LOD・
  * デバッグ表示」。プリセットは表示側のみを変え、WorldModel と
  * 絵(色・光・構図。art-direction)は変えない。判定は決定論的で

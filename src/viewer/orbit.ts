@@ -3,7 +3,8 @@ import { CAMERA_INITIAL_AZIMUTH, CAMERA_INITIAL_PITCH } from "./constants";
 import { HOME_DISTANCE_RATIO } from "./framing";
 
 /**
- * 自前 orbit カメラコントローラー(implementation-spec PHASE 1)。
+ * 自前 orbit カメラコントローラー
+ * (implementation-spec 2章「アプリ骨格・ビューワー・UI・乱数基盤」)。
  * - タッチ: 1本指スワイプ=回転、ピンチ=ズーム、2本指ドラッグ=パン
  * - マウス: ドラッグ=回転、ホイール=ズーム、右ドラッグ/Shift+ドラッグ=パン
  * - 慣性(軽い減衰)、極角制限(地面下に潜らない)、ズーム距離制限、
@@ -79,16 +80,17 @@ export class OrbitController {
   /**
    * ワールド実寸に応じて距離・パンの制限と初期構図(home)を設定する。
    * パン範囲はワールド境界(ground.size)に、極角制限の基準は
-   * 水面高さ(floorY。地面より低い)に接続する(implementation-spec PHASE 2)。
+   * 水面高さ(floorY。地面より低い)に接続する
+   * (implementation-spec 3章「地面と水系」)。
    * 視点は動かさない。構図へ戻すには resetCamera を呼ぶ。
    *
    * `target` は初期構図の注視点(既定は原点。ワールド側は常にこれで良い)。
    * `homeAzimuth` は初期方位(既定は art-direction 8節の
    * CAMERA_INITIAL_AZIMUTH。ワールド側は常に既定)。
-   * ギャラリー(G2/G2b)は対象1体を画面に収めるため、対象寸法から導出した
+   * ギャラリーは対象1体を画面に収めるため、対象寸法から導出した
    * 注視点・距離・正面がやや見える方位を渡す(`framing.ts`
-   * `computeGalleryFraming`。計画書「ギャラリー表示に適した初期カメラ距離は
-   * 実装判断でよい」)
+   * `computeGalleryFraming`。art-direction.md「8. カメラの初期構図」の
+   * ギャラリー初期構図節)
    */
   configure(
     worldSize: number,
