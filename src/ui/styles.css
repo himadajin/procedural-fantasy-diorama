@@ -89,6 +89,50 @@ button {
   margin: 0;
 }
 
+/* ============ タブ(箱庭 / ギャラリー。design.md「UI とサマリー」節) ============ */
+/* パネル上部に常に見える切替(半開/全開どちらでも隠さない)。
+   見た目は既存トークンのみを再利用する(新しい色を作らない) */
+
+.pfd-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+}
+
+.pfd-tab {
+  flex: 1;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-lo);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pfd-tab[aria-selected="true"] {
+  background: var(--track);
+  color: var(--text-hi);
+}
+
+/* タブの内容コンテナ。非表示は native [hidden] 属性(panel.tsが切り替える)。
+   [hidden] の詳細度は .pfd-view と同点(タイブレークで後勝ち)のため、
+   明示的に上書きして UA既定の display:none を保つ */
+.pfd-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pfd-view[hidden] {
+  display: none;
+}
+
 /* ============ seed 行 ============ */
 
 .pfd-seed-row {
@@ -163,6 +207,42 @@ button {
 
 .pfd-generate:active {
   background: var(--accent-press);
+}
+
+/* ============ ギャラリー: 対象セレクタ ============ */
+
+.pfd-gallery-target-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pfd-select {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text-hi);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+.pfd-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* ============ ギャラリー: Generate + Reroll(再抽選) ============ */
+
+.pfd-gallery-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pfd-gallery-actions .pfd-generate {
+  flex: 1;
 }
 
 /* ============ スライダー ============ */
