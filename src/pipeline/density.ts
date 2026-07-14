@@ -39,7 +39,7 @@ const ROAD_BOOST_STREET = 0.16;
 const EDGE_FADE_RATIO = 0.6;
 /**
  * urbanity(市街度)正規化の smoothstep 下端(契約の提案値。
- * network-plaza.md「Density 節 zoning」)。
+ * network-plaza.md「Density」節の zoning 項)。
  * urbanity = smoothstep(URBANITY_EDGE0, URBANITY_THRESHOLD, protoDensity + 0.5×roadBoost)
  */
 export const URBANITY_EDGE0 = 0.1;
@@ -134,7 +134,7 @@ export interface DensityDecayParts {
  * 純関数を返す(createWaterField / createBoundaryRadius と同じ「factory が
  * 前処理を1回だけ行い、返した閉関数を多数回呼ぶ」流儀)。
  * density.ts(段7。本ファイル)と streets.ts(段5後半処理)が
- * 同じ実装を共有する(contracts/network-plaza.md「二次街路の有機成長」
+ * 同じ実装を共有する(contracts/network-plaza.md「二次街路(street)の有機成長」
  * 「成長優先度場」)。乱数は消費しない。
  */
 export function createDensityDecay(
@@ -161,7 +161,7 @@ export function createDensityDecay(
 /**
  * proto-density(中心の指数減衰 × 外縁フェード。道路近接ブーストを含まない
  * 生値)。streets.ts の成長優先度場・市街限定閾値が使う
- * (contracts/network-plaza.md「二次街路の有機成長」)。
+ * (contracts/network-plaza.md「二次街路(street)の有機成長」)。
  */
 export function protoDensityAt(
   decay: (x: number, z: number) => DensityDecayParts,

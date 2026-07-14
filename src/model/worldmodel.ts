@@ -557,7 +557,7 @@ export interface WorldModel {
   /**
    * ゾーニング場(市街度 urbanity。0〜1)。段7「一次密度場」が
    * density.primary と同じタイミングで算出し書き込む(それまで null)。
-   * 契約の正は contracts/network-plaza.md「Density 節 zoning」。
+   * 契約の正は contracts/network-plaza.md「Density」節の zoning 項。
    * 消費者は段14「施設」と段5(streets.ts)の市街限定成長(参照式は
    * streets.ts のコメント参照)
    */

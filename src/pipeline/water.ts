@@ -134,7 +134,7 @@ function drawPondParams(seed: string, index: number): PondParams {
 
 /**
  * 星形ブロブポリゴンを作る(純関数)。湖・池が共有する幾何
- * (contracts/ground-water.md「湖と池は同じ幾何を流用」)。
+ * (contracts/ground-water.md「湖と池は同じ幾何」の共有規約)。
  * 偏角を減少方向に回して時計回り(Polygon 規約)にする。
  */
 function lakePolygon(
