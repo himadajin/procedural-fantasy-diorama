@@ -150,6 +150,46 @@ grep で再導出可能)。
   セレクタ行・アクション行を追加(art-direction 9.4 節「半開= seed と Generate
   のみ」に追随)。
 
+### N7: 決定性バグ修正(クロスアーキテクチャの分岐反転。`chore:`)
+
+develop を初めて GitHub Actions CI(x86_64 Linux)へ push した際、
+`test/hash.test.ts` の 8 SNAPSHOT のうち 2 件がローカル(Apple Silicon
+macOS arm64)と異なるハッシュ値で失敗した。Docker(`node:24`
+`--platform linux/amd64`)で再現・調査した結果、2 種類の現象が判明した:
+6/8 は三角関数(`Math.atan2`/`sin`/`cos`)の arm64/x86_64 間の ULP 差
+(1e-14〜1e-15 オーダー)が座標・回転値に伝播しただけの無害なノイズ、
+残り 2/8 は**生成の構造的分岐そのものが ULP 差で反転**していた実バグ
+(差の最大値 0.13。ノイズの1万倍)。原因は
+`src/pipeline/buildings.ts`「裏庭の帯確保」実装補足の
+`finalizeBackyardBandGrowth` 等が、三角関数由来の連続値
+(`bandDepth`/`minUsableD` 等)を固定閾値と直接比較して regen の要否を
+決めており、閾値ちょうどの値で arm64/x86_64 の分岐が食い違っていた
+(ユーザー指摘: 浮動小数点への依存自体が設計上の欠陥)。
+
+- `src/model/hash.ts`: 丸め精度を実測(arm64⇔Docker x86_64 の
+  `test/hash.test.ts` 完全一致)により小数3桁(`NUMERIC_PRECISION_DIGITS`)
+  に決定。`formatNumber` と共有する `stableRound` をエクスポート。
+- `src/pipeline/buildings.ts`(8 箇所)・`src/pipeline/parcels.ts`
+  (2 箇所。waterside/canalside 判定)の、幾何計算値と固定閾値の構造的分岐
+  比較に `stableRound` を適用。
+- docs-first: `contracts/pipeline.md`「WorldModel 正規化ハッシュ」節に
+  丸め精度変更の理由と新規則「幾何値の構造的分岐比較」を追記。
+  `contracts/buildings.md` の該当実装補足に安定化の適用を追記。
+- `test/hash.test.ts` の 8 SNAPSHOT 値を、上記修正後に arm64・Docker
+  x86_64 の両方で実測し一致した新しい値に更新(生成関連の正当な変更。
+  旧→新の対応は commit メッセージに記す)。
+- **監査で見つかったが本タスクでは修正しない対象外**: `parcels.ts`/
+  `buildings.ts` 以外にも `wards.ts`(結界環半径の縮小)・`streets.ts`
+  (成長優先度の閾値・枝刈り)・`canals.ts`(アンカー・経由点選定)・
+  `facilities.ts`(井戸・風車・桟橋等が共有するクリアランス判定群)を
+  中心に約 30 箇所の類似パターン候補が見つかった。これらは
+  `finalizeBackyardBandGrowth` のような「少数の狙った収束閾値」ではなく、
+  多数の候補から 1 つを採否判定する汎用クリアランスゲート(反転しても
+  「似た候補のどれが採用されるか」が変わるだけで、今回のような大きな
+  寸法差にはなりにくい)であり、リスク性質が異なる。現行 8 SNAPSHOT は
+  本タスクの修正で cross-arch 完全一致を確認済みのため、追加の修正は
+  別タスクの候補として記録するに留める。
+
 ### 対象外(記録のみ。将来の候補)
 
 - テスト網羅の拡充(mesh/facilities の回帰テスト以外、pipeline/noise.ts、
@@ -158,7 +198,9 @@ grep で再導出可能)。
   タブの ARIA 補完 / clamp・smoothstep 等の純関数ヘルパー集約(早すぎる抽象化を
   避ける)/ パイプライン警告の本番ゲート / package.json engines と .nvmrc の
   表記整合 / three.js の manualChunks 分割(警告は容認を明文化)/
-  同一ファイル内でしか使われない export 58 件(慣習であり残骸ではない)。
+  同一ファイル内でしか使われない export 58 件(慣習であり残骸ではない)/
+  N7 監査で見つかった約 30 箇所の類似パターン候補(wards/streets/canals/
+  facilities。上記 N7 節参照)。
 
 ## 4. 受け入れ基準
 
@@ -166,8 +208,11 @@ grep で再導出可能)。
 
 1. `grep -rniE "phase [a-d]\b|PHASE [0-9]|フェーズ|計画書|plans/20|commit [0-9]|タスク [A-DGT][0-9]" src test` が 0 件
    (回転位相の変数名 `phase` は該当しないことを目視確認)。
-2. `test/hash.test.ts` の 8 SNAPSHOT 値が本計画の全 commit を通して不変
-   (git diff で値行の変更が無いこと)。
+2. `test/hash.test.ts` の 8 SNAPSHOT 値が N7 以外の全 commit を通して不変
+   (git diff で値行の変更が無いこと)。N7(決定性バグ修正)に限り、
+   arm64 macOS ⇔ Docker x86_64 Linux の両方で実測し完全一致した新しい値へ
+   更新することを正当な例外として認める(理由は N7 節・commit メッセージに
+   記す)。
 3. `npm test`・`npm run typecheck`・`npm run lint`・`npm run build` が全緑
    (テスト件数は smoke 削除と回帰テスト追加を反映した数で全緑)。
 4. `npm run dev` でデフォルト seed の生成・ギャラリー(風車・水車)表示時に
@@ -202,6 +247,7 @@ grep で再導出可能)。
 | N5 テストヘルパー集約 | 完了 | 4e5c17c(20 ファイル移行、−602 行) |
 | N6 UI 文言・半開シート追随 | 完了 | 960efdd + レビュー修正 028f74a |
 | 検収(受け入れ基準 1〜5) | 完了 | 下記「検収記録」 |
+| N7 決定性バグ修正(分岐反転) | 実装済み・commit 待ち | develop 初回 CI(x86_64)失敗を受けて追加。ユーザー GO サイン待ち |
 
 ### 検収記録(2026-07-15)
 
