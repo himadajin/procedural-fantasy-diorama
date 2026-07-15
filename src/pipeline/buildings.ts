@@ -66,6 +66,7 @@ import {
   type Vec2,
   type WorldModel,
 } from "../model/worldmodel";
+import { stableRound } from "../model/hash";
 import { ZONE_KINDS } from "../model/zonemask";
 import { polygonArea, polygonSignedDistance } from "../model/waterfield";
 import { sampleFieldGrid } from "../model/fieldgrid";
@@ -635,7 +636,9 @@ function rollBackyardDecision(
   detailAmount: number,
   bandDepth: number,
 ): BackyardDecision | null {
-  if (bandDepth < BACKYARD_MIN_BAND) return null;
+  // 幾何計算値(bandDepth)と固定閾値の比較はハッシュと同じ精度に丸めてから
+  // 行う(contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
+  if (stableRound(bandDepth) < BACKYARD_MIN_BAND) return null;
   const backyardRate = clamp(0.35 + 0.35 * (1 - settle), 0, 1);
   if (!rng.chance(backyardRate)) return null;
   const fenceHeight =
@@ -696,9 +699,12 @@ function placeBackyardParts(
     effective = units
       .map((u) => ({ u0: u.u0, u1: u.u1, depth: Math.min(u.depth, cap) }))
       .filter((u) => u.depth > 1e-6);
+    // 幾何計算値と固定閾値の比較はハッシュと同じ精度に丸めてから行う
+    // (contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
     if (
       effective.length > 0 &&
-      Math.max(...effective.map((u) => u.depth)) >= BACKYARD_MIN_BAND
+      stableRound(Math.max(...effective.map((u) => u.depth))) >=
+        BACKYARD_MIN_BAND
     ) {
       const blocked = effective.some((u) => {
         const v0 = buildingRearV;
@@ -716,9 +722,11 @@ function placeBackyardParts(
     cap -= BACKYARD_SHRINK_STEP;
     effective = [];
   }
+  // 幾何計算値と固定閾値の比較はハッシュと同じ精度に丸めてから行う
+  // (contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
   if (
     effective.length === 0 ||
-    Math.max(...effective.map((u) => u.depth)) < BACKYARD_MIN_BAND
+    stableRound(Math.max(...effective.map((u) => u.depth))) < BACKYARD_MIN_BAND
   ) {
     return [];
   }
@@ -849,7 +857,9 @@ function courtyardEnclosureFeasible(members: readonly Parcel[]): boolean {
       COURTYARD_MIN_DEPTH -
       COURTYARD_WALL_GAP) /
     COURTYARD_DEPTH_FRACTION_MAX;
-  return targetUsableDUnclamped >= COURTYARD_MEMBER_USABLE_MIN;
+  // 幾何計算値(targetUsableDUnclamped)と固定閾値の比較はハッシュと同じ精度に
+  // 丸めてから行う(contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
+  return stableRound(targetUsableDUnclamped) >= COURTYARD_MEMBER_USABLE_MIN;
 }
 
 /** グループ内の 1 区画ぶんの配置計画 */
@@ -933,10 +943,12 @@ export function planGroupLayouts(model: WorldModel): Map<string, ParcelLayout> {
       !anyWaterside;
     // 囲いの成立見込みの事前判定は区画データのみから
     // 決定論的に評価する(courtyardEnclosureFeasible。乱数非消費・順序非依存)
+    // 幾何計算値(minUsableD)と固定閾値の比較はハッシュと同じ精度に丸めてから
+    // 行う(contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
     const courtyardEligible =
       n >= COURTYARD_MIN_LEN &&
       n <= COURTYARD_MAX_LEN &&
-      minUsableD >= COURTYARD_DEPTH_MARGIN &&
+      stableRound(minUsableD) >= COURTYARD_DEPTH_MARGIN &&
       courtyardEnclosureFeasible(members);
     // contracts/buildings.md「雁行(stagger)の性質」waterside / canalside 区画の
     // 除外: waterside/canalside を含むグループは雁行の適格から除外する
@@ -3816,7 +3828,9 @@ function finalizeBackyardBandGrowth(
   const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
 
   for (const [parcelId, info] of candidates) {
-    if (info.bandDepth >= BACKYARD_TARGET_BAND) continue; // 既に目標帯を満たす
+    // 幾何計算値(bandDepth)と固定閾値の比較はハッシュと同じ精度に丸めてから
+    // 行う(contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
+    if (stableRound(info.bandDepth) >= BACKYARD_TARGET_BAND) continue; // 既に目標帯を満たす
     const parcel = parcelById.get(parcelId);
     if (!parcel) continue;
     const buildingId = `building/${parcelId.slice("parcel/".length)}`;
@@ -3838,10 +3852,12 @@ function finalizeBackyardBandGrowth(
       ...info.opts,
       backSetbackExtra: extra,
     });
-    // 線形近似がクランプでずれた場合の段階的補正(決定論。最大数回で収束)
+    // 線形近似がクランプでずれた場合の段階的補正(決定論。最大数回で収束)。
+    // 幾何計算値(backyardBandDepth)と固定閾値の比較はハッシュと同じ精度に
+    // 丸めてから行う(contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
     for (
       let step = 0;
-      candidate.backyardBandDepth < BACKYARD_TARGET_BAND &&
+      stableRound(candidate.backyardBandDepth) < BACKYARD_TARGET_BAND &&
       extra < cap - 1e-9 &&
       step < BACKYARD_REGEN_CORRECTION_STEPS;
       step++
@@ -3853,7 +3869,7 @@ function finalizeBackyardBandGrowth(
       });
     }
 
-    if (candidate.backyardBandDepth < BACKYARD_TARGET_BAND) continue; // 断念(現行どおり)
+    if (stableRound(candidate.backyardBandDepth) < BACKYARD_TARGET_BAND) continue; // 断念(現行どおり)
     const hasBackyard = candidate.building.parts.some(
       (p) => p.type === "fence" && p.params?.backyard === 1,
     );

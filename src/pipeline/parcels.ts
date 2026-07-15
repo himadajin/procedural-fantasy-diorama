@@ -14,6 +14,7 @@
  */
 import { makeRng } from "../rng";
 import type { Parcel, Polygon, Vec2, WorldModel } from "../model/worldmodel";
+import { stableRound } from "../model/hash";
 import {
   createBoundaryRadius,
   createWaterField,
@@ -621,15 +622,18 @@ export function runParcels(model: WorldModel): void {
           if (!rect) continue;
           if (adoptRoll >= farmlandRate) continue;
 
-          // 水辺判定(residential と同じ規約。Parcel スキーマの充足のため)
+          // 水辺判定(residential と同じ規約。Parcel スキーマの充足のため)。
+          // waterBodySdf/canalSdf は水域境界(三角関数由来の連続値)からの
+          // 距離のため、固定閾値との比較はハッシュと同じ精度に丸めてから
+          // 行う(contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
           let minWaterBody = Infinity;
           let minCanal = Infinity;
           for (const p of rect.probes) {
             minWaterBody = Math.min(minWaterBody, ctx.waterBodySdf(p.x, p.z));
             minCanal = Math.min(minCanal, ctx.canalSdf(p.x, p.z));
           }
-          const waterside = minWaterBody < NEAR_WATER;
-          const canalside = minCanal < NEAR_WATER;
+          const waterside = stableRound(minWaterBody) < NEAR_WATER;
+          const canalside = stableRound(minCanal) < NEAR_WATER;
 
           // 岸線占有率 40% 上限は residential 専用(施設は建物ではないため
           // 対象外。facilities.md に契約追補済み)
@@ -709,15 +713,18 @@ export function runParcels(model: WorldModel): void {
         }
         if (!rect) continue;
 
-        // 水辺判定(契約: プローブの最小距離 < 4.5)
+        // 水辺判定(契約: プローブの最小距離 < 4.5)。waterBodySdf/canalSdf は
+        // 水域境界(三角関数由来の連続値)からの距離のため、固定閾値との比較は
+        // ハッシュと同じ精度に丸めてから行う
+        // (contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
         let minWaterBody = Infinity;
         let minCanal = Infinity;
         for (const p of rect.probes) {
           minWaterBody = Math.min(minWaterBody, ctx.waterBodySdf(p.x, p.z));
           minCanal = Math.min(minCanal, ctx.canalSdf(p.x, p.z));
         }
-        const waterside = minWaterBody < NEAR_WATER;
-        const canalside = minCanal < NEAR_WATER;
+        const waterside = stableRound(minWaterBody) < NEAR_WATER;
+        const canalside = stableRound(minCanal) < NEAR_WATER;
 
         // 採択確率: parcelRate × 密度係数。水辺は watersideRate で押し上げ
         const dc = sampleFieldGrid(final, rect.center.x, rect.center.z);
