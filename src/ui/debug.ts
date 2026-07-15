@@ -1,7 +1,7 @@
 /**
  * 開発用デバッグオーバーレイ: WorldModel 正規化ハッシュ、renderer.info
  * (draw call / triangle 数)、描画プリセット名を画面隅に小さく表示する。
- * PHASE 7 commit 22 でハッシュ・renderer.info はサマリーの
+ * ハッシュ・renderer.info はサマリーの
  * 「複雑度」「ハッシュ」行へ統合し、本オーバーレイは既定非表示・
  * URL パラメータ `?debug=1` のときのみ main が生成する
  * (implementation-spec 1.10節、contracts/pipeline.md

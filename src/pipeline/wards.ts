@@ -2,8 +2,9 @@
  * 段8「結界計画」: 結界環(ringPath / ringSegments)・結界門・魔導塔・聖域・
  * 魔法灯・浮遊要素の位置計画と、結界門スナップ後の BridgeSite 再抽出。
  * データの正は docs/internal/contracts/wards.md(Wards 節)・ground-water.md(Water 節)、
- * 設計は implementation-spec 1.3節(段8)・1.6節・PHASE 3・9節。
- * 立体化は PHASE 5b、デバッグ描画は PHASE 3 commit 11 の担当。
+ * 設計は implementation-spec 1.3節(段8)・1.6節・9節。
+ * 立体化は mesh/wardparts.ts(contracts/wards.md「結界構造の立体化」
+ * 「魔法灯・浮遊要素・橋の立体化」)の担当。
  *
  * ringPath の生成手順(contracts/wards.md):
  *   一次密度場の等値線(marchPositiveRegion)を初期形状
@@ -284,8 +285,8 @@ interface GateInfo {
 /**
  * 結界環×道路 edge の全交点に結界門を置き、交点を edge.path へ挿入する
  * (局所スナップ。道路の大規模な引き直しはしない)。
- * スナップ対象は class "main" / "connector" に限定する(Phase B。
- * contracts/wards.md「gates」。"street" / "lane" には門を開かない —
+ * スナップ対象は class "main" / "connector" に限定する
+ * (contracts/wards.md「gates」。"street" / "lane" には門を開かない —
  * 門は幹線格の道に限る。結界環が street・lane と交差しても門は生成せず、
  * その交点は壁の接地検証からも除外しない=当たる区間はそのまま "wall" として扱う)
  */
@@ -936,7 +937,7 @@ export function runWards(model: WorldModel): void {
       }
     }
     // 3) 結界横断道路はすべて門位置を通る(wardLevel ≥ 2。門スナップ対象は
-    //    main / connector に限定するため、本検証も同じ対象に限る。Phase B。
+    //    main / connector に限定するため、本検証も同じ対象に限る。
     //    street・lane が結界環を横切っても門は生成せず、その交点はそのまま
     //    wall として扱う=検証対象外)
     if (derived.wardLevel >= 2) {
@@ -994,7 +995,7 @@ export function runWards(model: WorldModel): void {
     console.warn(`wards: パイプライン内アサーション違反 ${assertionViolations} 件`);
   }
 
-  // サマリー(段13 の担当だが、中間PHASEでは部分的に埋める)
+  // サマリー(段13 の担当だが、本段でも先取りして部分的に埋める)
   model.summary.wardOverview = {
     level: wards.wardLevel,
     ringLength,

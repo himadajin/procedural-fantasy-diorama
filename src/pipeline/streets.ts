@@ -1,14 +1,13 @@
 /**
- * 段5「道路網」後半サブフェーズ: 幹線(main / connector)から発芽し、局所規則で
+ * 段5「道路網」後半処理: 幹線(main / connector)から発芽し、局所規則で
  * 伸びる二次街路(class: "street")を成長させ、network.nodes / edges へ
  * 追記する(`runNetwork` の末尾、アサーションの前から呼ぶ)。
  * データの正は docs/internal/contracts/network-plaza.md
- * 「二次街路(street)の有機成長」節。設計は
- * plans/2026-07-12-worldgen-rework-roads.md 3.2節(1)〜(4)・(8)。
+ * 「二次街路(street)の有機成長」節。
  *
  * - 発芽点: 幹線 edge の弧長 24 間隔の点 + 中心前広場予定方向の1点
  *   (段9 が未確定のため、中心に隣接する main edge のうち中心に最も近い
- *   他端ノードへの方向で代用する。plans 3.2節(2)の指示に従う判断)
+ *   他端ノードへの方向で代用する)
  * - 乱数: 発芽点ごとに `makeRng(seed, "streets/sprout/<edgeId>/<k>")` から
  *   固定数(MAX_SLOTS × 4)を必ず引き切る(成長が早期に打ち切られても
  *   消費数・消費順は変わらない)。全体の消費順は発芽点の列挙順
@@ -44,14 +43,16 @@ const SEGMENT_MIN = 12;
 const SEGMENT_MAX = 20;
 /** 方向の揺らぎ(親方向 ± 25°) */
 const ANGLE_WOBBLE = (25 * Math.PI) / 180;
-/** 発芽初期方向・分岐方向の「ほぼ直角」キック(70°〜110°。実装上の選択。report 参照) */
+/** 発芽初期方向・分岐方向の「ほぼ直角」キック(70°〜110°。契約の提案値。
+ *  contracts/network-plaza.md「二次街路(street)の有機成長」) */
 const KICK_MIN = (70 * Math.PI) / 180;
 const KICK_SPAN = (40 * Math.PI) / 180;
 /** 既存道路への接続スナップ距離(契約の提案値) */
 const SNAP_DIST = 6;
 /**
  * 形状健全性 4 項(契約の値と同一。network.ts のパイプライン内アサーション・
- * test/network.test.ts・B7 検収メトリクスの三者が同じ値を共有する)
+ * test/network.test.ts・contracts/network-plaza.md「二次街路(street)の
+ * 有機成長」の三者が同じ値を共有する)
  */
 /** 1) 新しい交差の最小交差角 */
 export const MIN_CROSS_ANGLE = (30 * Math.PI) / 180;
@@ -66,7 +67,7 @@ export const DEAD_END_RATIO_MAX = 0.35;
  * urbanity(0〜1 正規化後。閾値 0.45)ではなく protoDensity の生値のみで
  * 市街限定を判定する。0.22(protoDensity)と 0.45(urbanity)は
  * スケールが異なる 2 つの数値だが同一の意図(市街限定)の 2 つの表現であり、
- * B7 の検収で同時に調整する(contracts/network-plaza.md「Density 節
+ * 両者は同時に調整する(contracts/network-plaza.md「Density 節
  * zoning」の対応関係の注記)
  */
 export const PROTO_THRESHOLD = 0.22;
@@ -87,7 +88,7 @@ export const STREET_GRADE_DROP = 0.2;
  * 打ち切られる
  */
 const MAX_SLOTS_PER_SPROUT = 320;
-/** 分岐確率の係数と上限(実装上の選択。B7 で調整しうる) */
+/** 分岐確率の係数と上限(実装上の選択の提案値) */
 const BRANCH_COEFF = 0.6;
 const BRANCH_MAX = 0.45;
 
@@ -995,7 +996,7 @@ export function growStreets(model: WorldModel, diagnostics?: StreetGrowthDiagnos
 /**
  * 形状健全性 4 項の独立検証(`runNetwork` の末尾アサーションから呼ぶ)。
  * 成長時の受理条件と同じ規則を、確定済みの network.edges から再計算する
- * (A7 の教訓: 生成器自身の内部状態を信頼せず、出力から独立に検証する)。
+ * (生成器自身の内部状態を信頼せず、出力から独立に検証する設計判断)。
  * 違反はここでは throw せず件数のみ返す(呼び出し側が console に出す)。
  *
  * `continuationPairs`(growStreets の診断出力。任意)を渡すと、交差角の

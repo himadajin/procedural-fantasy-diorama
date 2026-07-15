@@ -1,5 +1,5 @@
 /**
- * ギャラリー生成エントリ(`../plans/2026-07-14-gallery.md` G1)。
+ * ギャラリー生成エントリ。
  * 契約の正は `docs/internal/contracts/pipeline.md`「ギャラリー生成エントリ」節。
  *
  * `runPipeline` と並ぶ第二の正式な生成エントリ。造形(建物・施設。将来は
@@ -116,7 +116,7 @@ function createWatersidePond(): Polygon {
  * 極小ワールドを合成し、本番の生成関数のみで対象(一般建物1棟)を生成する。
  * 本番のパイプライン段(pipeline/derive 等)は順に実行しない。
  * `computeDerived`(段1「導出設定」の純関数)・`generateZoneMask`(段2
- * 「地面」の純関数。G1b)・`runSummary`(段16「サマリー」。乱数非消費・
+ * 「地面」の純関数)・`runSummary`(段16「サマリー」。乱数非消費・
  * モデル状態からの決定的な集計)は、対象生成(`buildParcelBuilding`)
  * そのものではなく極小モデルの合成・出力整形の一部として直接呼ぶ
  * (本番の造形・判定ロジックを再実装しないための選択)。
@@ -134,7 +134,7 @@ function buildSingleBuildingWorld(
   // 土の斑・明度ムラ)で極小ワールドの実寸ぶんを生成する。初期値
   // (createZoneMask(0, 0))のままだと cellSize=0 で mesh 側のサンプリング
   // (zoneColorAt / sampleZoneMask)が退化し、地面が全対象で真っ黒に
-  // 描画される(G1b。契約「極小ワールドの合成規約」の直接呼び出しの許容)
+  // 描画される(契約「極小ワールドの合成規約」の直接呼び出しの許容)
   model.ground.zoneMask = generateZoneMask(seed, model.ground.size);
 
   const isWaterside = role === "waterside";
@@ -156,8 +156,8 @@ function buildSingleBuildingWorld(
   return model;
 }
 
-// --- 施設(farmland)対象の極小ワールド(Phase D タスク D2b。
-//     contracts/facilities.md「造形の純関数分離」のギャラリー制約) ---
+// --- 施設(farmland)対象の極小ワールド
+//     (contracts/facilities.md「造形の純関数分離」のギャラリー制約) ---
 /**
  * ギャラリーの農地区画の間口(実寸)。本番の農地間口帯
  * (clamp(1.7 × residential 候補間口の中央値, 14, 40)。契約「農地区画の
@@ -212,7 +212,7 @@ function buildSingleFacilityWorld(
   return model;
 }
 
-// --- 施設(広場)対象の極小ワールド(Phase D タスク D3) ---
+// --- 施設(広場)対象の極小ワールド ---
 /**
  * ギャラリーの広場の半径(実寸)。crossing 広場の帯(4〜6.5)よりやや
  * 大きめに取り、屋台列(prosper 100 で 12 基)が縁帯に収まる代表値
@@ -282,7 +282,7 @@ function buildPlazaFacilityWorld(
   return model;
 }
 
-// --- 施設(風車・水車)対象の極小ワールド(Phase D タスク D4) ---
+// --- 施設(風車・水車)対象の極小ワールド ---
 /** 風車対象のセル寸(実寸。ジッターがこの範囲で位置を揺らす) */
 const WINDMILL_GALLERY_CELL = 20;
 
@@ -410,10 +410,10 @@ function buildSinglePierWorld(seed: string, params: Params): WorldModel {
 
 /**
  * 対象id → 極小ワールド合成関数の対応表(契約「対象idの体系」)。
- * MVP(G1): 一般建物の全 role(`BuildingRole` から "center" を除いた6つ)。
- * Phase D タスク D2b で施設 `facility/field` / `facility/pasture` を、
- * D3 で `facility/well` / `facility/stall` を、D4 で `facility/windmill` /
- * `facility/watermill` を、D5 で `facility/pier` を追加(全 7 kind)。
+ * 一般建物の全 role(`BuildingRole` から "center" を除いた6つ)と、
+ * 施設の全 7 kind(`facility/field` / `facility/pasture` / `facility/well` /
+ * `facility/stall` / `facility/windmill` / `facility/watermill` /
+ * `facility/pier`)を対象とする。
  */
 const GALLERY_TARGETS: Readonly<
   Record<string, (seed: string, params: Params) => WorldModel>
@@ -443,7 +443,7 @@ const GALLERY_TARGETS: Readonly<
   "facility/pier": buildSinglePierWorld,
 };
 
-/** 実装済みの対象id一覧(UI・URL 検証(G2)が使う) */
+/** 実装済みの対象id一覧(UI・URL 検証が使う) */
 export const GALLERY_TARGET_IDS: readonly string[] =
   Object.keys(GALLERY_TARGETS);
 

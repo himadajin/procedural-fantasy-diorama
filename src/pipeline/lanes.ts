@@ -1,6 +1,6 @@
 /**
  * 段13「小道」: 建物裏手を結ぶ細い道と、水路沿いの岸沿い道(towpath)を
- * lane class の edge として道路網へ追記する(PHASE 4b commit 15)。
+ * lane class の edge として道路網へ追記する。
  * データの正は docs/internal/contracts/network-plaza.md(Network 節
  * 「小道の性質」)、段の位置づけは contracts/pipeline.md の段契約表。
  *
@@ -397,7 +397,7 @@ function planBackLanes(ctx: LaneContext, laneAmount: number, grade: number): voi
   }
 
   // 走査順は edges の配列順 × L → R(環境依存の順序に依存しない)。
-  // 対象 edge は main / connector に限定する(Phase B。contracts/network-plaza.md
+  // 対象 edge は main / connector に限定する(contracts/network-plaza.md
   // 「小道の性質」— street 自身が路地であり、路地の裏へさらに細道を張ると
   // 過密になるため street は対象外とする)
   for (const edge of model.network.edges) {

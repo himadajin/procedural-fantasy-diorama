@@ -1,45 +1,18 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import { ZONE_KINDS, sampleZoneMask, type ZoneMask } from "../src/model/zonemask";
 import { createWaterField, type WaterField } from "../src/model/waterfield";
 import { pathLength, pointAlong } from "../src/model/geometry";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
 import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
 import { runPlazas } from "../src/pipeline/plazas";
 import { runPaving } from "../src/pipeline/paving";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 const PAVED = ZONE_KINDS.indexOf("paved");
 
-function buildUntilPlazas(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  return model;
-}
-
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = buildUntilPlazas(seed, over);
-  runPaving(model);
-  return model;
+  return buildUpTo(runPaving, seed, over);
 }
 
 function field(model: WorldModel): WaterField {
@@ -62,17 +35,8 @@ describe("paving: 決定性", () => {
 
   it("段5〜9 は zoneMask に触れない(上書きは段10 に集約。contracts/pipeline.md)", () => {
     for (const seed of SEEDS) {
-      const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS });
-      runDerive(model);
-      runGround(model);
-      runWater(model);
-      const afterWater = structuredClone(model.ground.zoneMask);
-      runSiting(model);
-      runNetwork(model);
-      runCanals(model);
-      runDensity(model);
-      runWards(model);
-      runPlazas(model);
+      const afterWater = buildUpTo(runWater, seed).ground.zoneMask;
+      const model = buildUpTo(runPlazas, seed);
       expect(model.ground.zoneMask).toEqual(afterWater);
     }
   });

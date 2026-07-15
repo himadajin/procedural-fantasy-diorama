@@ -1,66 +1,27 @@
 /**
- * PHASE 4b commit 14: 開口・木組み・煙突・素材階層のテスト。
+ * 開口・木組み・煙突・素材階層のテスト。
  * 契約は docs/internal/contracts/buildings.md
- * 「PHASE 4b commit 14 の追加語彙」「PHASE 4b commit 14 の詳細部品の性質」
+ * 「Part の型語彙」「建物部品の性質」
  * 「Building.materials の決め方」。
  */
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Building,
-  type Params,
-  type Part,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Building, type Params, type Part, type WorldModel } from "../src/model/worldmodel";
 import { polygonSignedDistance } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
-import { runParcels } from "../src/pipeline/parcels";
 import {
   CHIMNEY_BASE_WIDTH,
   CHIMNEY_OVERSIZE,
   FLOOR_HEIGHT,
   runBuildings,
 } from "../src/pipeline/buildings";
+import { buildUpTo, makeCached } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  runBuildings(model);
-  return model;
+  return buildUpTo(runBuildings, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
 function partsOf(b: Building, type: string): Part[] {
   return b.parts.filter((p) => p.type === type);
@@ -150,7 +111,7 @@ const COMBOS: [string, Partial<Params>][] = SEEDS.flatMap((seed) => [
 ]);
 
 describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
-  it("全建物が扉をちょうど 1 つ持ち、外向きが親区画の facing と一致し、壁面上にある(連棟は住戸(スパン区画)ごとに 1。Phase C タスク C5。契約 (13) 過渡期註記)", () => {
+  it("全建物が扉をちょうど 1 つ持ち、外向きが親区画の facing と一致し、壁面上にある(連棟は住戸(スパン区画)ごとに 1。契約 (13) 過渡期註記)", () => {
     for (const [seed, over] of COMBOS) {
       const model = cached(seed, over);
       const parcelById = new Map(model.parcels.map((p) => [p.id, p]));
@@ -163,7 +124,7 @@ describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
         );
         if (b.spanParcelIds.length > 1) {
           // 連棟: 住戸(スパン区画)ごとに door がちょうど 1(契約「連棟
-          // (rowhouse)の性質」「Phase C 過渡期註記」)。部品配列順は住戸
+          // (rowhouse)の性質」「過渡期註記」)。部品配列順は住戸
           // (spanParcelIds)の順と一致する
           expect(doors.length).toBe(b.spanParcelIds.length);
           for (let i = 0; i < doors.length; i++) {
@@ -201,7 +162,7 @@ describe("building details: 扉(正面 frontEdge 側に必ず 1 つ)", () => {
     }
   });
 
-  it("中庭型(courtyard)の 90° 内向きスナップで胴体が回転した建物も、上記の扉検証にそのまま含まれる(Phase C タスク C4c。契約 (10): 判定基準自体は無傷)", () => {
+  it("中庭型(courtyard)の 90° 内向きスナップで胴体が回転した建物も、上記の扉検証にそのまま含まれる(契約 (10): 判定基準自体は無傷)", () => {
     // 中庭型が成立しやすい Settlement/Prosperity の組を追加して走査する
     // (COMBOS はこのテストファイルの既定の組合せのため、ここでは中庭型が
     // 出やすい組を明示的に追加する)
@@ -344,7 +305,7 @@ describe("building details: 素材階層と木組みの連動", () => {
   });
 });
 
-describe("building details: Prosperity 20/60/95 の素材階層移行(implementation-spec PHASE 4b)", () => {
+describe("building details: Prosperity 20/60/95 の素材階層移行", () => {
   const WALL_ORDER = ["rough-wood", "plaster", "stone", "ashlar"];
   const ROOF_ORDER = ["thatch", "shingle", "tile", "slate"];
   const LEVELS = [20, 60, 95];
@@ -444,8 +405,8 @@ describe("building details: 役割による部品構成の差", () => {
           warehouses++;
           // 倉庫は荷入れ口(高い扉)
           if (door) expect(door.transform.scale[1]).toBeCloseTo(2.5, 9);
-          // 前面の石垣は house / hall のみ(裏庭の fence(params.backyard=1。
-          // Phase C タスク C6)は役割に依らず付きうるため除く)
+          // 前面の石垣は house / hall のみ(裏庭の fence(params.backyard=1)
+          // は役割に依らず付きうるため除く)
           expect(
             partsOf(b, "fence").filter((p) => p.params?.backyard !== 1).length,
           ).toBe(0);

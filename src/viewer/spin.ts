@@ -1,5 +1,5 @@
 /**
- * 風車のロータ・水車の水輪の回転(表示演出。Phase D タスク D4)。
+ * 風車のロータ・水車の水輪の回転(表示演出)。
  * 数値の正は art-direction 5.5節「表示演出(回転)の数値」:
  * ロータ = 1 回転 22 秒(正面から見て時計回り)、水輪 = 1 回転 11 秒
  * (facing 基準で固定)。いずれも等速。
@@ -21,16 +21,9 @@ const WHEEL_PERIOD_S = 11;
 const ROTOR_SPEED = -(Math.PI * 2) / ROTOR_PERIOD_S;
 const WHEEL_SPEED = (Math.PI * 2) / WHEEL_PERIOD_S;
 
-/** シーンから回転部品(userData.spin 持ち)を収集する(生成時に 1 回) */
-export function collectSpinners(root: THREE.Object3D): THREE.Object3D[] {
-  const spinners: THREE.Object3D[] = [];
-  root.traverse((obj) => {
-    if (obj.userData.spin) spinners.push(obj);
-  });
-  return spinners;
-}
-
-/** 回転部品の姿勢を経過時間から決める(等速。初期角 = phase) */
+/** 回転部品の姿勢を経過時間から決める(等速。初期角 = phase)。
+ *  回転部品の収集(userData.spin 持ちの走査)は mesh/build.ts が
+ *  生成時に 1 回行う。 */
 export function updateSpinners(
   spinners: readonly THREE.Object3D[],
   elapsed: number,

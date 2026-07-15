@@ -19,17 +19,17 @@
  *   持ち、形状・寸法はマージ展開と同一(経路変更で絵を変えない)
  * - 影: castShadow は統合ジオメトリ(躯体・屋根)と主要 InstancedMesh
  *   (building-trim)に限定する(1.8節の影キャスター規律)
- * - 発光束(PHASE 5a): crystal / sigil / glow-window の発光面は
+ * - 発光束: crystal / sigil / glow-window の発光面は
  *   独立の小さなマージ束 `buildings-glow` 1 つに集約する(draw call +1)。
  *   emissive #5fd4c0 / emissiveIntensity 2.0、明滅 ±0.3 はビューワーの
  *   時間 uniform(水面と共有)で行い、reduced-motion では静止する
- *   (contracts/buildings.md「PHASE 5a commit 16 の追加語彙」、
+ *   (contracts/buildings.md「中心建築の拡張文法」の追加語彙、
  *   art-direction 5.4節)。Bloom・動的光源は使わない
- * - 結界構造(PHASE 5b commit 17): mesh/wardparts.ts の展開結果
+ * - 結界構造: mesh/wardparts.ts の展開結果
  *   (ward-wall / arch / ward-stone と再利用部品)を同じ束へ合流させる。
  *   境界標・立石は専用プールの InstancedMesh `ward-stones` 1 つ
  *   (contracts/wards.md「結界構造の立体化」)
- * - 魔法灯・浮遊要素・橋(PHASE 5b commit 18): 灯の柱(lamp-post)は
+ * - 魔法灯・浮遊要素・橋: 灯の柱(lamp-post)は
  *   building-trim プールへ、橋(mesh/bridgeparts.ts)は既存の束へ合流。
  *   火屋+浮遊水晶は発光の共有 InstancedMesh `ward-glow-crystals`、
  *   浮石は `ward-floatstones`(draw call +2)。上下動・明滅は
@@ -60,7 +60,7 @@ export const MATERIAL_COLORS: Record<string, string> = {
   shingle: "#7a6a52",
   tile: "#a0563c",
   slate: "#5c6b7a",
-  // --- 施設(Phase D。art-direction 5.5節) ---
+  // --- 施設(art-direction 5.5節) ---
   "tilled-soil": "#63513e",
   meadow: "#94a166",
   canvas: "#c9b48e",
@@ -86,7 +86,7 @@ const ROOF_SOFFIT_SHADE = 0.7;
 /** 杭の個体ムラ幅 */
 const PILE_MOTTLE = 0.16;
 
-// --- 開口(窓・扉・屋根小窓)の造形(PHASE 4b commit 14) ---
+// --- 開口(窓・扉・屋根小窓)の造形 ---
 /**
  * 開口の奥面の暗色(art-direction 5.1節 `#352c22`)。壁に穴は開けず、
  * 枠より奥まった暗色面でセットバックを読ませる(同 6節)。
@@ -106,7 +106,7 @@ const FENCE_FOOT_AO = 0.85;
 /** 屋根小窓の躯体(頬・前面)の沈み(勾配面より一段暗く) */
 const DORMER_BODY_SHADE = 0.88;
 
-// --- 発光束(PHASE 5a。art-direction 5.4節の数値規範) ---
+// --- 発光束(art-direction 5.4節の数値規範) ---
 /** 発光面のベース(拡散)色。夕光の加算で濁らせない暗色に固定 */
 const GLOW_BASE_COLOR = "#2a3a38";
 /** 発光コア(emissive)の色 */
@@ -119,7 +119,7 @@ const GLOW_EDGE_WEIGHT = 0.35;
 /** 中庭壁の笠より下の壁体の暗まり */
 const COURTYARD_BODY_SHADE = 0.97;
 
-// --- 遠距離 LOD(PHASE 7 commit 22。contracts/pipeline.md
+// --- 遠距離 LOD(contracts/pipeline.md
 //     「描画プリセット・LOD・デバッグ表示」) ---
 /**
  * 小部品(building-trim / building-openings)のフェード帯
@@ -352,8 +352,8 @@ function subBox(
   face(buf, xf, [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]], s4, inside, base);
 }
 
-// --- インスタンス経路のピース分解(PHASE 4b commit 15。
-//     contracts/buildings.md「インスタンス経路のピース分解」) ---
+// --- インスタンス経路のピース分解
+//     (contracts/buildings.md「インスタンス経路のピース分解」) ---
 
 /** 共有プールへ積むピース(色は基準色×個体ムラを掛けた最終値) */
 interface Piece {
@@ -371,7 +371,7 @@ interface InstancePools {
   planes: Piece[];
   /** 杭(building-piles。従来どおり部品 1 つ = 1 インスタンス) */
   piles: Piece[];
-  /** 境界標・立石(ward-stones。部品 1 つ = 1 インスタンス。PHASE 5b) */
+  /** 境界標・立石(ward-stones。部品 1 つ = 1 インスタンス) */
   stones: Piece[];
 }
 
@@ -460,6 +460,54 @@ function openingPieces(
   planePiece(pools, part, inner, -0.5 + tx, 0.5 - tx, y0, 1 - ty, z);
 }
 
+/**
+ * 開口(窓・扉)のマージ経路版: `openingPieces`(インスタンス経路)と同じ
+ * 枠寸法・奥面の色/沈み(FRAME_T・OPENING_INSET_Z・DOOR_LEAF_Z・
+ * OPENING_COLOR・DOOR_LEAF_SHADE)を、共有プールでなくマージバッファへ
+ * 直接描く(subBox / face は boxPart 等の他のマージ形状と同じ押し込み経路
+ * のため、ワールド形状は openingPieces と同一になる)。呼び出し元は
+ * mesh/facilities.ts(施設の door / window。施設はインスタンス経路の
+ * 共有プールを持たないためマージへ寄せる)。
+ */
+export function openingPart(
+  part: Part,
+  buf: GeoBuffer,
+  base: THREE.Color,
+  kind: "window" | "door",
+): void {
+  const xf = makeXform(part);
+  const [sx, sy] = part.transform.scale;
+  const tx = Math.min(0.3, FRAME_T / Math.max(sx, 1e-6));
+  const ty = Math.min(0.3, FRAME_T / Math.max(sy, 1e-6));
+  // 枠: 左右+上(窓は下枠=窓台も)
+  subBox(buf, xf, base, -0.5, -0.5 + tx, 0, 1, -0.2, 0.5);
+  subBox(buf, xf, base, 0.5 - tx, 0.5, 0, 1, -0.2, 0.5);
+  subBox(buf, xf, base, -0.5 + tx, 0.5 - tx, 1 - ty, 1, -0.2, 0.5);
+  if (kind === "window") {
+    subBox(buf, xf, base, -0.5 + tx, 0.5 - tx, 0, ty, -0.2, 0.5);
+  }
+  // 奥面(窓は開口の暗色固定、扉は木部を沈めた扉板。発光させない)
+  const y0 = kind === "window" ? ty : 0;
+  const y1 = 1 - ty;
+  const z = kind === "window" ? OPENING_INSET_Z : DOOR_LEAF_Z;
+  const inner =
+    kind === "window" ? OPENING_COLOR : base.clone().multiplyScalar(DOOR_LEAF_SHADE);
+  const inside = xf([0, (y0 + y1) / 2, z - 0.5]);
+  face(
+    buf,
+    xf,
+    [
+      [-0.5 + tx, y0, z],
+      [0.5 - tx, y0, z],
+      [0.5 - tx, y1, z],
+      [-0.5 + tx, y1, z],
+    ],
+    [1, 1, 1, 1],
+    inside,
+    inner,
+  );
+}
+
 /** 煙突: 胴+笠(過大な冠)+頂部の焚き口(開口の暗色の薄箱) */
 function chimneyPieces(pools: InstancePools, part: Part, base: THREE.Color): void {
   boxPiece(pools, part, base, -0.5, 0.5, 0, 0.88, -0.5, 0.5);
@@ -541,8 +589,8 @@ function roofPart(part: Part, buf: GeoBuffer, base: THREE.Color, hip: boolean): 
   face(buf, xf, [A, B, C, D], soff, inside, base);
 }
 
-// --- PHASE 5a: 中心建築の部品(contracts/buildings.md
-//     「PHASE 5a commit 16 の追加語彙」) ---
+// --- 中心建築の部品(contracts/buildings.md
+//     「中心建築の拡張文法」の追加語彙) ---
 
 /** 塔身: 先細りの角柱(上端の辺長 = 底辺 × taper)+天端面 */
 function towerPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
@@ -582,8 +630,8 @@ function courtyardWallPart(part: Part, buf: GeoBuffer, base: THREE.Color): void 
   subBox(buf, xf, base, -0.5, 0.5, 0.88, 1, -0.5, 0.5);
 }
 
-// --- PHASE 5b commit 17: 結界構造(contracts/buildings.md
-//     「PHASE 5b commit 17 の追加語彙」「結界構造の立体化」) ---
+// --- 結界構造(contracts/buildings.md 結界構造の追加語彙、
+//     contracts/wards.md「結界構造の立体化」) ---
 
 /** 結界壁の基部高・頂縁高・張り出し(実寸固定。scale から逆算する) */
 const WARD_WALL_BASE_H = 0.42;
@@ -614,7 +662,7 @@ function wardWallPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
  * アーチ開口を持つ門躯体(両脚+アーチ頭+開口ソフィット)。開口はローカル
  * z 方向へ貫通する。scale = スパン×全高×厚み。params.open = 開口幅/スパン、
  * params.rise = 開口天端高/全高。アーチの縦半径はワールドで半円に近づくよう
- * scale から決める(結界門。橋=commit 18 と共用できる汎用形状)。
+ * scale から決める(結界門。橋と共用できる汎用形状)。
  */
 function archPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
   const xf = makeXform(part);
@@ -901,10 +949,9 @@ function archWindowPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
 }
 
 /**
- * マージ経路の型ハンドラ(PHASE 5 以降もここへ追加登録する)。
+ * マージ経路の型ハンドラ(新しい部品型はここへ追加登録する)。
  * 経路の切替は MERGE_HANDLERS / INSTANCED_TYPES の型キー単位の登録移動で
- * 行う(PHASE 4b commit 15 で window / door / beam / chimney を
- * INSTANCED_TYPES へ移行済み)。
+ * 行う。
  */
 export const MERGE_HANDLERS: Record<
   string,
@@ -920,26 +967,26 @@ export const MERGE_HANDLERS: Record<
     ),
   gable: (part, buf, base) => roofPart(part, buf, base, false),
   hip: (part, buf, base) => roofPart(part, buf, base, true),
-  // --- PHASE 4b commit 14: 付属(ジェッティ・石垣・外階段・屋根小窓) ---
+  // --- 付属(ジェッティ・石垣・外階段・屋根小窓) ---
   jetty: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
   fence: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
   stair: (part, buf, base) => stairPart(part, buf, base),
   dormer: (part, buf, base) => dormerPart(part, buf, base),
-  // --- PHASE 5a commit 16: 中心建築(塔・尖塔・中庭壁・大型開口) ---
+  // --- 中心建築(塔・尖塔・中庭壁・大型開口) ---
   tower: (part, buf, base) => towerPart(part, buf, base),
   spire: (part, buf, base) => spirePart(part, buf, base),
   "courtyard-wall": (part, buf, base) => courtyardWallPart(part, buf, base),
   "rose-window": (part, buf, base) => roseWindowPart(part, buf, base),
   "arch-window": (part, buf, base) => archWindowPart(part, buf, base),
-  // --- PHASE 5b commit 17: 結界構造(結界壁・結界門のアーチ) ---
+  // --- 結界構造(結界壁・結界門のアーチ) ---
   "ward-wall": (part, buf, base) => wardWallPart(part, buf, base),
   arch: (part, buf, base) => archPart(part, buf, base),
-  // --- PHASE 6 commit 19: 水辺建築の拡張(杭支持デッキの床板) ---
+  // --- 水辺建築の拡張(杭支持デッキの床板) ---
   deck: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
 };
 
 /**
- * 発光束の型ハンドラ(PHASE 5a)。crystal / sigil は発光束のみ、
+ * 発光束の型ハンドラ。crystal / sigil は発光束のみ、
  * glow-window は枠を躯体束へ・発光面を発光束へ振り分ける。
  */
 const GLOW_HANDLERS: Record<
@@ -954,7 +1001,7 @@ const GLOW_HANDLERS: Record<
 
 /**
  * インスタンス経路の型ハンドラ(部品を共有プールのピースへ分解する。
- * 4b 以降はここへ追加登録する)。
+ * 新しい部品型はここへ追加登録する)。
  */
 const INSTANCED_TYPES: Record<
   string,
@@ -962,7 +1009,7 @@ const INSTANCED_TYPES: Record<
 > = {
   pile: (part, base, pools) => {
     const [px, py, pz] = part.transform.position;
-    // 個体の明度ムラ(位置ハッシュ。乱数非消費。commit 13 と同係数)
+    // 個体の明度ムラ(位置ハッシュ。乱数非消費)
     const mottle = 1 + PILE_MOTTLE * (hash3(px, py, pz) - 0.5);
     pools.piles.push({
       position: [px, py, pz],
@@ -971,13 +1018,13 @@ const INSTANCED_TYPES: Record<
       color: base.clone().multiplyScalar(mottle),
     });
   },
-  // --- PHASE 4b commit 15: 開口・梁・煙突のインスタンス化 ---
+  // --- 開口・梁・煙突のインスタンス化 ---
   window: (part, base, pools) => openingPieces(pools, part, base, "window"),
   door: (part, base, pools) => openingPieces(pools, part, base, "door"),
   beam: (part, base, pools) =>
     boxPiece(pools, part, base, -0.5, 0.5, 0, 1, -0.5, 0.5),
   chimney: (part, base, pools) => chimneyPieces(pools, part, base),
-  // --- PHASE 5b commit 17: 境界標・立石(専用プール ward-stones) ---
+  // --- 境界標・立石(専用プール ward-stones) ---
   "ward-stone": (part, base, pools) => {
     const [px, py, pz] = part.transform.position;
     pools.stones.push({
@@ -987,7 +1034,7 @@ const INSTANCED_TYPES: Record<
       color: pieceColor(base, [px, py + part.transform.scale[1] / 2, pz]),
     });
   },
-  // --- PHASE 5b commit 18: 魔法灯の柱(柱身+足元+天板のピース分解。
+  // --- 魔法灯の柱(柱身+足元+天板のピース分解。
   //     火屋は部品ではなく ward-glow-crystals のインスタンス) ---
   "lamp-post": (part, base, pools) => {
     const [sx, sy] = part.transform.scale;
@@ -1110,7 +1157,7 @@ function wardStoneGeometry(): THREE.BufferGeometry {
   return g;
 }
 
-// --- PHASE 5b commit 18: 魔法灯の火屋・浮遊要素の InstancedMesh ---
+// --- 魔法灯の火屋・浮遊要素の InstancedMesh ---
 
 /** 上下動の角速度(ゆっくり。周期 約8.4秒)と明滅の位相係数 */
 const FLOAT_BOB_SPEED = 0.75;
@@ -1427,7 +1474,7 @@ function glowMaterial(timeUniform: TimeUniform): THREE.MeshStandardMaterial {
 /**
  * 建物+結界構造+魔法灯・浮遊要素+橋の一式のメッシュを構築する
  * (結界・灯・浮遊は mesh/wardparts.ts、橋は mesh/bridgeparts.ts の
- * 展開結果を合流。PHASE 5b commit 17〜18)。
+ * 展開結果を合流)。
  * 戻り値: 躯体マージ 1 + 屋根マージ 1 + 発光束マージ 1(発光部品が
  * あるときのみ)+ インスタンスプールの InstancedMesh(building-trim /
  * building-openings / building-piles / ward-stones / ward-glow-crystals /
@@ -1468,11 +1515,11 @@ export function buildBuildings(
   for (const building of model.buildings as Building[]) {
     for (const part of building.parts) processPart(part);
   }
-  // 結界構造+魔法灯・浮遊要素(PHASE 5b commit 17〜18):
+  // 結界構造+魔法灯・浮遊要素:
   // mesh/wardparts.ts の展開結果を同じ束へ合流させる
   const wardExpansion = expandWardParts(model);
   for (const part of wardExpansion.parts) processPart(part);
-  // 橋(PHASE 5b commit 18): mesh/bridgeparts.ts の展開結果を合流させる
+  // 橋: mesh/bridgeparts.ts の展開結果を合流させる
   for (const part of expandBridgeParts(model).parts) processPart(part);
 
   if (unknown > 0) {
@@ -1506,7 +1553,8 @@ export function buildBuildings(
   // インスタンス経路(共有プールごとに 1 InstancedMesh)。
   // 影は building-trim(主要 InstancedMesh)のみ落とす(1.8節)。
   // 窓枠・扉・梁・煙突などの小部品プールには遠距離 LOD の
-  // ディザ減衰を付ける(PHASE 7 commit 22。contracts/pipeline.md)
+  // ディザ減衰を付ける(contracts/pipeline.md「描画プリセット・LOD・
+  // デバッグ表示」)
   const trim = buildPoolMesh(
     pools.boxes,
     unitBoxGeometry(),
@@ -1533,7 +1581,7 @@ export function buildBuildings(
     0.95,
   );
   if (piles) out.push(piles);
-  // 境界標・立石(PHASE 5b)。wardLevel 1 の主要な結界表現のため
+  // 境界標・立石。wardLevel 1 の主要な結界表現のため
   // 主要 InstancedMesh として影を落とす(contracts「結界構造の立体化」)
   const stones = buildPoolMesh(
     pools.stones,
@@ -1544,7 +1592,7 @@ export function buildBuildings(
   );
   if (stones) out.push(stones);
 
-  // PHASE 5b commit 18: 魔法灯の火屋+浮遊水晶(発光の共有 InstancedMesh)と
+  // 魔法灯の火屋+浮遊水晶(発光の共有 InstancedMesh)と
   // 浮石。上下動・明滅はビューワーの時間 uniform(reduced-motion で静止)
   const glowInstanced = buildFloatInstancedMesh(
     [...wardExpansion.lampHeads, ...wardExpansion.floatCrystals],

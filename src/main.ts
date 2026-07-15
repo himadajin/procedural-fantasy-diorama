@@ -62,7 +62,7 @@ if (!viewer) {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // 描画プリセット(PHASE 7 commit 22。contracts/pipeline.md
+  // 描画プリセット(contracts/pipeline.md
   // 「描画プリセット・LOD・デバッグ表示」)。起動時にデバイス簡易判定で
   // 1回選び、初回生成後に実測補正を1回だけ行う。?preset=high|low で
   // 強制でき、その場合は判定・補正とも行わない(検証用)
@@ -115,7 +115,7 @@ if (!viewer) {
   const indicator = createIndicator(app);
 
   // 開発用デバッグオーバーレイ: 既定非表示。?debug=1 のときのみ生成する
-  // (PHASE 7 commit 22 でハッシュ・renderer.info はサマリーへ統合済み。
+  // (ハッシュ・renderer.info はサマリーへ統合済み。
   // implementation-spec 1.10節)。`applyActiveTab`(下記)が参照するため
   // `createPanel` より前に定義する(TDZ 対策)
   const debug = debugEnabled ? createDebugOverlay(app) : null;
@@ -131,9 +131,10 @@ if (!viewer) {
   const defaultGalleryParams = galleryUrlState?.params ?? DEFAULT_PARAMS;
 
   // 箱庭(ワールド)とギャラリーの生成状態(現在の3Dグループ・モデル・
-  // カメラ基準)を互いに独立に保持する(計画書3.4節「タブはビューの
-  // 切替のみ・生成状態は互いに独立」)。同じ viewer・同じ camera・同じ
-  // orbit controls を共有しつつ、非アクティブ側のグループは
+  // カメラ基準)を互いに独立に保持する(design.md「UI とサマリー」節
+  // 「タブはビューの表示切り替えのみを行い、生成は行わない」)。
+  // 同じ viewer・同じ camera・同じ orbit controls を共有しつつ、
+  // 非アクティブ側のグループは
   // `visible = false` で温存する(タブ切替のたびに再生成しない)。
   // `createPanel` の onTabChange(初期タブ反映のため構築中に同期的に
   // 呼ばれる)より前に定義する必要がある(TDZ 対策)
@@ -146,7 +147,7 @@ if (!viewer) {
     /**
      * OrbitController.configure に渡す初期構図(カメラ基準寸法・注視点・
      * 方位)。ワールドは ground.size 基準・原点・既定方位、ギャラリーは
-     * 対象寸法から導出(viewer/framing.ts。G2b で固定距離から変更)。
+     * 対象寸法から導出(viewer/framing.ts)。
      * 生成直後・タブ切替時に毎回評価する(画面アスペクト比に追従)
      */
     framingFor: (model: WorldModel) => GalleryFraming;
@@ -363,8 +364,8 @@ if (!viewer) {
    * 生成結果(WorldModel)をシーンへ差し替える。対象シーンが現在アクティブな
    * タブのものであればカメラ・霧・フェードなど表示側の適用まで行い、
    * 非アクティブ側(バックグラウンド生成)ならグループを温存するだけに留める
-   * (計画書「タブ切替時は各側の最後の生成結果を表示し直す。切替のたびに
-   * 再生成しない」)。
+   * (design.md「UI とサマリー」節「タブを切り替えるたびに各側の最後の
+   * 生成結果を表示し直す」)。
    */
   function swapScene(scene: SceneState, model: WorldModel, tab: TabKey): void {
     scene.stopFade?.();

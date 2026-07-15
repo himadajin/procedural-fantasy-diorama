@@ -1,7 +1,7 @@
 /**
- * 中心建築の拡張文法(PHASE 5a commit 16)。
- * 契約は docs/internal/contracts/buildings.md「中心建築(PHASE 5a commit 16)」、
- * 設計は implementation-spec 1.7節(4軸スコア・モードなし連続分岐)・PHASE 5a。
+ * 中心建築の拡張文法。
+ * 契約は docs/internal/contracts/buildings.md「中心建築」、
+ * 設計は implementation-spec 1.7節(4軸スコア・モードなし連続分岐)。
  *
  * - 段12「建物」が一般建物の展開後に呼び、buildings の末尾へ 1 棟追加する
  *   (スカイライン検証が周辺一般建物の最高点を入力とするため)
@@ -15,8 +15,9 @@
  *   面積合計を glowAreaCap × 箱庭面積 × CENTER_GLOW_SHARE 以下に打ち切る
  * - 乱数は "building/center"(骨格。消費数固定)と
  *   "building/center/details"(窓の詳細)のみ消費する
- * - 浮遊要素クラスタの立体化は PHASE 5b の担当(wards.floaters の計画は
- *   towers / gates / shrines を anchor とし、中心建築へは接続しない)
+ * - 浮遊要素クラスタの立体化は contracts/wards.md「魔法灯・浮遊要素・橋の
+ *   立体化」の担当(wards.floaters の計画は towers / gates / shrines を
+ *   anchor とし、中心建築へは接続しない)
  */
 import { makeRng } from "../rng";
 import {
@@ -41,7 +42,8 @@ function clamp(v: number, min: number, max: number): number {
 const AXIS_ORDER = ["arcane", "authority", "waterside", "rustic"] as const;
 export type CenterAxisKey = (typeof AXIS_ORDER)[number];
 
-/** 発光面積の中心建築の取り分(残りは PHASE 5b の結界要素。契約) */
+/** 発光面積の中心建築の取り分(残りは契約 wards.md「結界構造の立体化」の
+ *  結界要素。0.65/0.35 の取り分は同節を参照) */
 export const CENTER_GLOW_SHARE = 0.35;
 
 /** 使用領域のマージン(footprint 内接正方形から引く。契約) */

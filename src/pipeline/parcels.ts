@@ -1,7 +1,7 @@
 /**
  * 段11「区画」: 最終密度場(density.final)と道路沿いの敷地分割(parcels)。
  * データの正は docs/internal/contracts/network-plaza.md(Density 節)・buildings.md(Parcel 節)、
- * 設計は implementation-spec 1.3節(段10「区画」相当)・PHASE 4a。
+ * 設計は implementation-spec 1.3節(段11「区画」相当)。
  *
  * - density.final = 一次密度場 + 結界内ブースト(ringPath 内側で最大 +0.15、
  *   環の縁は幅 8 の smoothstep で減衰)。乱数を消費しない
@@ -14,6 +14,7 @@
  */
 import { makeRng } from "../rng";
 import type { Parcel, Polygon, Vec2, WorldModel } from "../model/worldmodel";
+import { stableRound } from "../model/hash";
 import {
   createBoundaryRadius,
   createWaterField,
@@ -91,14 +92,15 @@ const SHORE_OCCUPY_CAP = 0.4;
 /** 水辺候補の採択率ブースト係数(watersideRate に掛かる) */
 const WATERSIDE_BOOST = 0.8;
 
-// --- 農地区画(Phase D。contracts/facilities.md「field(畑)・pasture(牧草地)」) ---
+// --- 農地区画(contracts/facilities.md「field(畑)・pasture(牧草地)」) ---
 /** 農村ゾーンの urbanity 上限(network-plaza.md「zoning」と同値) */
 const RURAL_URBANITY_MAX = 0.45;
 /**
  * 農地区画の間口係数(採択済み residential 区画の間口の実測中央値に掛ける)。
  * 「農地は住居の典型間口より明確に大きい(1.5 倍以上)」という絵の意図を
  * 係数 1.7 で構造的に保証しつつ、Settlement による住居間口の変動(狭小化)へ
- * 農地の間口が自動追随する(D2a 差し戻しの実測で確定。facilities.md)
+ * 農地の間口が自動追随する(実測に基づく値。contracts/facilities.md
+ * 「field(畑)・pasture(牧草地)」実装補足「農地区画の寸法帯」)
  */
 const FARMLAND_FRONTAGE_SCALE = 1.7;
 const FARMLAND_FRONTAGE_MIN = 14;
@@ -407,11 +409,12 @@ interface AcceptedParcel {
  * 長さ 1 の run になる。乱数は消費しない。区画の採択・位置・数・順序は
  * 一切変えない(groupId を書き加えるだけ)。
  *
- * Phase D 追補: 農地区画(kind "farmland")が residential 区画の続きの
+ * 農地区画(kind "farmland")が residential 区画の続きの
  * slot 番号で追加されうるため、run の連続判定は同一 kind どうしのみを
- * 対象とする(kind が異なれば slot が連番でも run を分断する)。全区画が
- * residential の場合はこの条件が常に真になるため、residential のみの
- * 入力に対する挙動は不変(既存の区画グループ化ロジックは変えない)。
+ * 対象とする(kind が異なれば slot が連番でも run を分断する。contracts/
+ * facilities.md「field/pasture」実装補足「区画グループ(groupId)」)。
+ * 全区画が residential の場合はこの条件が常に真になるため、residential
+ * のみの入力に対する挙動は不変(既存の区画グループ化ロジックは変えない)。
  */
 function assignGroupIds(entries: AcceptedParcel[]): Parcel[] {
   // 同一 edge・同一側ごとにグルーピング(挿入順は元の採択順のまま)
@@ -481,12 +484,13 @@ export function runParcels(model: WorldModel): void {
   const accepted: AcceptedParcel[] = [];
   let capReached = false;
 
-  // --- 農地区画(Phase D。contracts/facilities.md「field(畑)・
-  //     pasture(牧草地)」)。residential より**先**に切り出す(D2a 差し
-  //     戻しの実測に基づく順序。残地方式では市街化が進むと農地が構造的に
-  //     全滅するため、農村ゾーンの道路沿いを農地が先取りし、residential が
-  //     残りを埋める。residential のループ自体は無改変で、既採択の農地
-  //     区画との衝突棄却(既存の検査 (6))で自然に避ける)。
+  // --- 農地区画(contracts/facilities.md「field(畑)・
+  //     pasture(牧草地)」)。residential より**先**に切り出す(実測に
+  //     基づく順序。契約「field/pasture」実装補足「切り出し順序」。残地
+  //     方式では市街化が進むと農地が構造的に全滅するため、農村ゾーンの
+  //     道路沿いを農地が先取りし、residential が残りを埋める。residential
+  //     のループ自体は無改変で、既採択の農地区画との衝突棄却(既存の
+  //     検査 (6))で自然に避ける)。
   //     id は `parcel/<roadEdgeId>/<L|R>/farm<slot>`(residential の
   //     数値 slot と衝突しない専用の slot 空間。契約 facilities.md) ---
   {
@@ -618,15 +622,18 @@ export function runParcels(model: WorldModel): void {
           if (!rect) continue;
           if (adoptRoll >= farmlandRate) continue;
 
-          // 水辺判定(residential と同じ規約。Parcel スキーマの充足のため)
+          // 水辺判定(residential と同じ規約。Parcel スキーマの充足のため)。
+          // waterBodySdf/canalSdf は水域境界(三角関数由来の連続値)からの
+          // 距離のため、固定閾値との比較はハッシュと同じ精度に丸めてから
+          // 行う(contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
           let minWaterBody = Infinity;
           let minCanal = Infinity;
           for (const p of rect.probes) {
             minWaterBody = Math.min(minWaterBody, ctx.waterBodySdf(p.x, p.z));
             minCanal = Math.min(minCanal, ctx.canalSdf(p.x, p.z));
           }
-          const waterside = minWaterBody < NEAR_WATER;
-          const canalside = minCanal < NEAR_WATER;
+          const waterside = stableRound(minWaterBody) < NEAR_WATER;
+          const canalside = stableRound(minCanal) < NEAR_WATER;
 
           // 岸線占有率 40% 上限は residential 専用(施設は建物ではないため
           // 対象外。facilities.md に契約追補済み)
@@ -706,15 +713,18 @@ export function runParcels(model: WorldModel): void {
         }
         if (!rect) continue;
 
-        // 水辺判定(契約: プローブの最小距離 < 4.5)
+        // 水辺判定(契約: プローブの最小距離 < 4.5)。waterBodySdf/canalSdf は
+        // 水域境界(三角関数由来の連続値)からの距離のため、固定閾値との比較は
+        // ハッシュと同じ精度に丸めてから行う
+        // (contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
         let minWaterBody = Infinity;
         let minCanal = Infinity;
         for (const p of rect.probes) {
           minWaterBody = Math.min(minWaterBody, ctx.waterBodySdf(p.x, p.z));
           minCanal = Math.min(minCanal, ctx.canalSdf(p.x, p.z));
         }
-        const waterside = minWaterBody < NEAR_WATER;
-        const canalside = minCanal < NEAR_WATER;
+        const waterside = stableRound(minWaterBody) < NEAR_WATER;
+        const canalside = stableRound(minCanal) < NEAR_WATER;
 
         // 採択確率: parcelRate × 密度係数。水辺は watersideRate で押し上げ
         const dc = sampleFieldGrid(final, rect.center.x, rect.center.z);

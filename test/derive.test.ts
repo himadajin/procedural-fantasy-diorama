@@ -1,16 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  type Derived,
-  type Params,
-} from "../src/model/worldmodel";
+import { DEFAULT_PARAMS, type Derived, type Params } from "../src/model/worldmodel";
 import { computeDerived } from "../src/pipeline/derive";
+import { withParams } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
-
-function withParams(over: Partial<Params>): Params {
-  return { ...DEFAULT_PARAMS, ...over };
-}
 
 describe("computeDerived: 決定性", () => {
   it("同一入力で深い等価の Derived を返す", () => {
@@ -122,7 +115,7 @@ describe("computeDerived: 境界値", () => {
     }
   });
 
-  it("entryPointCount は 2〜5 の整数(Phase B: 2 + 2.8×scale + jitter)", () => {
+  it("entryPointCount は 2〜5 の整数(2 + 2.8×scale + jitter)", () => {
     for (const seed of SEEDS) {
       for (let scale = 0; scale <= 100; scale += 5) {
         const d = computeDerived(seed, withParams({ worldScale: scale }));
@@ -158,7 +151,7 @@ describe("computeDerived: 境界値", () => {
     }
   });
 
-  it("streetBudget = worldSize × (0.35 + 2.35×settle) × (0.55 + 0.9×scale) の式に一致する(Phase B・B6)", () => {
+  it("streetBudget = worldSize × (0.35 + 2.35×settle) × (0.55 + 0.9×scale) の式に一致する", () => {
     for (const seed of SEEDS) {
       for (const worldScale of [0, 25, 50, 75, 100]) {
         for (const settlement of [0, 25, 50, 75, 100]) {
@@ -173,7 +166,7 @@ describe("computeDerived: 境界値", () => {
     }
   });
 
-  it("parcelCountMax = round(60 + 200×scale + 80×settle) の式に一致し、60〜340 に収まる(B6)", () => {
+  it("parcelCountMax = round(60 + 200×scale + 80×settle) の式に一致し、60〜340 に収まる", () => {
     for (const seed of SEEDS) {
       for (const worldScale of [0, 25, 50, 75, 100]) {
         for (const settlement of [0, 25, 50, 75, 100]) {
@@ -189,7 +182,7 @@ describe("computeDerived: 境界値", () => {
     }
   });
 
-  it("parcelCountMax は worldScale・settlement それぞれに対して単調非減少(B6)", () => {
+  it("parcelCountMax は worldScale・settlement それぞれに対して単調非減少", () => {
     for (const seed of SEEDS) {
       let prevByScale = -Infinity;
       for (const worldScale of [0, 25, 50, 75, 100]) {

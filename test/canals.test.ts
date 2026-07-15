@@ -1,30 +1,14 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import { createWaterField, distToPolyline } from "../src/model/waterfield";
 import { pathLength, pointAlong, waterCrossings } from "../src/model/geometry";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
 import { runCanals } from "../src/pipeline/canals";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  return model;
+  return buildUpTo(runCanals, seed, over);
 }
 
 describe("canals: 決定性", () => {
@@ -66,14 +50,14 @@ describe("canals: 発火条件と接続(contracts/ground-water.md Water 節)", (
 
   it("score が高いほど本数が増える(単調)", () => {
     // water=95・settlement=95 のような極端な組は使わない: 陸上率 0.95 の
-    // 強制(タスク A4)により、湖が非常に大きい入力では計画した水路が
+    // 強制により、湖が非常に大きい入力では計画した水路が
     // すべて棄却されフォールバック堀留も候補を持てず 0 本になりうる
     // (水域横断禁止を優先した結果であり破綻ではない。本数の単調性は
     // canalScore からの計画本数についてのもので、棄却後の実本数を
     // 常に保証するものではない。contracts/ground-water.md「水路の性質」)。
     // ここでは棄却が起きない中庸な組で単調性を検証する。
     //
-    // タスク A7(形状健全性)で「既存水路との最小間隔 width×3」を受理条件に
+    // 形状健全性検査で「既存水路との最小間隔 width×3」を受理条件に
     // 追加した結果、SEEDS の代表個体はいずれも湖・池が1個(単一の水域)しか
     // 生成されないため、canalScore が高く計画本数(planned)が2〜3でも、
     // 単一の水域の岸線だけから互いに width×3 以上離れた複数の水路を
@@ -89,12 +73,10 @@ describe("canals: 発火条件と接続(contracts/ground-water.md Water 節)", (
     }
   });
 
-  it("既定パラメータでは中間部が陸上を通る(街の水路として現れる。2026-07-07 追記の性質。" +
-    "タスク A4 で陸上率の閾値を 0.7 → 0.95 へ引き上げ)", () => {
+  it("既定パラメータでは中間部が陸上を通る(街の水路として現れる。陸上率 ≥0.95)", () => {
     // 中間部 = 始端・終端の接続窓(弧長 幅×2+4)を除く区間。陸上率 ≥ 0.95
-    // (タスク A4 で「深い横断部は対象外」の例外を撤廃し、接続窓を除く
-    // すべての水中区間を岸へ押し出すため、旧仕様で陸上率が低かった
-    // seed-b もこの不変条件を満たす)
+    // (「深い横断部は対象外」の例外は撤廃しており、接続窓を除く
+    // すべての水中区間を岸へ押し出す)
     for (const seed of SEEDS) {
       const model = build(seed);
       const field = createWaterField(model.ground.boundary, [
@@ -118,7 +100,7 @@ describe("canals: 発火条件と接続(contracts/ground-water.md Water 節)", (
   });
 
   it("水路の全点(始端・終端の接続窓を除く)が湖・池の深部を通らない" +
-    "(水域横断の禁止。contracts/ground-water.md「水路の性質」。タスク A4)", () => {
+    "(水域横断の禁止。contracts/ground-water.md「水路の性質」)", () => {
     // 深部の目安は waterSdf < −(幅/2)(水路コリドー中心線が水域の護岸下に
     // 沈む深さ)。接続窓(始端・終端。弧長 幅×2+4)は既存水域への接続のため
     // この不変条件の対象外。加えて、押し出し(enforceLand)後に行う
@@ -263,7 +245,7 @@ describe("canals: BridgeSite の追加(1本あたり最大3)", () => {
   });
 
   it("水路由来の各 BridgeSite の渡り長は max(18, canalWidth×6) 以下" +
-    "(並走橋の禁止。contracts/ground-water.md「水路の性質」。2026-07-12 追記)", () => {
+    "(並走橋の禁止。contracts/ground-water.md「水路の性質」)", () => {
     // 個数上限(3)だけでは、道路と水路が長距離で並走・重なりして 1 つの
     // 巨大な「橋」になる破綻(harbor-1 / water=100 で渡り長 134.6 を実測)を
     // 防げないため、段6 時点の bridges(over: "canal")で単一交差の渡り長を検証する
@@ -284,7 +266,7 @@ describe("canals: BridgeSite の追加(1本あたり最大3)", () => {
 });
 
 describe("canals: 形状健全性(自己近接・水路間重なり・迂曲率。" +
-  "contracts/ground-water.md「水路の性質」形状健全性。計画書タスク A7)", () => {
+  "contracts/ground-water.md「水路の性質」形状健全性)", () => {
   // SEEDS(seed-a / seed-b / everdusk-101)に加え、受け入れ検収で形状破綻が
   // 実測された everdusk-102 / harbor-1 を対象に含める
   const SHAPE_SEEDS = [...SEEDS, "everdusk-102", "harbor-1"];

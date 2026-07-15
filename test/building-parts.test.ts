@@ -1,13 +1,11 @@
 /**
- * PHASE 4a commit 13: 骨格文法(materials / parts)と zoneMask 建物上書きの
- * テスト。契約は docs/internal/contracts/buildings.md
+ * 骨格文法(materials / parts)と zoneMask 建物上書きのテスト。
+ * 契約は docs/internal/contracts/buildings.md
  * 「Part の型語彙」「materialId の語彙」「建物部品の性質」。
  */
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_PARAMS,
   SHORE_SKIRT_BOTTOM_Y,
-  createEmptyWorldModel,
   type Building,
   type Params,
   type Part,
@@ -15,18 +13,9 @@ import {
 } from "../src/model/worldmodel";
 import { ZONE_KINDS, sampleZoneMask } from "../src/model/zonemask";
 import { polygonSignedDistance } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
 import { runParcels } from "../src/pipeline/parcels";
 import { FLOOR_HEIGHT, runBuildings } from "../src/pipeline/buildings";
+import { buildUpTo, makeCached } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
@@ -35,9 +24,8 @@ const WALL_IDS = ["rough-wood", "plaster", "stone", "ashlar"];
 const ROOF_IDS = ["thatch", "shingle", "tile", "slate"];
 const TRIM_IDS = ["wood", "stone"];
 const ALL_MATERIAL_IDS = new Set([...WALL_IDS, ...ROOF_IDS, ...TRIM_IDS]);
-/** commit 13 の骨格語彙 + PHASE 4b commit 14 の詳細語彙 +
- *  PHASE 6 commit 19 の水辺拡張語彙(deck) +
- *  Phase C タスク C4c の中庭型語彙(courtyard-wall) */
+/** 骨格語彙 + 詳細部品の語彙 + 水辺建築の拡張語彙(deck) +
+ *  中庭型(courtyard)の語彙(courtyard-wall) */
 const PART_TYPES = new Set([
   "plinth",
   "pile",
@@ -64,12 +52,12 @@ const SITE_PART_TYPES = new Set(["fence", "stair"]);
  *  いずれかのメンバー区画から 1.2 以内であればよい) */
 const GROUP_BAND_PART_TYPES = new Set(["courtyard-wall"]);
 
-/** 水辺拡張部品(commit 19。骨格・詳細の性質検査から契約どおり除く) */
+/** 水辺拡張部品(契約「水辺建築の拡張」。骨格・詳細の性質検査から契約どおり除く) */
 function isWaterfront(p: Part): boolean {
   return p.params?.waterfront === 1;
 }
 
-/** 裏庭部品(Phase C タスク C6。fence(背面・側面)・shed の wall/gable)。
+/** 裏庭部品(契約「裏庭の性質」。fence(背面・側面)・shed の wall/gable)。
  *  骨格の壁体・屋根の型別カウント検査からは除き、footprint 帯検査では
  *  SITE_PART_TYPES と同じ流儀(親区画 1.2 帯。ただし連棟の共有裏庭に対応する
  *  ため Building.spanParcelIds の全区画のいずれかから 1.2 以内、へ一般化する。
@@ -79,37 +67,14 @@ function isBackyard(p: Part): boolean {
 }
 
 function buildUntilParcels(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  return model;
+  return buildUpTo(runParcels, seed, over);
 }
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = buildUntilParcels(seed, over);
-  runBuildings(model);
-  return model;
+  return buildUpTo(runBuildings, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
 /** 水辺込みの組(杭・張り出しの検証が空にならないよう Water を振る) */
 const COMBOS: [string, Partial<Params>][] = SEEDS.flatMap((seed) => [

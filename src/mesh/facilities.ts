@@ -1,5 +1,5 @@
 /**
- * 施設(Facility)のメッシュビルダー(Phase D タスク D2b)。
+ * 施設(Facility)のメッシュビルダー。
  * 部品語彙の正は docs/internal/contracts/facilities.md「施設部品の語彙」、
  * 色は art-direction 5.5節(基準色表は mesh/buildings.ts の
  * MATERIAL_COLORS と同期)。
@@ -10,9 +10,15 @@
  * (fence / plinth / gable 等)は mesh/buildings.ts の MERGE_HANDLERS を
  * そのまま流用し、経路・形状を建物と完全に一致させる。beam は建物では
  * インスタンス経路だが、施設(柵の柱・横木)ではマージへ寄せる(契約
- * 「新設 4 型はいずれもマージ経路」の柵の集約方針)。
+ * 「新設 4 型はいずれもマージ経路」の柵の集約方針)。door / window
+ * (風車・水車小屋の開口)も建物では INSTANCED_TYPES(共有プールの
+ * インスタンス経路)だが、施設はその共有プールを持たないため
+ * mesh/buildings.ts の `openingPart`(建物の `openingPieces` と同一の
+ * 枠寸法・色をマージバッファへ描く関数)へ寄せ、追加の draw call を
+ * 増やさない。
  *
- * 例外(D4): 回転する部品(`windmill-rotor` / `water-wheel`)は viewer が
+ * 例外(contracts/facilities.md「表示演出(風車・水車の回転)」): 回転する
+ * 部品(`windmill-rotor` / `water-wheel`)は viewer が
  * 表示演出として個別に回すため、部品 1 つ = 1 メッシュ(軸原点のローカル
  * ジオメトリ+親 Group で配置)とし、`userData.spin = { kind, phase }` で
  * viewer(src/viewer/spin.ts)へ引き渡す。回転の速度・向きは viewer が
@@ -29,6 +35,7 @@ import {
   face,
   makeXform,
   materialColor,
+  openingPart,
   type GeoBuffer,
   type L,
   type W,
@@ -215,9 +222,10 @@ function canopyPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
   );
 }
 
-// --- 回転部品(windmill-rotor / water-wheel。D4) ---
+// --- 回転部品(windmill-rotor / water-wheel) ---
 
-/** 帆の幅・長さ(D1b: 幅 1.05 × 長さ 3.5。桁の先端側へ寄せる) */
+/** 帆の幅・長さ(契約「windmill(風車)」造形の性質: 幅 1.05 × 長さ 3.5。
+ *  桁の先端側へ寄せる) */
 const SAIL_W = 1.05;
 const SAIL_LEN = 3.5;
 /** 桁の断面(0.16 角)とハブの半径・奥行き */
@@ -520,7 +528,7 @@ export function buildFacilities(model: WorldModel): THREE.Object3D[] {
         continue;
       }
       if (part.type === "pile") {
-        // 桟橋の杭・係船柱(D5)。建物側の pile はインスタンス経路だが、
+        // 桟橋の杭・係船柱。建物側の pile はインスタンス経路だが、
         // 施設では柵の beam と同じくマージへ寄せる(形状は同じ直方体。
         // 足元 = 水中 y −1.6 のため AO は beam と同じ控えめな値)
         boxPart(part, solid, base, BEAM_FOOT_AO);
@@ -528,6 +536,10 @@ export function buildFacilities(model: WorldModel): THREE.Object3D[] {
       }
       if (part.type === "canopy") {
         canopyPart(part, solid, base);
+        continue;
+      }
+      if (part.type === "door" || part.type === "window") {
+        openingPart(part, solid, base, part.type);
         continue;
       }
       if (part.type === "windmill-rotor") {

@@ -1,19 +1,14 @@
 /**
- * 段15「植生」(PHASE 6 commit 20。Phase D で段14 から繰り下げ)のテスト。
+ * 段15「植生」のテスト。
  * 契約は docs/internal/contracts/vegetation-summary.md(Vegetation 節)と
  * contracts/pipeline.md の段契約表。implementation-spec 7章の完了条件
  * (衝突なし・植生勾配・森リング・岸辺植生・draw call 予算・決定性)と、
- * Phase D の回避対象追加(施設 footprint。同契約「回避対象への facilities
+ * 回避対象追加(施設 footprint。同契約「回避対象への facilities
  * 追加」)に対応する。
  */
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import {
   createWaterField,
   distToPolyline,
@@ -21,19 +16,6 @@ import {
   polygonArea,
   polygonSignedDistance,
 } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
-import { runParcels } from "../src/pipeline/parcels";
-import { runBuildings } from "../src/pipeline/buildings";
-import { runLanes } from "../src/pipeline/lanes";
 import { runFacilities } from "../src/pipeline/facilities";
 import {
   GRASS_MAX,
@@ -43,37 +25,13 @@ import {
 } from "../src/pipeline/vegetation";
 import { buildVegetation, treeLumps } from "../src/mesh/vegetation";
 import { buildWorld } from "../src/mesh/build";
+import { buildUpTo, makeCached } from "./helpers";
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  runBuildings(model);
-  runLanes(model);
-  runFacilities(model);
-  runVegetation(model);
-  return model;
+  return buildUpTo(runVegetation, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
 /** trees + shrubs の全配置点 */
 function allPoints(model: WorldModel): { x: number; z: number }[] {
@@ -92,21 +50,7 @@ describe("段15 植生: 決定性", () => {
 
   it("段15 は vegetation 以外のフィールドに触れない", () => {
     const model = cached("everdusk-101");
-    const before = createEmptyWorldModel("everdusk-101", DEFAULT_PARAMS);
-    runDerive(before);
-    runGround(before);
-    runWater(before);
-    runSiting(before);
-    runNetwork(before);
-    runCanals(before);
-    runDensity(before);
-    runWards(before);
-    runPlazas(before);
-    runPaving(before);
-    runParcels(before);
-    runBuildings(before);
-    runLanes(before);
-    runFacilities(before);
+    const before = buildUpTo(runFacilities, "everdusk-101");
     const beforeJson = JSON.stringify({ ...before, vegetation: null });
     expect(JSON.stringify({ ...model, vegetation: null })).toBe(beforeJson);
   });
@@ -156,7 +100,7 @@ describe("段15 植生: 衝突なし(contracts の散布保証)", () => {
     });
   }
 
-  it("施設 footprint を回避する(縁 + 1.0。Phase D「回避対象への facilities 追加」)", () => {
+  it("施設 footprint を回避する(縁 + 1.0。vegetation-summary.md「回避対象への facilities 追加」)", () => {
     // settle 低で農地(field / pasture)が多く切られる世界を使う
     const model = cached("everdusk-101", { settlement: 0 });
     expect(model.facilities.length).toBeGreaterThan(0);
@@ -271,7 +215,7 @@ describe("段15 植生: 散布マスクの勾配(implementation-spec 7章)", () 
 
   it("Water Presence が岸辺植生を駆動する(岸沿いの低木が増える)", () => {
     const dry = cached("everdusk-101", { water: 30 });
-    // water=90 は使わない: タスク A4(水域横断禁止・陸上率0.95)後、everdusk-101
+    // water=90 は使わない: 水域横断禁止・陸上率0.95 の制約下では、everdusk-101
     // の水路本数・経路が変わり(密度場の水路近接ブーストが影響する
     // grid セルの取捨も連動して変わるため)、この seed 個体では water=90 の
     // 岸沿い低木数の差が縮む代表例になった。water=100 は差が十分safe

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import {
   createBoundaryRadius,
   createWaterField,
@@ -12,20 +7,13 @@ import {
   polygonArea,
 } from "../src/model/waterfield";
 import { makeRng } from "../src/rng";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
 import { runSiting } from "../src/pipeline/siting";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  return model;
+  return buildUpTo(runSiting, seed, over);
 }
 
 describe("siting: 決定性", () => {
@@ -75,7 +63,7 @@ describe("siting: 進入点", () => {
   });
 
   it("進入点は基準角+等間隔+揺らぎのみで決まり、対岸への強制移設(後処理)を行わない" +
-    "(contracts/network-plaza.md Phase A 註記)", () => {
+    "(contracts/network-plaza.md「道路網の性質」entryPoints 節)", () => {
     // water=0 では水域が存在せず nudgeToLand も発火しないため、
     // 進入点は「基準角+等間隔+揺らぎ」の素の式と厳密に一致するはずである。
     // もし対岸移設のような後処理が残っていれば、水域が無くても

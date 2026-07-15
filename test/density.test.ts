@@ -1,17 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import { fieldCellIndex, sampleFieldGrid } from "../src/model/fieldgrid";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
 import {
   createDensityDecay,
   protoDensityAt,
@@ -20,19 +9,12 @@ import {
   URBANITY_EDGE0,
   URBANITY_THRESHOLD,
 } from "../src/pipeline/density";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  return model;
+  return buildUpTo(runDensity, seed, over);
 }
 
 describe("density: 決定性", () => {
@@ -118,7 +100,7 @@ describe("density: FieldGrid 実体(contracts/network-plaza.md Density 節)", ()
   });
 });
 
-describe("density: street 近接ブースト(Phase B。届く距離 10・強さ 0.16)", () => {
+describe("density: street 近接ブースト(届く距離 10・強さ 0.16)", () => {
   it("street 上の値が、道路近接ブーストを除いた proto-density より高い(同一地点での比較)", () => {
     // 「近い点 vs 遠い点」の比較は、2点間で中心距離(centerTerm)自体が
     // 変わってしまい、ブースト(最大 0.16)より centerTerm の変化が大きい
@@ -151,7 +133,7 @@ describe("density: street 近接ブースト(Phase B。届く距離 10・強さ 
   });
 });
 
-describe("zoning: 市街度 FieldGrid(contracts/network-plaza.md Density 節 zoning。Phase B)", () => {
+describe("zoning: 市街度 FieldGrid(contracts/network-plaza.md Density 節 zoning)", () => {
   it("解像度 64・張り size×1.1・値域 0〜1・決定性(density.primary と同じ張り)", () => {
     for (const seed of SEEDS) {
       const model = build(seed);

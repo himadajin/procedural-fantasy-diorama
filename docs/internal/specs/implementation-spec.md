@@ -62,9 +62,12 @@ src/
   rng/            決定論的乱数(1.4節)
   model/          WorldModel 型定義(1.5節)
   pipeline/       生成パイプライン(Three.js非依存の純関数群)
-    ground.ts   water.ts    siting.ts   network.ts
-    canals.ts   density.ts  wards.ts    plazas.ts
-    parcels.ts  buildings.ts vegetation.ts summary.ts
+    derive.ts    ground.ts    water.ts     siting.ts
+    network.ts   streets.ts   canals.ts    density.ts
+    wards.ts     plazas.ts    paving.ts    parcels.ts
+    buildings.ts center.ts    lanes.ts     facilities.ts
+    vegetation.ts summary.ts  run.ts       steps.ts
+    gallery.ts   noise.ts
   mesh/           メッシュビルダー(WorldModel → Three.js)
   viewer/         orbitカメラ、固定ライティング、空、時間演出
   ui/             パネル、スライダー、インジケーター、サマリー
@@ -81,6 +84,8 @@ ESLint の import 制約で機械化する。
 
 ### 1.3 生成パイプラインの段階
 
+段構成(段番号・モジュール・読み書きフィールド)の正は
+`../contracts/pipeline.md`「パイプライン段契約」であり、以下は概要である。
 大域から局所へ、以下の順で確定していく。後段は前段の結果のみに依存する。
 地面は平坦であり、heightfield や起伏の生成は行わない。
 
@@ -89,18 +94,22 @@ ESLint の import 制約で機械化する。
 3. 水系: 湖・池の平面計画、水面データ(水路は大域計画の段で確定)
 4. 立地評価: 主中心の位置決定、中心建築の予定地・占有範囲、
    外縁の進入点の決定(正面方向と高さ目安は広場確定後に決める)
-5. 道路網: コストベース経路探索、橋の確定、幹線の自己組織化
+5. 道路網: コストベース経路探索、橋の確定、幹線の自己組織化。
+   後半サブフェーズで幹線から発芽する二次街路(street)も成長させる
 6. 水路: 湖・池から分岐して中心域を通る水路チャネルの計画、橋の追加
 7. 一次密度場: 中心からの距離、道路近接、Settlement Pressure から構成
-   (結界に依存しない)
+   (結界に依存しない。市街度ゾーニングも算出)
 8. 結界計画: 結界環・魔導塔・結界門・聖域・魔法灯・浮遊要素の計画
    (一次密度場の等値線を使う)
 9. 広場: 中心前・結界門前・橋詰め・交差点の空地確定。
    中心建築の正面方向・高さ目安をここで確定する
-10. 区画: 一次密度場に結界内ブーストを加えた最終密度場で敷地を選別
-11. 建物: 役割決定 → footprint → 建築文法による部品展開
-12. 植生: マスクベースの散布
-13. サマリー統計の算出
+10. 舗装: 道路・水路・広場沿いの舗装帯を材質ゾーンへ上書き
+11. 区画: 一次密度場に結界内ブーストを加えた最終密度場で敷地を選別
+12. 建物: 役割決定 → footprint → 建築文法による部品展開(中心建築を含む)
+13. 小道: 建物裏手の小道・水路沿いの岸沿い道を道路網へ追記
+14. 施設: 畑・牧草地・井戸・屋台・風車・水車・桟橋を配置
+15. 植生: マスクベースの散布
+16. サマリー統計の算出
 
 ### 1.4 決定論的乱数
 
@@ -876,6 +885,9 @@ Node上のVitestでそのままテストできる。
     サマリーの「複雑度の目安」へ統合または縮退させる(1.10節)
   - 目標: 中級スマホ相当で操作時30fps以上、デフォルトパラメータの
     生成時間5秒以内、生成中もUI応答維持
+  - ビルド: three.js に起因する単一チャンク約770KB(gzip 約220KB)の
+    Vite サイズ警告は容認済みとする(manualChunks によるチャンク分割は
+    対象外のスコープ)
 - メモリ: 再生成時のgeometry/material/texture(生成物なし想定だが念のため)の
   dispose漏れゼロ。連続20回再生成でメモリが単調増加しないこと
 - 総合検証(`design.md` の成立条件チェックリスト):
