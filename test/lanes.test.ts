@@ -1,15 +1,10 @@
 /**
- * 段13「小道」(PHASE 4b commit 15)のテスト。
+ * 段13「小道」のテスト。
  * 契約は docs/internal/contracts/network-plaza.md(Network 節「小道の性質」・ground-water.md
  * ZoneMask 節)と contracts/pipeline.md の段契約表。
  */
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import {
   createWaterField,
   distToPolyline,
@@ -17,56 +12,22 @@ import {
 } from "../src/model/waterfield";
 import { pathLength, pointAlong } from "../src/model/geometry";
 import { ZONE_KINDS, sampleZoneMask } from "../src/model/zonemask";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
-import { runParcels } from "../src/pipeline/parcels";
 import { runBuildings } from "../src/pipeline/buildings";
 import { LANE_WIDTH, runLanes } from "../src/pipeline/lanes";
+import { buildUpTo, makeCached } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 const PAVED = ZONE_KINDS.indexOf("paved");
 
 function buildUntilBuildings(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  runBuildings(model);
-  return model;
+  return buildUpTo(runBuildings, seed, over);
 }
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = buildUntilBuildings(seed, over);
-  runLanes(model);
-  return model;
+  return buildUpTo(runLanes, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
 function lanesOf(model: WorldModel) {
   return model.network.edges.filter((e) => e.class === "lane");
@@ -171,15 +132,14 @@ describe("lanes: Settlement 20/55/90 で小道量が単調に変わる", () => {
 });
 
 describe("lanes: 衝突制約(contracts Network 節「小道の性質」)", () => {
-  it("小道は水域(河川・湖・水路)・建物・広場・境界外と衝突しない", () => {
+  it("小道は水域(湖・池・水路)・建物・広場・境界外と衝突しない", () => {
     for (const seed of SEEDS) {
       for (const over of [{}, { water: 70 }, { settlement: 90 }]) {
         const model = cached(seed, over);
-        const field = createWaterField(
-          model.ground.boundary,
-          model.water.rivers,
-          model.water.lakes,
-        );
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
         for (const lane of lanesOf(model)) {
           const total = pathLength(lane.path);
           for (let s = 0; s <= total; s += 1.5) {

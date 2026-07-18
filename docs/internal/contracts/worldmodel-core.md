@@ -34,7 +34,7 @@ WorldModel は生成パイプラインの出力であり、メッシュビルダ
 ```ts
 type Vec2 = { x: number; z: number };          // xz平面上の点
 type Polygon = Vec2[];                          // 閉多面形。時計回り。自己交差なし
-type Spline = { points: Vec2[]; width: number } // 中心線+幅(川・水路・道路リボンの元)
+type Spline = { points: Vec2[]; width: number } // 中心線+幅(水路・道路リボンの元)
 ```
 
 ## WorldModel
@@ -45,16 +45,45 @@ interface WorldModel {
   ground: Ground;
   water: Water;
   density: Density;
+  zoning: FieldGrid | null;     // 市街度(urbanity)。段7 が書く。Phase D が消費(Phase B)
   network: Network;
   plazas: Plaza[];
   centerPlan: CenterPlan;
   wards: Wards;
   parcels: Parcel[];
   buildings: Building[];
+  facilities: Facility[];       // 施設(畑・牧草地・井戸・屋台・風車/水車・桟橋)。段14「施設」が書く(Phase D。植生・サマリーは段15・16へ繰り下げ)
   vegetation: Vegetation;
   summary: Summary;
 }
 ```
+
+> **Phase B 註記**(`plans/2026-07-12-worldgen-rework-roads.md`): 上記の
+> `zoning` フィールド、および下記 Derived の `entryPointCount` 新式・
+> `streetBudget` は Phase B の決定であり、タスク B2(entryPointCount)・
+> B3(streetBudget)・B5(zoning)で実装済み(2026-07-12)。`zoning` の
+> スキーマ・算出規則は [network-plaza.md](network-plaza.md)「Density 節
+> zoning」を参照。
+
+> **Phase C 註記**(`plans/2026-07-12-worldgen-rework-layout.md`):
+> `Parcel.groupId` / `Building.spanParcelIds` のスキーマは
+> [buildings.md](buildings.md)「Parcel / Building」節が正であり、本書は
+> 参照のみを持つ(スキーマ定義は buildings.md に 1 箇所だけ置く方針。
+> 本索引冒頭の規約に従う)。実装はタスク C2(groupId)・C5
+> (spanParcelIds)で追いつく。
+
+> **Phase D 註記**(`plans/2026-07-14-worldgen-rework-facilities.md`。
+> タスク D1a): 上記 `facilities` フィールドの `Facility` スキーマは
+> [facilities.md](facilities.md) が正であり、本書は参照のみを持つ
+> (定義は facilities.md に 1 箇所だけ置く方針。本索引冒頭の規約に従う)。
+> `Parcel.kind`(`"residential" | "farmland"`。既定 `"residential"`)の
+> スキーマも同じ方針で [buildings.md](buildings.md)「Parcel / Building」節
+> (Parcel interface)が正であり、本書には追加しない。実装はタスク
+> D2a(`facilities` フィールド・`Parcel.kind` とも導入。この時点では
+> `facilities` は常に空配列、`Parcel.kind` は常に `"residential"`)で
+> 追いつく。それまでコードは `facilities` フィールドを持たず、
+> `Parcel.kind` の区別も持たない(全区画が現行仕様どおり residential 相当
+> として動作する)。
 
 ### Meta(導出設定。PHASE 2〜)
 
@@ -72,19 +101,30 @@ interface Params {
 
 `Derived` は implementation-spec 1.6節の全マッピングを表す。
 各フィールドは駆動パラメータに対して単調な写像とし、seed 揺らぎは
-`entryPointCount`・`riverCount` の丸め閾値にのみ使う
-(`makeRng(seed, "derive")`。消費数・消費順は入力に依らず固定)。
+`entryPointCount`・`pondCount` の丸め閾値にのみ使う
+(`makeRng(seed, "derive")`。消費数 2(entryJitter・pondJitter)・
+消費順は入力に依らず固定)。
 後続PHASEが消費する値も含め、導出は PHASE 2 で完成させる。
 draw call 予算等の描画側の規律は導出設定ではなく描画側の定数とする。
+
+> **Phase A 註記**(`plans/2026-07-11-worldgen-rework-water.md`): 下記の
+> Water Presence 駆動群(旧 `riverCount` / `riverWidth` → `pondCount` /
+> `pondArea` の追加、`lakeChance` / `lakeArea` の数式改訂)は Phase A の
+> 決定であり、実装はタスク A3 で追いつく。それまでコードは旧仕様
+> (`riverCount` / `riverWidth` と旧数式、seed 揺らぎ名 `riverJitter`)の
+> まま動作する(`riverJitter` は `pondJitter` に読み替える)。
 
 ```ts
 interface Derived {
   // --- World Scale 駆動 ---
   worldSize: number;         // ワールド一辺の実寸。240〜560
-  entryPointCount: number;   // 外縁の進入点の数。2〜4(整数。閾値に seed 揺らぎ)
+  entryPointCount: number;   // 外縁の進入点の数。2〜5(整数。閾値に seed 揺らぎ。Phase B で
+                            // 2〜4 から拡張。= clamp(round(2 + 2.8×scale + entryJitter), 2, 5))
   roadBudget: number;        // 道路網の総延長予算(実寸)。worldSize × 2.2〜4.0
   marginWidth: number;       // 外縁余白(森・草地帯)の厚み。18〜48
-  parcelCountMax: number;    // 区画数の上限。60〜260(整数)
+  parcelCountMax: number;    // 区画数の上限。60〜340(整数)。Phase B(B6)で
+                            // Settlement 連動を追加(提案値。B7 検収で再調整しうる)。
+                            // = round(60 + 200×scale + 80×settle)
 
   // --- Settlement Pressure 駆動 ---
   densityPeak: number;       // 密度場の中心ピーク値。0.55〜1.0
@@ -93,6 +133,13 @@ interface Derived {
   parcelSize: number;        // 平均敷地間口。16〜7(高いほど狭小・高密)
   laneAmount: number;        // 小道(建物間の細い道)の生成量。0〜1
   floorsBias: number;        // 建物の平均階数への弱い正の寄与。0〜0.6
+  streetBudget: number;      // 二次街路(street)の総弧長予算(実寸)。Phase B(提案値。
+                            // B7 検収で再調整しうる)。
+                            // = worldSize × (0.35 + 2.35×settle) × (0.55 + 0.9×scale)。
+                            // Settlement Pressure の主駆動先(worldSize/scale にも連動する
+                            // 複合式)。B6 で Settlement=0 の基礎係数を 0.5→0.35 へ
+                            // 引き下げ(寒村の街路過多を是正。Settlement=100 側は
+                            // 2.7 で不変)。network-plaza.md「二次街路(street)の有機成長」参照
 
   // --- Prosperity 駆動 ---
   wallTier: number;          // 壁材の階層(掘立→木組み漆喰→石造→切石)。0〜3 連続
@@ -102,12 +149,16 @@ interface Derived {
   tidiness: number;          // 整い(建物の傾き・沈み込みノイズの逆数)。0〜1
 
   // --- Water Presence 駆動 ---
-  riverCount: number;        // 主河川の本数。0〜2(整数。閾値に seed 揺らぎ。Water 0 で必ず 0)
-  riverWidth: number;        // 川幅。5〜16(本数 0 でも連続値として保持し、閾値付近の連続変化に使う)
-  lakeChance: number;        // 湖の生成確率。0〜1(Water 0 で 0)
-  lakeArea: number;          // 湖の目標面積(箱庭面積比)。0.04〜0.18
+  pondCount: number;         // 池の数。0〜4(整数。閾値に seed 揺らぎ。Water 0 で必ず 0)
+                            // = clamp(round(3.4×water − 0.25 + pondJitter), 0, 4)
+  pondArea: number;          // 池1個あたりの目標面積(箱庭面積比)。= lakeArea × 0.18
+  lakeChance: number;        // 湖の生成確率。0〜1(Water 0 で 0)。= clamp(1.5×water − 0.2, 0, 1)
+  lakeArea: number;          // 湖の目標面積(箱庭面積比)。0.05〜0.21。= 0.05 + 0.16×water
   waterAreaCap: number;      // 水域合計面積の上限(箱庭面積比)。0.35 固定
   canalScore: number;        // 水路発火スコア = Water×(0.5+0.5×Settlement)。0〜1。0.35 以上で発火
+  canalWidth: number;        // 水路の幅。= clamp(1.75 + 3.85×water, 2.2, 5)。
+                            // 旧仕様(河川の最終幅 × 0.35)と全パラメータ 50 で等価。
+                            // 面積クリップとは連動しない
   marshAmount: number;       // 湿地マスクの広さ。0〜1
   sandbarAmount: number;     // 砂洲の広さ。0〜1
   watersideRate: number;     // 水辺建築・橋詰め建築・杭基礎の採択確率。0〜1
@@ -134,4 +185,12 @@ interface Derived {
   skylineRatio: number;      // スカイライン倍率。1.8〜3.5(PHASE 5a のアサーション基準)
 }
 ```
+
+> **Phase B 判断**(street の幅・grade・urbanity 閾値を Derived に置かない
+> 理由): street の幅(2.2)・grade 補正(`max(0, roadGrade − 0.2)`)、
+> および urbanity の市街ゾーン閾値(0.45)・street 成長閾値(0.22)は、
+> いずれもパラメータに連動しない固定の**契約定数**であり(main/connector
+> の幅・lane の格下げ幅が Derived を経由せず network-plaza.md に直接
+> 定数として書かれているのと同じ扱い)、Derived には追加しない。
+> Derived に追加するのは、パラメータに連動する `streetBudget` のみ。
 

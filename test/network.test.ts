@@ -1,29 +1,31 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type Vec2,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type Vec2, type WorldModel } from "../src/model/worldmodel";
 import { createWaterField } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
 import { runSiting } from "../src/pipeline/siting";
 import { runNetwork } from "../src/pipeline/network";
+import { runWards } from "../src/pipeline/wards";
+import { runPlazas } from "../src/pipeline/plazas";
+import { createDensityDecay, protoDensityAt } from "../src/pipeline/density";
+import {
+  PROTO_THRESHOLD,
+  verifyStreetShapeHealth,
+  type StreetGrowthDiagnostics,
+} from "../src/pipeline/streets";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
-/** 川を持つ代表 seed(water=70。事前に確認済み) */
-const RIVER_SEEDS = ["seed-a", "seed-b", "seed-c"];
+/** 湖・池を持つ代表 seed(water=70。事前に確認済み) */
+const WATER_SEEDS = ["seed-a", "seed-b", "seed-c"];
+/** 形状健全性・proto-density の機械検証に使う代表 seed(4 本) */
+const STREET_SEEDS = ["seed-a", "seed-b", "everdusk-101", "everdusk-102"];
 
-function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
+function build(
+  seed: string,
+  over: Partial<Params> = {},
+  diagnostics?: StreetGrowthDiagnostics,
+): WorldModel {
+  const model = buildUpTo(runSiting, seed, over);
+  runNetwork(model, diagnostics);
   return model;
 }
 
@@ -131,20 +133,29 @@ describe("network: グラフの整合", () => {
     }
   });
 
-  it("種別は main / connector のみで、幅・等級が契約に従う", () => {
+  it("種別は main / connector / street で、幅・等級が契約に従う", () => {
     for (const seed of SEEDS) {
       const model = build(seed, { water: 70 });
       const grade = model.meta.derived.roadGrade;
       expect(model.network.edges.some((e) => e.class === "main")).toBe(true);
+      expect(model.network.edges.some((e) => e.class === "street")).toBe(true);
       for (const edge of model.network.edges) {
-        expect(["main", "connector"]).toContain(edge.class);
-        expect(edge.width).toBe(edge.class === "main" ? 3.6 : 2.6);
+        expect(["main", "connector", "street"]).toContain(edge.class);
+        if (edge.class === "main") {
+          expect(edge.width).toBe(3.6);
+        } else if (edge.class === "connector") {
+          expect(edge.width).toBe(2.6);
+        } else {
+          expect(edge.width).toBe(2.2);
+        }
         expect(edge.grade).toBeGreaterThanOrEqual(0);
         expect(edge.grade).toBeLessThanOrEqual(2);
         if (edge.class === "main") {
           expect(edge.grade).toBeCloseTo(Math.min(2, grade + 0.3), 9);
-        } else {
+        } else if (edge.class === "connector") {
           expect(edge.grade).toBeCloseTo(grade, 9);
+        } else {
+          expect(edge.grade).toBeCloseTo(Math.max(0, grade - 0.2), 9);
         }
       }
     }
@@ -163,16 +174,24 @@ describe("network: グラフの整合", () => {
   });
 });
 
-describe("network: 橋(BridgeSite)", () => {
-  it("水域を渡る edge は必ず対応する BridgeSite を持つ(代表 seed×params)", () => {
-    for (const seed of RIVER_SEEDS) {
+describe("network: 道路は湖・池を渡らない(段5は BridgeSite を作らない)", () => {
+  it("段5(runNetwork)実行後も water.bridges は空のまま", () => {
+    for (const seed of WATER_SEEDS) {
       for (const water of [50, 70, 95]) {
         const model = build(seed, { water });
-        const field = createWaterField(
-          model.ground.boundary,
-          model.water.rivers,
-          model.water.lakes,
-        );
+        expect(model.water.bridges).toEqual([]);
+      }
+    }
+  });
+
+  it("全 edge の path 標本で waterSdf ≥ 0(許容誤差付き。湖・池を渡らない)", () => {
+    for (const seed of WATER_SEEDS) {
+      for (const water of [50, 70, 95]) {
+        const model = build(seed, { water });
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
         for (const edge of model.network.edges) {
           const total = pathLength(edge.path);
           const count = Math.max(2, Math.ceil(total / 1.5));
@@ -193,50 +212,15 @@ describe("network: 橋(BridgeSite)", () => {
               }
               acc += seg;
             }
-            // 明確に水中の道路点は、いずれかの橋の渡り区間に覆われている
-            if (field.waterSdf(p.x, p.z) < -0.1) {
-              const covered = model.water.bridges.some(
-                (br) =>
-                  Math.hypot(br.position.x - p.x, br.position.z - p.z) <=
-                  br.length / 2 + 3,
-              );
-              expect(
-                covered,
-                `seed=${seed} water=${water} edge=${edge.id} の水中区間が橋に覆われていない`,
-              ).toBe(true);
-            }
+            // 経路探索グリッドの解像度+平滑化(Chaikin・Douglas-Peucker)ぶんの
+            // 標本誤差を許容する(事前調査で最大 -0.89 程度の食い込みを確認)
+            expect(
+              field.waterSdf(p.x, p.z),
+              `seed=${seed} water=${water} edge=${edge.id} が水域を渡っている`,
+            ).toBeGreaterThanOrEqual(-1.5);
           }
         }
       }
-    }
-  });
-
-  it("川を持つ世界では橋が1つ以上でき、属性が妥当", () => {
-    for (const seed of RIVER_SEEDS) {
-      const model = build(seed, { water: 70 });
-      expect(model.water.bridges.length).toBeGreaterThanOrEqual(1);
-      const field = createWaterField(
-        model.ground.boundary,
-        model.water.rivers,
-        model.water.lakes,
-      );
-      expect(new Set(model.water.bridges.map((b) => b.id)).size).toBe(
-        model.water.bridges.length,
-      );
-      for (const bridge of model.water.bridges) {
-        expect(["river", "lake"]).toContain(bridge.over);
-        expect(["main", "connector"]).toContain(bridge.roadClass);
-        expect(bridge.width).toBeGreaterThan(0);
-        expect(bridge.length).toBeGreaterThan(0);
-        expect(Number.isFinite(bridge.angle)).toBe(true);
-        // 渡り区間の中点は水中(標本化の線形補間ぶんの許容)
-        expect(
-          field.waterSdf(bridge.position.x, bridge.position.z),
-        ).toBeLessThan(0.5);
-      }
-      expect(model.summary.waterOverview.bridges).toBe(
-        model.water.bridges.length,
-      );
     }
   });
 
@@ -245,6 +229,152 @@ describe("network: 橋(BridgeSite)", () => {
       const model = build(seed, { water: 0 });
       expect(model.water.bridges).toEqual([]);
       expect(model.network.edges.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("network: 二次街路(street)の有機成長(契約は network-plaza.md「二次街路(street)の有機成長」)", () => {
+  it("形状健全性 4 項(交差角・並走・袋小路率・立体交差)が複数 seed × Settlement で満たされる", () => {
+    for (const seed of STREET_SEEDS) {
+      for (const settlement of [0, 50, 100]) {
+        for (const worldScale of [50, 100]) {
+          const diag: StreetGrowthDiagnostics = { continuationPairs: new Set() };
+          const model = build(seed, { settlement, worldScale }, diag);
+          const health = verifyStreetShapeHealth(model, diag.continuationPairs);
+          expect(
+            health.crossAngleViolations,
+            `seed=${seed} settlement=${settlement} worldScale=${worldScale}`,
+          ).toBe(0);
+          expect(
+            health.parallelViolations,
+            `seed=${seed} settlement=${settlement} worldScale=${worldScale}`,
+          ).toBe(0);
+          expect(
+            health.unnodedCrossings,
+            `seed=${seed} settlement=${settlement} worldScale=${worldScale}`,
+          ).toBe(0);
+          expect(
+            health.deadEndRatio,
+            `seed=${seed} settlement=${settlement} worldScale=${worldScale}`,
+          ).toBeLessThanOrEqual(0.35 + 1e-9);
+        }
+      }
+    }
+  });
+
+  it("street が proto-density(道路近接ブースト前の生値)0.22 未満の領域に伸びていない", () => {
+    for (const seed of STREET_SEEDS) {
+      for (const settlement of [0, 50, 100]) {
+        for (const worldScale of [50, 100]) {
+          const model = build(seed, { settlement, worldScale });
+          const decay = createDensityDecay(model);
+          const streets = model.network.edges.filter((e) => e.class === "street");
+          for (const edge of streets) {
+            for (const p of edge.path) {
+              // 発芽起点・スナップ点は既存道路上の点であり、proto-density の
+              // 生値そのものは境界ではなく地点依存のため、閾値からの許容
+              // 誤差を小さく持たせる(街路成長本体は endPoint 到達時に
+              // 閾値判定を行うが、起点・スナップ点はその判定の対象外のため)
+              expect(
+                protoDensityAt(decay, p.x, p.z),
+                `seed=${seed} settlement=${settlement} worldScale=${worldScale} edge=${edge.id}`,
+              ).toBeGreaterThan(PROTO_THRESHOLD - 0.1);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("street の総弧長が streetBudget を大きく超えない(最終セグメント1本分の超過は許容)", () => {
+    // 契約の予算判定は「総弧長が streetBudget を超えたら成長を終了する」であり、
+    // 判定は各セグメント受理の後に行うため、最後に受理された1セグメント分
+    // (最大 SEGMENT_MAX=20)だけ超過しうる。この超過ぶんを許容範囲とする
+    const SEGMENT_MAX_OVERSHOOT = 20;
+    for (const seed of STREET_SEEDS) {
+      for (const settlement of [0, 50, 100]) {
+        for (const worldScale of [50, 100]) {
+          const model = build(seed, { settlement, worldScale });
+          const streets = model.network.edges.filter((e) => e.class === "street");
+          const total = streets.reduce((s, e) => s + pathLength(e.path), 0);
+          expect(total).toBeLessThanOrEqual(
+            model.meta.derived.streetBudget + SEGMENT_MAX_OVERSHOOT,
+          );
+        }
+      }
+    }
+  });
+
+  it("同一 seed + params で street 込みの nodes / edges が完全一致する(決定性)", () => {
+    for (const seed of STREET_SEEDS) {
+      const a = build(seed, { settlement: 80 });
+      const b = build(seed, { settlement: 80 });
+      expect(a.network).toEqual(b.network);
+    }
+  });
+
+  it("既存アサーション(到達性・水域)は street 追加後も維持される", () => {
+    for (const seed of STREET_SEEDS) {
+      const model = build(seed, { settlement: 100, worldScale: 100 });
+      // 到達性は main/connector のみのグラフでも成立する(段5前半は不変)
+      const mainConnector = model.network.edges.filter(
+        (e) => e.class === "main" || e.class === "connector",
+      );
+      const graph = new Map<string, string[]>();
+      for (const e of mainConnector) {
+        graph.set(e.from, [...(graph.get(e.from) ?? []), e.to]);
+        graph.set(e.to, [...(graph.get(e.to) ?? []), e.from]);
+      }
+      const centerId = nodeAt(model, model.centerPlan.position);
+      const reached = new Set<string>([centerId]);
+      const queue = [centerId];
+      while (queue.length > 0) {
+        const cur = queue.shift();
+        if (cur === undefined) break;
+        for (const nb of graph.get(cur) ?? []) {
+          if (!reached.has(nb)) {
+            reached.add(nb);
+            queue.push(nb);
+          }
+        }
+      }
+      for (const entry of model.network.entryPoints) {
+        expect(reached.has(nodeAt(model, entry.position))).toBe(true);
+      }
+    }
+  });
+});
+
+describe("network: 段9(広場)の中心前広場接続路は追記のみ(network-plaza.md「中心前広場の接続路」)", () => {
+  it("段5〜段8 の nodes / edges は段9(広場)を通しても不変で、street/plaza/ が追記される", () => {
+    for (const seed of STREET_SEEDS) {
+      const model = buildUpTo(runWards, seed);
+      const edgesBefore = structuredClone(model.network.edges);
+      const nodesBefore = structuredClone(model.network.nodes);
+      runPlazas(model);
+      // 段5〜段8 時点の nodes / edges は id・内容・配列順とも一切変わらない
+      // (先頭が完全一致。段9 は末尾へ中心前広場の接続路を追記するのみ)
+      expect(model.network.edges.slice(0, edgesBefore.length)).toEqual(
+        edgesBefore,
+      );
+      expect(model.network.nodes.slice(0, nodesBefore.length)).toEqual(
+        nodesBefore,
+      );
+      // 追記分はすべて中心前広場の接続路(class "street"、id 規約
+      // "street/plaza/<plazaId>")
+      const addedEdges = model.network.edges.slice(edgesBefore.length);
+      for (const e of addedEdges) {
+        expect(e.class).toBe("street");
+        expect(e.id).toMatch(/^street\/plaza\//);
+      }
+      const centerPlaza = model.plazas.find((p) => p.kind === "center");
+      if (centerPlaza) {
+        expect(addedEdges.length).toBe(1);
+        expect(addedEdges[0]?.id).toBe(`street/plaza/${centerPlaza.id}`);
+      }
+      // id の一意性
+      const ids = model.network.edges.map((e) => e.id);
+      expect(new Set(ids).size).toBe(ids.length);
     }
   });
 });

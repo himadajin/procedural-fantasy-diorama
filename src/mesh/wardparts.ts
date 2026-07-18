@@ -1,6 +1,6 @@
 /**
  * 結界構造(結界壁・魔導塔・結界門・聖域)と魔法灯・浮遊要素の Part 展開
- * (PHASE 5b commit 17〜18。contracts/wards.md「結界構造の立体化」
+ * (contracts/wards.md「結界構造の立体化」
  * 「魔法灯・浮遊要素・橋の立体化」が正)。
  *
  * 設計判断: 展開は Wards 計画+derived から一意に決まる表示写像であり、
@@ -10,11 +10,11 @@
  * テストが three を経由せず機械検証できる(contracts/pipeline.md)。
  *
  * - 乱数ストリームは消費しない。個体差は位置ハッシュ由来、明滅・上下動の
- *   位相は安定 id の文字列ハッシュ由来(commit 18)
+ *   位相は安定 id の文字列ハッシュ由来
  * - 発光面積の正は pipeline/center.ts の glowPartArea を共用し、
  *   結界の取り分 glowAreaCap × 箱庭面積 × (1 − CENTER_GLOW_SHARE) 内で
  *   予算順(塔頂 → 門紋 → 聖域 → 境界標 → 魔法灯 → 浮遊水晶 →
- *   壁紋様 → 水上弧)に採択する(commit 18 改定の順)
+ *   壁紋様 → 水上弧)に採択する
  * - wardLevel の縮退は同一文法: 壁弧の歩行器 1 つが、wardLevel 1 では
  *   境界標(ward-stone)の点列を、2 以上では連続壁(ward-wall)を落とす
  * - 魔法灯 = 柱(lamp-post)+浮く火屋、浮遊要素 = 水晶(発光)/浮石。
@@ -54,7 +54,7 @@ const GATE_CLEAR_SCALE = 1.2;
 const GATE_LEG_W = 1.1;
 const GATE_HEAD = 1.6;
 const GATE_THICKNESS = 1.1;
-/** 魔法灯(PHASE 5b commit 18): 柱の寸法と火屋(浮く発光八面体) */
+/** 魔法灯: 柱の寸法と火屋(浮く発光八面体) */
 const LAMP_POST_W = 0.16;
 const LAMP_POST_H = 2.3;
 const LAMP_HEAD_W = 0.34;
@@ -90,8 +90,8 @@ function wardHash(x: number, z: number, salt: number): number {
 }
 
 /**
- * 発光八面体(魔法灯の火屋・浮遊水晶)/ 浮石のインスタンス
- * (PHASE 5b commit 18)。position は底面中心(単位形状 y 0〜1)。
+ * 発光八面体(魔法灯の火屋・浮遊水晶)/ 浮石のインスタンス。
+ * position は底面中心(単位形状 y 0〜1)。
  * phase は安定 id の文字列ハッシュ由来、amp は上下動のワールド振幅
  * (魔法灯は 0 = 静止)。時間はビューワーの uniform(WorldModel 非依存)。
  */
@@ -110,11 +110,11 @@ export interface WardExpansion {
   glowArea: number;
   /** 発光面積の予算(glowAreaCap × 箱庭面積 × 結界の取り分) */
   glowBudget: number;
-  /** 魔法灯の火屋(amp 0)。ward-glow-crystals へ(commit 18) */
+  /** 魔法灯の火屋(amp 0)。ward-glow-crystals へ */
   lampHeads: FloatInstance[];
-  /** 浮遊水晶(発光)。ward-glow-crystals へ(commit 18) */
+  /** 浮遊水晶(発光)。ward-glow-crystals へ */
   floatCrystals: FloatInstance[];
-  /** 浮石(非発光)。ward-floatstones へ(commit 18) */
+  /** 浮石(非発光)。ward-floatstones へ */
   floatStones: FloatInstance[];
 }
 
@@ -670,7 +670,7 @@ export function expandWardParts(model: WorldModel): WardExpansion {
     }
   }
 
-  // --- 魔法灯(柱+火屋。commit 18。予算順: 境界標の次・壁紋様より先) ---
+  // --- 魔法灯(柱+火屋。予算順: 境界標の次・壁紋様より先) ---
   // 火屋は柱天板の少し上に浮く発光八面体(ward-glow-crystals の
   // インスタンス。上下動なし)。予算不足で火屋を置けない灯は柱ごと置かない
   const lampMaterial = derived.roadGrade >= LAMP_STONE_GRADE ? "stone" : "wood";
@@ -696,7 +696,7 @@ export function expandWardParts(model: WorldModel): WardExpansion {
     );
   }
 
-  // --- 浮遊要素(水晶=発光 / 浮石=非発光。commit 18) --------------------
+  // --- 浮遊要素(水晶=発光 / 浮石=非発光) --------------------------------
   // basePosition は浮遊の中心(立体の底 = y − 高さ/2)。上下動は
   // ビューワーの時間 uniform、位相は floater.id のハッシュ由来。
   // 水晶が予算に収まらない場合は浮石へフォールバック(個数は保つ)

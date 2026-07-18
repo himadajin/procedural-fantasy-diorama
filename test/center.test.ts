@@ -1,14 +1,12 @@
 /**
- * PHASE 5a commit 16: 中心建築の拡張文法のテスト。
- * 契約は docs/internal/contracts/buildings.md「中心建築(PHASE 5a commit 16)」
+ * 中心建築の拡張文法のテスト。
+ * 契約は docs/internal/contracts/buildings.md「中心建築」
  * (スカイライン契約・4軸→骨格/装飾・発光の規律)、
- * 設計は implementation-spec 1.7節・PHASE 5a。
+ * 設計は implementation-spec 1.7節。
  */
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_PARAMS,
   FLOOR_HEIGHT,
-  createEmptyWorldModel,
   type Building,
   type Params,
   type Part,
@@ -16,17 +14,6 @@ import {
 } from "../src/model/worldmodel";
 import { polygonArea, polygonSignedDistance } from "../src/model/waterfield";
 import { polygonsOverlap } from "../src/model/geometry";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
-import { runParcels } from "../src/pipeline/parcels";
 import { runBuildings } from "../src/pipeline/buildings";
 import {
   CENTER_GLOW_SHARE,
@@ -34,10 +21,11 @@ import {
   glowPartArea,
   rankCenterAxes,
 } from "../src/pipeline/center";
+import { buildUpTo, makeCached } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
-/** 中心建築の追加語彙+再利用語彙(contracts「PHASE 5a commit 16 の追加語彙」) */
+/** 中心建築の追加語彙+再利用語彙(contracts/buildings.md「中心建築」の追加語彙) */
 const CENTER_PART_TYPES = new Set([
   "plinth",
   "wall",
@@ -59,32 +47,10 @@ const CENTER_PART_TYPES = new Set([
 const GLOW_TYPES = new Set(["crystal", "sigil", "glow-window"]);
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  runBuildings(model);
-  return model;
+  return buildUpTo(runBuildings, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
 function center(model: WorldModel): Building {
   const b = model.buildings.find((x) => x.role === "center");
@@ -104,7 +70,7 @@ function peripheralTop(model: WorldModel): number {
   return top;
 }
 
-/** 4類型の組み合わせ(implementation-spec PHASE 5a の完了条件) */
+/** 4類型の組み合わせ(implementation-spec「中心建築」節の完了条件) */
 const ARCANE: Partial<Params> = { monumentality: 90, arcana: 90 };
 const AUTHORITY: Partial<Params> = {
   monumentality: 90,
@@ -195,14 +161,22 @@ describe("center: 基本契約(contracts「中心建築」)", () => {
 
   it("中庭(kind courtyard)は中心建築の footprint と重ならない", () => {
     let courtyards = 0;
-    for (const seed of SEEDS) {
+    // SEEDS に加え、中庭が確実に現れる代表 seed を補う
+    // (中庭の出現は centerPlan.position 経由で水域配置の影響を受けるため、
+    // 特定 seed×combo では偶然出現しないことがある。事前に確認済み)
+    for (const seed of [...SEEDS, "seed-c", "harbor-1"]) {
       for (const over of [{}, ARCANE, AUTHORITY, WATERSIDE, RUSTIC]) {
         const model = cached(seed, over);
         const b = center(model);
         for (const plaza of model.plazas) {
           if (plaza.kind !== "courtyard") continue;
-          courtyards++;
-          expect(plaza.id).toBe("plaza/courtyard");
+          // 中心建築の中庭は id "plaza/courtyard"(単一)。一般建物の中庭型
+          // クラスタは id "plaza/courtyard/<groupId>"
+          // を持ち、id 空間が分離しているため中心建築の courtyard 検証とは
+          // 区別する(契約「中庭型(courtyard)の性質」・network-plaza.md
+          // 「Plaza」節)。いずれも中心建築 footprint とは重ならないはず
+          if (plaza.id === "plaza/courtyard") courtyards++;
+          else expect(plaza.id).toMatch(/^plaza\/courtyard\/block\//);
           expect(polygonsOverlap(plaza.polygon, b.footprint)).toBe(false);
         }
       }
@@ -249,7 +223,7 @@ describe("center: スカイライン契約(周辺最高点 × skylineRatio)", ()
   });
 });
 
-describe("center: 4軸の組み合わせ分岐(implementation-spec 1.7節・PHASE 5a)", () => {
+describe("center: 4軸の組み合わせ分岐(implementation-spec 1.7節)", () => {
   it("(Mon高, Arc高) → 魔導系: 支配軸 arcane、水晶+細長い主塔+発光開口+紋様", () => {
     for (const seed of SEEDS) {
       const model = cached(seed, ARCANE);

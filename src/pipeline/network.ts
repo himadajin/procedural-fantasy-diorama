@@ -1,41 +1,29 @@
 /**
  * 段5「道路網」: グリッドA*で進入点→中心の主道と進入点間の補完路を引き、
- * 道路グラフ(nodes/edges)と橋(BridgeSite)を確定する。
+ * 道路グラフ(nodes/edges)を確定する。
  * データの正は docs/internal/contracts/network-plaza.md(Network 節)・ground-water.md(Water 節)、
- * 設計は implementation-spec 1.3節(段5)・PHASE 3・9節(リスクと対策)。
+ * 設計は implementation-spec 1.3節(段5)・9節(リスクと対策)。
  *
  * - コスト = 距離 + 低周波ノイズのコスト場(seed 駆動の格子ノイズ。
  *   乱数ストリームを消費せず、碁盤目化を防いで道を有機的に曲げる)
- *   + 水域横断コスト(橋適地=川幅が狭い場所のみ大幅減額)
+ *   + 水域横断コスト(湖・池は一律高コストとし、事実上の通行禁止にする。
+ *   水域は閉領域であり境界内で迂回できるため。contracts/network-plaza.md
+ *   Network 節「道路網の性質」)
  *   − 既存道路割引(先に引いた道を再利用させ、幹線を自己組織化させる)
  * - グリッド解像度は World Scale に応じて上限クリップし、A* は
  *   ヒューリスティック重み付きで近似最短を許容する(spec 9節)
- * - 橋適地が見つからない場合は水域幅の最も狭い点を強制的に橋適地とする
- * - 後PHASE(小道=4b、水路=段6)は nodes / edges / bridges への追記のみで
- *   行える構造(id はグリッドセル座標・中点座標由来で安定)
+ * - 道路(段5)は湖・池を渡らないため、本段は BridgeSite を抽出しない
+ *   (橋は段6「水路」と段8「結界計画」由来のみ。contracts/ground-water.md
+ *   「bridges の性質」)
+ * - 後段(小道=段13、水路=段6)は nodes / edges への追記のみで
+ *   行える構造(id はグリッドセル座標由来で安定)
  * - 本段は乱数ストリームを消費しない(A* もコスト場も決定論的)
  */
-import type {
-  BridgeSite,
-  RoadClass,
-  Vec2,
-  WorldModel,
-} from "../model/worldmodel";
-import {
-  createWaterField,
-  distToPolyline,
-  polygonSignedDistance,
-  type WaterField,
-} from "../model/waterfield";
+import type { RoadClass, Vec2, WorldModel } from "../model/worldmodel";
+import { createWaterField, waterBodies, type WaterField } from "../model/waterfield";
 import { fbm2D, noiseSeed } from "./noise";
-import {
-  bridgeBaseId,
-  chaikin,
-  claimId,
-  pathLength,
-  simplifyPath,
-  waterCrossings,
-} from "../model/geometry";
+import { chaikin, pathLength, simplifyPath } from "../model/geometry";
+import { growStreets, verifyStreetShapeHealth, type StreetGrowthDiagnostics } from "./streets";
 
 /** 経路探索グリッドの一辺セル数の下限・上限(spec 9節: 解像度の上限クリップ) */
 const GRID_MIN = 56;
@@ -58,16 +46,12 @@ const CONNECTOR_ROAD_DISCOUNT = 0.9;
 const NOISE_AMP = 0.9;
 /** ノイズコスト場の波長(ワールド一辺比) */
 const NOISE_WAVELENGTH_RATIO = 1 / 6;
-/** 水域横断の距離あたり追加コスト(幅広の水域) */
+/**
+ * 水域横断の距離あたり追加コスト。湖・池は迂回可能な閉領域のため、
+ * 橋適地の区別はせず一律高コストとして事実上の通行禁止にする
+ * (3.2節(5)。旧仕様の「幅の狭い水域=橋適地」は川の削除で撤廃)
+ */
 const WATER_COST_WIDE = 14;
-/** 水域横断の距離あたり追加コスト(橋適地=幅の狭い水域への減額後) */
-const WATER_COST_NARROW = 2.5;
-/** 橋適地とみなす水域幅(基準幅=最小の川幅 に対する倍率の上限) */
-const BRIDGE_WIDTH_RATIO = 3;
-/** 橋適地の suitability がこの値に届かないとき、最狭点を強制的に橋適地にする */
-const BRIDGE_FORCE_THRESHOLD = 0.5;
-/** 水域幅の計測上限(ワールド一辺比。これ以上は「渡れない」扱いの幅) */
-const WATER_WIDTH_CAP_RATIO = 0.35;
 /** 境界外セルの距離あたり追加コスト(道を箱庭の内側に保つ) */
 const OUTSIDE_COST = 6;
 /** 道路幅(実寸)。contracts/network-plaza.md Network 節 */
@@ -79,8 +63,6 @@ const MAIN_GRADE_BOOST = 0.3;
 const CONNECTOR_MIN_NEW_RATIO = 0.25;
 /** 経路間引き(Douglas–Peucker)の許容誤差(セル寸比) */
 const SIMPLIFY_EPS_RATIO = 0.6;
-/** 橋抽出の経路標本間隔の上限(実寸) */
-const BRIDGE_SAMPLE_STEP = 2;
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
@@ -122,109 +104,15 @@ interface CostField {
 }
 
 /**
- * セル中心の waterSdf 格子をバイリニア補間するサンプラー。
- * 水域幅の計測(橋適地の判定)にのみ使う近似で、橋の抽出は正確な
- * waterfield を使う。
+ * 水域(waterSdf < 0)のセルを一律高コストにし、事実上の通行禁止にする
+ * (3.2節(5)。湖・池は閉領域であり境界内で必ず迂回できるため、旧仕様の
+ * 「幅の狭い水域=橋適地」の区別は廃止した)。
  */
-function makeSdfSampler(
-  g: Grid,
-  sdf: Float64Array,
-): (x: number, z: number) => number {
-  return (x: number, z: number): number => {
-    const fx = clamp((x + g.half) / g.step - 0.5, 0, g.cells - 1);
-    const fz = clamp((z + g.half) / g.step - 0.5, 0, g.cells - 1);
-    const ix = Math.min(g.cells - 2, Math.floor(fx));
-    const iz = Math.min(g.cells - 2, Math.floor(fz));
-    const tx = fx - ix;
-    const tz = fz - iz;
-    const i00 = sdf[iz * g.cells + ix] ?? 0;
-    const i10 = sdf[iz * g.cells + ix + 1] ?? 0;
-    const i01 = sdf[(iz + 1) * g.cells + ix] ?? 0;
-    const i11 = sdf[(iz + 1) * g.cells + ix + 1] ?? 0;
-    const a = i00 + (i10 - i00) * tx;
-    const b = i01 + (i11 - i01) * tx;
-    return a + (b - a) * tz;
-  };
-}
-
-/**
- * 水域セルごとの横断幅を推定し、水域横断コストを factor へ加える。
- * 幅は waterSdf 勾配の両方向へ水際まで行進して測る(格子補間の近似)。
- * 橋適地(幅≦基準幅)は大幅減額し、見つからない場合は最狭点を
- * 強制的に橋適地とする(spec 9節のフォールバック)。
- */
-function addWaterCrossingCost(
-  g: Grid,
-  model: WorldModel,
-  wSdfGrid: Float64Array,
-  factor: Float64Array,
-  inWater: Uint8Array,
-): void {
-  const size = model.ground.size;
-  const n = g.cells * g.cells;
-  const sample = makeSdfSampler(g, wSdfGrid);
-  const cap = size * WATER_WIDTH_CAP_RATIO;
-  const stepLen = g.step * 0.5;
-
-  // 基準幅: 最小の川幅(川が無ければ湖のみ。既定 10)
-  let refWidth = Infinity;
-  for (const river of model.water.rivers) refWidth = Math.min(refWidth, river.width);
-  if (!Number.isFinite(refWidth)) refWidth = 10;
-
-  const march = (x: number, z: number, dx: number, dz: number): number => {
-    let d = 0;
-    while (d < cap) {
-      d += stepLen;
-      if (sample(x + dx * d, z + dz * d) >= 0) return d;
-    }
-    return cap;
-  };
-
-  const widths = new Float64Array(n).fill(Infinity);
-  let maxSuitability = 0;
-  let minWidth = Infinity;
-  let hasWater = false;
+function addWaterCrossingCost(factor: Float64Array, inWater: Uint8Array): void {
+  const n = factor.length;
   for (let c = 0; c < n; c++) {
     if (!inWater[c]) continue;
-    hasWater = true;
-    const p = cellCenter(g, c);
-    // 勾配(水際方向)。ゼロ勾配(広い水域の中央)は幅=上限扱い
-    const gx = sample(p.x + g.step, p.z) - sample(p.x - g.step, p.z);
-    const gz = sample(p.x, p.z + g.step) - sample(p.x, p.z - g.step);
-    const len = Math.hypot(gx, gz);
-    let width = cap * 2;
-    if (len > 1e-9) {
-      const dx = gx / len;
-      const dz = gz / len;
-      width = march(p.x, p.z, dx, dz) + march(p.x, p.z, -dx, -dz);
-    }
-    widths[c] = width;
-    minWidth = Math.min(minWidth, width);
-    const s = clamp(
-      (BRIDGE_WIDTH_RATIO * refWidth - width) /
-        ((BRIDGE_WIDTH_RATIO - 1) * refWidth),
-      0,
-      1,
-    );
-    maxSuitability = Math.max(maxSuitability, s);
-  }
-  if (!hasWater) return;
-
-  const forceNarrow = maxSuitability < BRIDGE_FORCE_THRESHOLD;
-  for (let c = 0; c < n; c++) {
-    if (!inWater[c]) continue;
-    const width = widths[c] ?? Infinity;
-    let s = clamp(
-      (BRIDGE_WIDTH_RATIO * refWidth - width) /
-        ((BRIDGE_WIDTH_RATIO - 1) * refWidth),
-      0,
-      1,
-    );
-    // フォールバック: 橋適地が無いときは水域幅の最も狭い帯を強制的に適地化
-    if (forceNarrow && width <= minWidth * 1.15) s = 1;
-    factor[c] =
-      (factor[c] ?? 1) +
-      WATER_COST_WIDE + (WATER_COST_NARROW - WATER_COST_WIDE) * s;
+    factor[c] = (factor[c] ?? 1) + WATER_COST_WIDE;
   }
 }
 
@@ -238,7 +126,6 @@ function buildCostField(
   const traversable = new Uint8Array(n);
   const factor = new Float64Array(n);
   const inWater = new Uint8Array(n);
-  const wSdfGrid = new Float64Array(n);
   const nSeed = noiseSeed(model.meta.seed, "network/cost");
   const wavelength = model.ground.size * NOISE_WAVELENGTH_RATIO;
 
@@ -246,14 +133,13 @@ function buildCostField(
     const p = cellCenter(g, c);
     const b = field.boundarySdf(p.x, p.z);
     const w = field.waterSdf(p.x, p.z);
-    wSdfGrid[c] = w;
     traversable[c] = b > -g.step ? 1 : 0;
     inWater[c] = w < 0 ? 1 : 0;
     let f = 1 + NOISE_AMP * fbm2D(nSeed, p.x / wavelength, p.z / wavelength, 3);
     if (b < 0) f += OUTSIDE_COST;
     factor[c] = f;
   }
-  addWaterCrossingCost(g, model, wSdfGrid, factor, inWater);
+  addWaterCrossingCost(factor, inWater);
   return { traversable, factor, inWater };
 }
 
@@ -394,57 +280,17 @@ interface RoadEdge {
 }
 
 /**
- * edge の path 沿いに waterSdf を標本化し、水域を渡る区間ごとに
- * BridgeSite を抽出する(標本化・水際補間は geometry.ts の waterCrossings)。
+ * パイプライン段の実体: network.nodes/edges を埋める(道路(段5)は湖・池を
+ * 渡らないため water.bridges は触らない)。
+ * `streetDiagnosticsOut` は任意(テスト・検収がstreetの継続ペア情報を
+ * 取り出すためのフック。省略時は内部で使い捨てる)。
  */
-function extractBridges(
-  edge: RoadEdge,
+export function runNetwork(
   model: WorldModel,
-  field: WaterField,
-  idCounts: Map<string, number>,
-): BridgeSite[] {
-  const bridges: BridgeSite[] = [];
-  for (const crossing of waterCrossings(
-    edge.path,
-    field.waterSdf,
-    BRIDGE_SAMPLE_STEP,
-  )) {
-    const p = crossing.position;
-    // over: 中点に最も近い水域要素で判定(canal は段6以降)
-    let riverDist = Infinity;
-    for (const river of model.water.rivers) {
-      riverDist = Math.min(
-        riverDist,
-        distToPolyline(p.x, p.z, river.points) - river.width / 2,
-      );
-    }
-    let lakeDist = Infinity;
-    for (const lake of model.water.lakes) {
-      lakeDist = Math.min(lakeDist, polygonSignedDistance(p.x, p.z, lake));
-    }
-    const over: BridgeSite["over"] = lakeDist < riverDist ? "lake" : "river";
-
-    bridges.push({
-      id: claimId(idCounts, bridgeBaseId(p)),
-      position: p,
-      angle: crossing.angle,
-      width: edge.width,
-      length: crossing.length,
-      over,
-      roadClass: edge.class,
-    });
-  }
-  return bridges;
-}
-
-/** パイプライン段の実体: network.nodes/edges と water.bridges を埋める */
-export function runNetwork(model: WorldModel): void {
+  streetDiagnosticsOut?: StreetGrowthDiagnostics,
+): void {
   const { derived } = model.meta;
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const g = makeGrid(model.ground.size);
   const cost = buildCostField(g, model, field);
   const n = g.cells * g.cells;
@@ -622,20 +468,21 @@ export function runNetwork(model: WorldModel): void {
 
   model.network.nodes = nodes;
   model.network.edges = edges;
+  // water.bridges は本段では触らない(道路は湖・池を渡らないため段5 は
+  // BridgeSite を抽出しない。橋は段6「水路」と段8「結界計画」由来のみ)
 
-  // 橋: 経路が水域を渡る区間を BridgeSite として抽出する
-  const bridgeIdCounts = new Map<string, number>();
-  const bridges: BridgeSite[] = [];
-  for (const edge of edges) {
-    bridges.push(...extractBridges(edge, model, field, bridgeIdCounts));
-  }
-  model.water.bridges = bridges;
+  // 段5後半処理: 幹線から発芽する二次街路(street)を成長させ、
+  // nodes/edges へ追記する(contracts/network-plaza.md
+  // 「二次街路(street)の有機成長」)。本段の乱数非消費部分(A*・コスト場)は
+  // 上記まで完了しており、ここから先のみ乱数を消費する
+  const streetDiagnostics = streetDiagnosticsOut ?? { continuationPairs: new Set<string>() };
+  growStreets(model, streetDiagnostics);
 
-  // サマリー(段13 の担当だが、中間PHASEでは部分的に埋める)
+  // サマリー(段13 の担当だが、本段でも street 込みの総延長を先取りして
+  // 埋める)
   let roadLength = 0;
-  for (const edge of edges) roadLength += pathLength(edge.path);
+  for (const edge of model.network.edges) roadLength += pathLength(edge.path);
   model.summary.scale.roadLength = roadLength;
-  model.summary.waterOverview.bridges = bridges.length;
 
   // パイプライン内アサーション: 違反は throw せず件数を console に出す
   // (implementation-spec 1.10節)
@@ -665,16 +512,35 @@ export function runNetwork(model: WorldModel): void {
   for (const c of entryCells) {
     if (!reached.has(nodeId(c))) assertionViolations++;
   }
-  // 2) 水域を渡る edge が必ず BridgeSite を持つ(抽出と同じ標本化で再検証)
-  const recheckCounts = new Map<string, number>();
-  let recheckTotal = 0;
+  // 2) 道路は湖・池を渡らない(全 edge の path 標本で waterSdf ≥ -1.5 を確認。
+  //    経路探索グリッドの量子化と平滑化による岸際のかすりは横断と見なさず
+  //    許容する。閾値は contracts/network-plaza.md「道路(段5)は湖・池を
+  //    渡らない」・test/network.test.ts と揃える)
   for (const edge of edges) {
-    recheckTotal += extractBridges(edge, model, field, recheckCounts).length;
+    for (const p of edge.path) {
+      if (field.waterSdf(p.x, p.z) < -1.5) assertionViolations++;
+    }
   }
-  if (recheckTotal !== bridges.length) assertionViolations++;
   if (assertionViolations > 0) {
     console.warn(
       `network: パイプライン内アサーション違反 ${assertionViolations} 件`,
+    );
+  }
+
+  // 3〜6) 二次街路(street)の形状健全性 4 項(契約と同じ閾値を
+  // network.test.ts・contracts/network-plaza.md「二次街路(street)の
+  // 有機成長」の三者で一致させる)。違反は throw せず件数を console に出す
+  const health = verifyStreetShapeHealth(model, streetDiagnostics.continuationPairs);
+  let streetHealthViolations = 0;
+  streetHealthViolations += health.crossAngleViolations;
+  streetHealthViolations += health.parallelViolations;
+  streetHealthViolations += health.unnodedCrossings;
+  if (health.deadEndRatio > 0.35 + 1e-9) streetHealthViolations++;
+  if (streetHealthViolations > 0) {
+    console.warn(
+      `network: street 形状健全性違反 ${streetHealthViolations} 件` +
+        `(交差角=${health.crossAngleViolations} 並走=${health.parallelViolations} ` +
+        `立体交差=${health.unnodedCrossings} 袋小路率=${health.deadEndRatio.toFixed(3)})`,
     );
   }
 }

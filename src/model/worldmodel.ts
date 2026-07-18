@@ -8,9 +8,6 @@
 import { createZoneMask, type ZoneMask } from "./zonemask";
 import type { FieldGrid } from "./fieldgrid";
 
-export { ZONE_KINDS, type ZoneKind, type ZoneMask } from "./zonemask";
-export type { FieldGrid } from "./fieldgrid";
-
 /** 水面の高さ(地面 y=0 より 0.6 低い。implementation-spec 1.8節) */
 export const WATER_SURFACE_Y = -0.6;
 /** 岸スカート下端(水面より 1.0 低い。implementation-spec 1.8節) */
@@ -30,7 +27,7 @@ export interface Vec2 {
 /** 閉多角形。時計回り。自己交差なし */
 export type Polygon = Vec2[];
 
-/** 中心線+幅(川・水路・道路リボンの元) */
+/** 中心線+幅(水路・道路リボンの元) */
 export interface Spline {
   points: Vec2[];
   width: number;
@@ -59,7 +56,7 @@ export const DEFAULT_PARAMS: Params = {
  * パラメータ→内部変数(implementation-spec 1.6節)。
  * フィールドの正は contracts/worldmodel-core.md(Meta 節)。
  * 各フィールドは駆動パラメータに対して単調な写像とし、seed 揺らぎは
- * entryPointCount・riverCount の丸め閾値にのみ使う(pipeline/derive.ts)。
+ * entryPointCount・pondCount の丸め閾値にのみ使う(pipeline/derive.ts)。
  */
 export interface Derived {
   // --- World Scale 駆動 ---
@@ -87,6 +84,13 @@ export interface Derived {
   laneAmount: number;
   /** 建物の平均階数への弱い正の寄与。0〜0.6 */
   floorsBias: number;
+  /**
+   * 二次街路(street)の総弧長予算(実寸。提案値)。
+   * = worldSize × (0.35 + 2.35×settle) × (0.55 + 0.9×scale)。
+   * Settlement Pressure の主駆動先(worldSize/scale にも連動する複合式)。
+   * network-plaza.md「二次街路(street)の有機成長」参照
+   */
+  streetBudget: number;
 
   // --- Prosperity 駆動 ---
   /** 壁材の階層(掘立→木組み漆喰→石造→切石)。0〜3 連続 */
@@ -101,18 +105,20 @@ export interface Derived {
   tidiness: number;
 
   // --- Water Presence 駆動 ---
-  /** 主河川の本数。0〜2(整数。閾値に seed 揺らぎ。Water 0 で必ず 0) */
-  riverCount: number;
-  /** 川幅。5〜16(本数 0 でも連続値として保持し、閾値付近の連続変化に使う) */
-  riverWidth: number;
+  /** 池の数。0〜4(整数。閾値に seed 揺らぎ。Water 0 で必ず 0) */
+  pondCount: number;
+  /** 池1個あたりの目標面積(箱庭面積比)。= lakeArea × 0.18 */
+  pondArea: number;
   /** 湖の生成確率。0〜1(Water 0 で 0) */
   lakeChance: number;
-  /** 湖の目標面積(箱庭面積比)。0.04〜0.18 */
+  /** 湖の目標面積(箱庭面積比)。0.05〜0.21 */
   lakeArea: number;
   /** 水域合計面積の上限(箱庭面積比)。0.35 固定 */
   waterAreaCap: number;
   /** 水路発火スコア = Water×(0.5+0.5×Settlement)。0.35 以上で発火 */
   canalScore: number;
+  /** 水路の幅。= clamp(1.75 + 3.85×water, 2.2, 5)。面積クリップとは連動しない */
+  canalWidth: number;
   /** 湿地マスクの広さ。0〜1 */
   marshAmount: number;
   /** 砂洲の広さ。0〜1 */
@@ -155,7 +161,8 @@ export interface Derived {
   upgradeRadius: number;
   /** 中心周辺の区画予約半径(centerFootprint 比)。1.2〜2.4 */
   parcelReserve: number;
-  /** スカイライン倍率。1.8〜3.5(PHASE 5a のアサーション基準) */
+  /** スカイライン倍率。1.8〜3.5(contracts/buildings.md「中心建築」
+   *  「スカイライン契約」節のアサーション基準) */
   skylineRatio: number;
 }
 
@@ -173,17 +180,19 @@ export function createEmptyDerived(): Derived {
     parcelSize: 0,
     laneAmount: 0,
     floorsBias: 0,
+    streetBudget: 0,
     wallTier: 0,
     roofTier: 0,
     roadGrade: 0,
     detailAmount: 0,
     tidiness: 0,
-    riverCount: 0,
-    riverWidth: 0,
+    pondCount: 0,
+    pondArea: 0,
     lakeChance: 0,
     lakeArea: 0,
     waterAreaCap: 0,
     canalScore: 0,
+    canalWidth: 0,
     marshAmount: 0,
     sandbarAmount: 0,
     watersideRate: 0,
@@ -216,7 +225,7 @@ export interface Meta {
 /**
  * 街中の水路(contracts/ground-water.md Water 節)。
  * waterfield・岸線・zoneMask には影響させない(護岸で縁取られた
- * 掘り込みチャネル。立体化は PHASE 3 commit 11)。
+ * 掘り込みチャネル。立体化は mesh/paving.ts の担当)。
  */
 export interface Canal extends Spline {
   /** "canal/<i>"。生成インデックス由来で安定 */
@@ -233,7 +242,8 @@ export interface Canal extends Spline {
 export interface ShoreLoop {
   /** "shore/<n>"。抽出順で安定 */
   id: string;
-  /** true=閉環(湖岸・中州)。false=外縁で切れる開いた岸線(川岸) */
+  /** true=閉環(湖岸・池岸・中州)。false=開いた岸線(境界そのものが水域境界を
+   *  兼ねる場合。湖・池は境界と独立した閉領域のため通常は true のみ) */
   closed: boolean;
   /** 岸線の点列(水際 y=0 のライン。隣接間隔はセル寸程度) */
   points: Vec2[];
@@ -241,7 +251,7 @@ export interface ShoreLoop {
   normals: Vec2[];
 }
 
-/** 岸線データ(岸スカート・水面の岸距離・後PHASEの水辺判定の元) */
+/** 岸線データ(岸スカート・水面の岸距離・後段の水辺判定の元) */
 export interface Shoreline {
   /** 岸線抽出グリッドのセル寸(≒ ground.size×1.1 / セル数) */
   cellSize: number;
@@ -263,7 +273,7 @@ export interface Ground {
   zoneMask: ZoneMask;
 }
 
-export type RoadClass = "main" | "connector" | "lane";
+export type RoadClass = "main" | "connector" | "street" | "lane";
 
 export interface BridgeSite {
   id: string;
@@ -271,13 +281,15 @@ export interface BridgeSite {
   angle: number;
   width: number;
   length: number;
-  over: "river" | "lake" | "canal";
+  over: "lake" | "pond" | "canal";
   roadClass: RoadClass;
 }
 
 export interface Water {
-  rivers: Spline[];
+  /** 湖(0〜1個)。景観のアンカーとなる大水面 */
   lakes: Polygon[];
+  /** 池(0〜4個)。散点的な小水面 */
+  ponds: Polygon[];
   canals: Canal[];
   bridges: BridgeSite[];
   shoreline: Shoreline;
@@ -286,7 +298,7 @@ export interface Water {
 export interface Density {
   /** 一次密度場(中心距離+道路近接+Settlement)。段7が埋める(それまで null) */
   primary: FieldGrid | null;
-  /** 最終密度場(一次+結界内ブースト)。PHASE 4a の担当(それまで null) */
+  /** 最終密度場(一次+結界内ブースト)。段11「区画」が埋める(それまで null) */
   final: FieldGrid | null;
 }
 
@@ -342,7 +354,11 @@ export interface Wards {
  * 段11「区画」が道路 edge 沿いの矩形敷地として埋める。
  */
 export interface Parcel {
-  /** "parcel/<roadEdgeId>/<L|R>/<slot>"。位置・edge 由来で安定 */
+  /**
+   * residential: "parcel/<roadEdgeId>/<L|R>/<slot>"。
+   * farmland: "parcel/<roadEdgeId>/<L|R>/farm<slot>"(専用の slot 空間。
+   * contracts/facilities.md)。いずれも位置・edge 由来で安定
+   */
   id: string;
   /** 接道する道路 edge の id */
   roadEdgeId: string;
@@ -352,10 +368,24 @@ export interface Parcel {
   frontEdge: [Vec2, Vec2];
   /** 正面方位(xz 偏角。敷地から接道 edge の中心線へ向かう方向) */
   facing: number;
-  /** 河川・湖の岸沿い(判定基準は contracts) */
+  /** 湖・池の岸沿い(判定基準は contracts) */
   waterside: boolean;
   /** 水路沿い(同) */
   canalside: boolean;
+  /**
+   * "block/<roadEdgeId>/<L|R>/<runIndex>"。区画グループ
+   * (同一 edge・同一側でスロット連番が連続する採択区画の並び。
+   * contracts/buildings.md「区画グループとクラスタパターン」)
+   */
+  groupId: string;
+  /**
+   * 区画の種別。既定 residential。
+   * farmland は農村ゾーン(zoning の urbanity < 0.45)の道路沿いに
+   * 追加で切り出される区画で、建物を持たず施設(field / pasture。
+   * contracts/facilities.md)を 1 件持つ。全単射契約(下記「連棟(rowhouse)
+   * の性質」節末尾)は residential 区画のみを対象とする
+   */
+  kind: "residential" | "farmland";
 }
 
 export type BuildingRole =
@@ -389,7 +419,7 @@ export interface Foundation {
   kind: "plinth" | "piles" | "stonebase";
   /** 基壇の立ち上がり高(y=0 から。Prosperity・役割駆動) */
   plinthHeight: number;
-  /** footprint が水面(河川・湖)上に張り出すか */
+  /** footprint が水面(湖・池)上に張り出すか */
   overWater: boolean;
   /** 基礎下端の y。陸上は 0、水上張り出しは -1.6(岸スカート下端) */
   bottomY: number;
@@ -398,8 +428,16 @@ export interface Foundation {
 export interface Building {
   /** "building/<parcelId の parcel/ 以降>"。区画由来で安定 */
   id: string;
-  /** 中心建築は null(centerPlan に立地。PHASE 5a) */
+  /** 中心建築は null(centerPlan に立地)。
+   *  一般建物は主区画(連棟は列の先頭) */
   parcelId: string | null;
+  /**
+   * 建物が帰属する全区画 id(先頭 = parcelId)。単棟は長さ 1(= [parcelId])、
+   * 連棟は列の全区画(先頭から順)。中心建築は parcelId が null のため
+   * 長さ 0(contracts/buildings.md「連棟(rowhouse)の性質」
+   * 「Parcel / Building」節)
+   */
+  spanParcelIds: string[];
   role: BuildingRole;
   /** 矩形/L字/T字。セットバック込み。時計回り・自己交差なし */
   footprint: Polygon;
@@ -409,12 +447,60 @@ export interface Building {
   floors: number;
   /** pitch は度数(50〜58。art-direction 6節) */
   roof: { type: "gable" | "hip" | "compound"; pitch: number };
-  /** 接地(段12の骨格データ。commit 12) */
+  /** 接地(段12「建物」の骨格データ) */
   foundation: Foundation;
-  /** 素材ID。展開は PHASE 4a commit 13 の担当(それまで空文字列) */
+  /** 素材ID(wall/roof/trim。contracts/buildings.md「Part の変換規約」) */
   materials: { wall: string; roof: string; trim: string };
-  /** 建築部品の展開結果。PHASE 4a commit 13 の担当(それまで空配列) */
+  /** 建築部品の展開結果(contracts/buildings.md「Part の変換規約」「Part の型語彙」) */
   parts: Part[];
+}
+
+/**
+ * 施設(contracts/facilities.md)。段14「施設」が書く。
+ */
+export type FacilityKind =
+  | "field"
+  | "pasture"
+  | "well"
+  | "stall"
+  | "windmill"
+  | "watermill"
+  | "pier";
+
+/**
+ * kind の表示順(facilities.md「kind 一覧・配置条件」節の記載順と同一)。
+ * summary の施設カウント内訳・ギャラリー対象一覧が共有する
+ */
+export const FACILITY_KIND_ORDER: readonly FacilityKind[] = [
+  "field",
+  "pasture",
+  "well",
+  "stall",
+  "windmill",
+  "watermill",
+  "pier",
+];
+
+/** 施設の由来メタ(id・RNG ラベル安定化・帰属領域特定に使う) */
+export type FacilityOrigin =
+  | { type: "parcel"; parcelId: string } // field / pasture
+  | { type: "plaza"; plazaId: string } // well(市街)/ stall
+  | { type: "node"; nodeId: string } // well(農村)
+  | { type: "site"; cellId: string } // windmill(候補格子セル)
+  | { type: "canal"; canalId: string } // watermill(水路沿い)
+  | { type: "shore"; shoreLoopId: string; index: number }; // watermill(湖岸沿い)・pier
+
+export interface Facility {
+  /** 由来から安定(contracts/facilities.md「RNG ラベル体系」の id 体系) */
+  id: string;
+  kind: FacilityKind;
+  /** 施設の外形。時計回り・自己交差なし */
+  footprint: Polygon;
+  /** 正面方位(xz 偏角。kind ごとの既定規約は contracts/facilities.md) */
+  facing: number;
+  /** 造形の純関数(kind ごとの buildXxxParts)の出力 */
+  parts: Part[];
+  origin: FacilityOrigin;
 }
 
 export interface Vegetation {
@@ -432,7 +518,7 @@ export interface Vegetation {
 
 /**
  * 生成結果サマリー(contracts/vegetation-summary.md Summary 節)。
- * 段15「サマリー」(pipeline/summary.ts)が全フィールドを最終状態の
+ * 段16「サマリー」(pipeline/summary.ts)が全フィールドを最終状態の
  * WorldModel から機械算出して確定する。生成物と乖離させない。
  * 複雑度(頂点数・インスタンス数・draw call)はレンダラー実測値
  * (renderer.info)であり表示プリセット依存のため WorldModel には持たず、
@@ -441,9 +527,16 @@ export interface Vegetation {
 export interface Summary {
   /** 役割別内訳(出現した役割のみ。合計 = buildings.length) */
   buildingCounts: Record<string, number>;
+  /**
+   * kind 別内訳(全 7 kind を常にキーとして持つ
+   * ―buildingCounts と異なり 0 件の kind も落とさない。facilities.md
+   * 「kind 一覧」の全 kind を横並びで見せるための密な形。
+   * 合計 = facilities.length。contracts/vegetation-summary.md Summary 節)
+   */
+  facilityCounts: Record<FacilityKind, number>;
   /** 軸スコア+特徴から生成する短い日本語記述文(決定論的) */
   centerDescription: string;
-  waterOverview: { rivers: number; lakes: number; canals: number; bridges: number };
+  waterOverview: { lakes: number; ponds: number; canals: number; bridges: number };
   wardOverview: {
     level: number;
     ringLength: number;
@@ -461,12 +554,25 @@ export interface WorldModel {
   ground: Ground;
   water: Water;
   density: Density;
+  /**
+   * ゾーニング場(市街度 urbanity。0〜1)。段7「一次密度場」が
+   * density.primary と同じタイミングで算出し書き込む(それまで null)。
+   * 契約の正は contracts/network-plaza.md「Density」節の zoning 項。
+   * 消費者は段14「施設」と段5(streets.ts)の市街限定成長(参照式は
+   * streets.ts のコメント参照)
+   */
+  zoning: FieldGrid | null;
   network: Network;
   plazas: Plaza[];
   centerPlan: CenterPlan;
   wards: Wards;
   parcels: Parcel[];
   buildings: Building[];
+  /**
+   * 施設(畑・牧草地・井戸・屋台・風車/水車・桟橋)。段14「施設」が書く
+   * (contracts/facilities.md)
+   */
+  facilities: Facility[];
   vegetation: Vegetation;
   summary: Summary;
 }
@@ -482,13 +588,14 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
       zoneMask: createZoneMask(0, 0),
     },
     water: {
-      rivers: [],
       lakes: [],
+      ponds: [],
       canals: [],
       bridges: [],
       shoreline: { cellSize: 0, loops: [] },
     },
     density: { primary: null, final: null },
+    zoning: null,
     network: { nodes: [], edges: [], entryPoints: [] },
     plazas: [],
     centerPlan: {
@@ -510,11 +617,21 @@ export function createEmptyWorldModel(seed: string, params: Params): WorldModel 
     },
     parcels: [],
     buildings: [],
+    facilities: [],
     vegetation: { trees: [], shrubs: [], grassPatches: [] },
     summary: {
       buildingCounts: {},
+      facilityCounts: {
+        field: 0,
+        pasture: 0,
+        well: 0,
+        stall: 0,
+        windmill: 0,
+        watermill: 0,
+        pier: 0,
+      },
       centerDescription: "",
-      waterOverview: { rivers: 0, lakes: 0, canals: 0, bridges: 0 },
+      waterOverview: { lakes: 0, ponds: 0, canals: 0, bridges: 0 },
       wardOverview: {
         level: 0,
         ringLength: 0,

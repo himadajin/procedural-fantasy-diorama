@@ -28,13 +28,12 @@ async function buildFresh(seed: string, over: Partial<Params> = {}): Promise<Wor
   return runPipeline(seed, { ...DEFAULT_PARAMS, ...over });
 }
 
-/** 河川・湖・水路を合成した水域 sdf(正=陸側) */
+/** 湖・池・水路を合成した水域 sdf(正=陸側) */
 function combinedWaterSdf(model: WorldModel): (x: number, z: number) => number {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, [
+    ...model.water.lakes,
+    ...model.water.ponds,
+  ]);
   return (x, z) => {
     let d = field.waterSdf(x, z);
     for (const canal of model.water.canals) {
@@ -210,8 +209,11 @@ describe("wards: 結界門と道路(局所スナップ)", () => {
             `${gate.id} が道路 path 上にない`,
           ).toBeLessThan(1e-6);
         }
-        // 2) 結界環×道路の全交点の近傍に門がある
+        // 2) 結界環×道路の全交点の近傍に門がある(門スナップ対象は
+        //    main / connector に限定。street・lane が結界環を
+        //    横切っても門は生成しない契約のため、検証対象も同じに限る)
         for (const edge of model.network.edges) {
+          if (edge.class !== "main" && edge.class !== "connector") continue;
           for (let i = 0; i + 1 < edge.path.length; i++) {
             const a = edge.path[i];
             const b = edge.path[i + 1];
@@ -260,7 +262,7 @@ describe("wards: 結界門と道路(局所スナップ)", () => {
         expect(model.summary.waterOverview.bridges).toBe(expected);
         // over は水域種別(canal を含む)
         for (const bridge of model.water.bridges) {
-          expect(["river", "lake", "canal"]).toContain(bridge.over);
+          expect(["lake", "pond", "canal"]).toContain(bridge.over);
         }
       }
     }

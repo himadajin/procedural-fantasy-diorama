@@ -1,33 +1,19 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type Vec2,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import {
   createBoundaryRadius,
   createWaterField,
   pointInPolygon,
   polygonArea,
 } from "../src/model/waterfield";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
+import { makeRng } from "../src/rng";
 import { runSiting } from "../src/pipeline/siting";
+import { buildUpTo } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
-/** 川を持つ代表 seed(water=70。事前に確認済み) */
-const RIVER_SEEDS = ["seed-a", "seed-b", "seed-c"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  return model;
+  return buildUpTo(runSiting, seed, over);
 }
 
 describe("siting: 決定性", () => {
@@ -48,20 +34,19 @@ describe("siting: 決定性", () => {
 });
 
 describe("siting: 進入点", () => {
-  it("derived.entryPointCount 点(2〜4)が外縁上の陸に置かれ、id は生成順で安定", () => {
+  it("derived.entryPointCount 点(2〜5)が外縁上の陸に置かれ、id は生成順で安定", () => {
     for (const seed of SEEDS) {
       for (const worldScale of [0, 50, 100]) {
         const model = build(seed, { worldScale, water: 70 });
         const entries = model.network.entryPoints;
         expect(entries.length).toBe(model.meta.derived.entryPointCount);
         expect(entries.length).toBeGreaterThanOrEqual(2);
-        expect(entries.length).toBeLessThanOrEqual(4);
+        expect(entries.length).toBeLessThanOrEqual(5);
         const radius = createBoundaryRadius(model.ground.boundary);
-        const field = createWaterField(
-          model.ground.boundary,
-          model.water.rivers,
-          model.water.lakes,
-        );
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
         entries.forEach((e, i) => {
           expect(e.id).toBe(`entry/${i}`);
           // 外縁上(星形半径関数との差がほぼ 0)
@@ -77,22 +62,27 @@ describe("siting: 進入点", () => {
     }
   });
 
-  it("主河川があるとき進入点は両岸に分かれる(橋の必然性)", () => {
-    for (const seed of RIVER_SEEDS) {
-      const model = build(seed, { water: 70 });
-      const river = model.water.rivers[0];
-      if (!river) throw new Error(`seed=${seed} に川がない`);
-      const head = river.points[0];
-      const tail = river.points[river.points.length - 1];
-      if (!head || !tail) throw new Error("river endpoints missing");
-      const side = (p: Vec2): number =>
-        Math.sign(
-          (tail.x - head.x) * (p.z - head.z) - (tail.z - head.z) * (p.x - head.x),
-        );
-      const sides = new Set(
-        model.network.entryPoints.map((e) => side(e.position)).filter((s) => s !== 0),
-      );
-      expect(sides.size, `seed=${seed} 進入点が同じ岸に偏っている`).toBe(2);
+  it("進入点は基準角+等間隔+揺らぎのみで決まり、対岸への強制移設(後処理)を行わない" +
+    "(contracts/network-plaza.md「道路網の性質」entryPoints 節)", () => {
+    // water=0 では水域が存在せず nudgeToLand も発火しないため、
+    // 進入点は「基準角+等間隔+揺らぎ」の素の式と厳密に一致するはずである。
+    // もし対岸移設のような後処理が残っていれば、水域が無くても
+    // 少なくとも1点の角度がこの式からずれてこのテストが失敗する。
+    for (const seed of SEEDS) {
+      const model = build(seed, { water: 0 });
+      const n = model.meta.derived.entryPointCount;
+      const baseAngle = makeRng(seed, "siting/entry").range(0, Math.PI * 2);
+      const radius = createBoundaryRadius(model.ground.boundary);
+      model.network.entryPoints.forEach((e, i) => {
+        const jitter = makeRng(seed, `siting/entry/${i}`).range(-0.3, 0.3);
+        const theta = baseAngle + ((i + jitter) / n) * Math.PI * 2;
+        const expected = {
+          x: Math.cos(theta) * radius(theta),
+          z: Math.sin(theta) * radius(theta),
+        };
+        expect(e.position.x, `seed=${seed} entry/${i}`).toBeCloseTo(expected.x, 6);
+        expect(e.position.z, `seed=${seed} entry/${i}`).toBeCloseTo(expected.z, 6);
+      });
     }
   });
 });
@@ -102,11 +92,10 @@ describe("siting: 主中心と占有範囲", () => {
     for (const seed of SEEDS) {
       for (const water of [0, 50, 95]) {
         const model = build(seed, { water });
-        const field = createWaterField(
-          model.ground.boundary,
-          model.water.rivers,
-          model.water.lakes,
-        );
+        const field = createWaterField(model.ground.boundary, [
+          ...model.water.lakes,
+          ...model.water.ponds,
+        ]);
         const c = model.centerPlan.position;
         expect(field.waterSdf(c.x, c.z), `seed=${seed} water=${water}`).toBeGreaterThan(0);
         expect(model.centerPlan.footprint.length).toBe(4);

@@ -1,6 +1,6 @@
 /**
- * 段14「植生」: 樹木・低木・草むらをマスクベースで散布する
- * (PHASE 6 commit 20)。データの正は docs/internal/contracts/vegetation-summary.md
+ * 段15「植生」: 樹木・低木・草むらをマスクベースで散布する。
+ * データの正は docs/internal/contracts/vegetation-summary.md
  * (Vegetation 節)、段の位置づけは contracts/pipeline.md の段契約表。
  *
  * - セル格子(一辺 VEG_CELL)ごとに候補 1 点。乱数はセルごとの独立
@@ -11,7 +11,9 @@
  *   (外へ向かって植生が増える勾配。implementation-spec 7章)
  * - World Scale が森リング厚(marginWidth)を、Water が岸辺植生
  *   (shoreVegetation)を駆動する(implementation-spec 1.6節)
- * - 建物・道路・広場・水面(河川・湖)・水路バッファとの衝突はハード除外
+ * - 建物・道路・広場・水面(湖・池)・水路バッファ・施設
+ *   (facilities footprint。contracts/vegetation-summary.md
+ *   「回避対象への facilities 追加」)との衝突はハード除外
  * - 上限(性能配慮): 木 2000 / 低木 1200 / 草むら 320。超過時は
  *   間引きキー昇順の決定論的な間引き(乱数を追加消費しない)
  */
@@ -22,6 +24,7 @@ import {
   distToPolyline,
   pointInPolygon,
   polygonSignedDistance,
+  waterBodies,
 } from "../model/waterfield";
 import { sampleFieldGrid } from "../model/fieldgrid";
 import { sampleZoneMask, ZONE_KINDS } from "../model/zonemask";
@@ -82,6 +85,8 @@ const CANAL_CLEAR = 1.2;
 const ROAD_CLEAR = 1.4;
 const PLAZA_CLEAR = 1.0;
 const BUILDING_CLEAR = 1.0;
+/** 施設 footprint(縁 + 1.0。建物と同じ帯幅の流儀) */
+const FACILITY_CLEAR = 1.0;
 const CENTER_CLEAR = 1.5;
 const RING_CLEAR = 2.2;
 const SHRINE_CLEAR = 3.5;
@@ -118,15 +123,12 @@ interface VegContext {
   segments: Segment[];
   segReach: number;
   buildingBounds: { minX: number; maxX: number; minZ: number; maxZ: number }[];
+  facilityBounds: { minX: number; maxX: number; minZ: number; maxZ: number }[];
   ringBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null;
 }
 
 function buildContext(model: WorldModel): VegContext {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const segments: Segment[] = [];
   let segReach = 0;
   for (const edge of model.network.edges) {
@@ -156,6 +158,7 @@ function buildContext(model: WorldModel): VegContext {
     segments,
     segReach,
     buildingBounds: model.buildings.map((b) => polygonBounds(b.footprint)),
+    facilityBounds: model.facilities.map((f) => polygonBounds(f.footprint)),
     ringBounds:
       model.wards.ringPath.length >= 3
         ? polygonBounds(model.wards.ringPath)
@@ -245,6 +248,23 @@ function isClear(
       continue;
     }
     if (polygonSignedDistance(x, z, b.footprint) < reach) return false;
+  }
+  // 施設 footprint(縁 + 1.0。畑・牧草地の畝や柵の中に木を生やさない。
+  // contracts/vegetation-summary.md「回避対象への facilities 追加」)
+  const facilityReach = FACILITY_CLEAR + extra;
+  for (let i = 0; i < model.facilities.length; i++) {
+    const fb = ctx.facilityBounds[i];
+    const f = model.facilities[i];
+    if (!fb || !f) continue;
+    if (
+      x < fb.minX - facilityReach ||
+      x > fb.maxX + facilityReach ||
+      z < fb.minZ - facilityReach ||
+      z > fb.maxZ + facilityReach
+    ) {
+      continue;
+    }
+    if (polygonSignedDistance(x, z, f.footprint) < facilityReach) return false;
   }
   const foot = model.centerPlan.footprint;
   if (foot.length >= 3) {
@@ -517,6 +537,15 @@ export function runVegetation(model: WorldModel): void {
         continue;
       }
       if (polygonSignedDistance(p.x, p.z, b.footprint) < 0) violations++;
+    }
+    for (let i = 0; i < model.facilities.length; i++) {
+      const fb = ctx.facilityBounds[i];
+      const f = model.facilities[i];
+      if (!fb || !f) continue;
+      if (p.x < fb.minX || p.x > fb.maxX || p.z < fb.minZ || p.z > fb.maxZ) {
+        continue;
+      }
+      if (polygonSignedDistance(p.x, p.z, f.footprint) < 0) violations++;
     }
   }
   if (violations > 0) {

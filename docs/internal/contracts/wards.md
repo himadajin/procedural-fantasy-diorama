@@ -38,7 +38,7 @@ interface Wards {
   まわりの偏角に対して半径が一意)。生成手順: 一次密度場の等値線を初期
   形状とし、中心まわりの偏角リサンプル+循環平滑化で平滑にし、星形化に
   より自己交差を除去する。半径は「footprint 対角半径+マージン」以上、
-  「境界−外縁マージン」以下にクランプする。水域(河川・湖・水路)は
+  「境界−外縁マージン」以下にクランプする。水域(湖・池・水路)は
   半径の径方向調整で回避し、回避できない区間は ringSegments の
   kind "overwater"(水上結界)として分離する(壁の接地検証から除外)。
   失敗時は等値線レベルを引き上げ(=囲い半径を縮小して)リトライする
@@ -54,11 +54,16 @@ interface Wards {
   3 は門開口以外がほぼ wall の完全環。PHASE 5b)
 - `gates` は wardLevel ≥ 2 のとき、結界環と道路 edge の全交点に生成する
   (`roadEdgeId` は交差 edge の id、`angle` は交点での道路方向)。
-  道路側の補正は門位置の点を edge.path へ挿入する局所スナップのみで、
-  道路の大規模な引き直しはしない。よって「結界環を横切る道路は必ず
-  門位置を通る」(門位置と edge.path の距離は 0)。wardLevel 1 では
-  gates は空(壁が無く、境界標の列は道を遮らない)。gate の直近の
-  ringSegments は門開口の "gap" になる
+  **スナップ対象の道路 edge は class `"main"` / `"connector"` に限定する**
+  (Phase B。`"street"` / `"lane"` には門を開かない — 門は幹線格の道に
+  限る。結界環が street・lane と交差しても門は生成せず、その交点は壁の
+  接地検証からも除外しない=当たる区間はそのまま "wall" として扱う。
+  タスク B3 で `pipeline/wards.ts` の門スナップ対象を main/connector
+  へ限定する形で実装済み(2026-07-12))。道路側の補正は門位置の点を
+  edge.path へ挿入する局所スナップのみで、道路の大規模な引き直しはしない。
+  よって「結界環を横切る main / connector は必ず門位置を通る」(門位置と
+  edge.path の距離は 0)。wardLevel 1 では gates は空(壁が無く、境界標の列は道を
+  遮らない)。gate の直近の ringSegments は門開口の "gap" になる
 - `towers` は wardLevel ≥ 2。結界環上の屈曲点を優先し、間隔規則
   (towerScale 駆動の目標本数と最小弧間隔)と水辺・門・橋詰めへの近接で
   採点して選ぶ(広場は段9確定のため、「広場近傍」の選好は広場が置かれる
@@ -204,15 +209,15 @@ PHASE 5a から不変のまま。乱数ストリームは消費しない
 
   | over | 条件 | 型 |
   |---|---|---|
-  | river / lake | roadClass "main" かつ roadGrade ≥ 0.9 | 石造アーチ橋 |
-  | river / lake | 上記以外(connector・低 Prosperity) | 木橋(桁+杭橋脚) |
+  | lake / pond | roadClass "main" かつ roadGrade ≥ 0.9 | 石造アーチ橋 |
+  | lake / pond | 上記以外(connector・低 Prosperity) | 木橋(桁+杭橋脚) |
   | canal | roadGrade ≥ 0.9 | 水路の小橋(石。桁+欄干+袂の石座) |
   | canal | roadGrade < 0.9 | 水路の小橋(木。同上、木部) |
 
-- **河川・湖の橋**: 道路リボンが岸で止めた渡り区間を橋が受け持つ。
+- **湖・池の橋**: 道路リボンが岸で止めた渡り区間を橋が受け持つ。
   渡り区間の標本化は道路リボン(mesh/paving.ts)と**同一**の
   `waterCrossings(edge.path, field.waterSdf, 2.0)`(model/geometry.ts。
-  rivers/lakes の waterfield、標本間隔 2.0)を共用し、取り付きに
+  lakes/ponds の waterfield、標本間隔 2.0)を共用し、取り付きに
   隙間を出さない。橋床は渡り区間の両端から 0.9 だけ陸へ延長した
   区間を弧長 2.4 でリサンプルした箱セグメント列(`plinth` 再利用。
   継ぎ目は +0.35 の重なり)。**橋床天端 = roadBaseY(edgeId) +
@@ -241,7 +246,7 @@ PHASE 5a から不変のまま。乱数ストリームは消費しない
 - 検証契約(テストが機械検証する): (1) 取り付き端点は陸上
   (waterSdf ≥ −0.2)かつ接道 edge.path 上、(2) 橋床天端 =
   roadBaseY + ROAD_CROWN + 0.02(道路と段差なし)、(3) 桁下端 >
-  水面(河川・湖 −0.6 / 水路 +0.04)、(4) 橋脚(pile・arch)の
+  水面(湖・池 −0.6 / 水路 +0.04)、(4) 橋脚(pile・arch)の
   下端 = −1.6、(5) 同一入力の 2 回展開が完全一致(決定性)
 
 PHASE 5b commit 18 の追加語彙:

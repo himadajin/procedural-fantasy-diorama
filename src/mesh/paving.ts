@@ -1,6 +1,7 @@
 /**
  * 舗装・水路のメッシュ: 道路リボン、広場の舗装+縁石、水路の護岸(縁石・
- * 石積み)+杭を WorldModel から生成する(implementation-spec PHASE 3)。
+ * 石積み)+杭を WorldModel から生成する(implementation-spec 4章
+ * 「大域計画 — 立地・道路網・水路・広場・結界計画」)。
  *
  * - 頂点カラーのみで表現(画像テクスチャ禁止)。色は art-direction 5.2/5.3節
  * - 道路・広場・護岸は単一の MeshStandardMaterial にマージして 1 draw call、
@@ -8,9 +9,9 @@
  * - 水路は地面をクリップしない「重ねる掘り込みチャネル」
  *   (contracts/ground-water.md Water 節)。水面は地面よりわずかに上に置き、
  *   護岸の立ち上がりとの段差で掘り込みを読ませる。水面ジオメトリ自体は
- *   build.ts が川と同じ水面マテリアルへ統合する
- * - 河川・湖の渡り区間は岸で止め、橋(mesh/bridgeparts.ts)が同一の
- *   標本化・基準高で受け持つ(PHASE 5b commit 18)。魔法灯の足元の
+ *   build.ts が湖・池と同じ水面マテリアルへ統合する
+ * - 湖・池の渡り区間は岸で止め、橋(mesh/bridgeparts.ts)が同一の
+ *   標本化・基準高で受け持つ。魔法灯の足元の
  *   照り返しは頂点カラーへ焼き込む(wardparts の純関数を地面と共用)
  * - 乱数ストリームは消費しない。ムラは位置ハッシュから決定論的に導出する
  */
@@ -23,6 +24,7 @@ import {
 import { pathLength, pointAlong, waterCrossings } from "../model/geometry";
 import type { WaterField } from "../model/waterfield";
 import {
+  CANAL_WATER_SURFACE_Y,
   ROAD_CROWN,
   ROAD_WATER_SAMPLE_STEP,
   canalLiftAt,
@@ -54,14 +56,15 @@ const PLAZA_CURB_WIDTH = 0.34;
 const PLAZA_STEP = 2.4;
 
 /** 水路の造形: 水面は地面よりわずかに上、縁石天端は水面 +0.4 前後
- * (contracts/ground-water.md Water 節の設計判断) */
-export const CANAL_WATER_Y = 0.04;
+ * (contracts/ground-water.md Water 節の設計判断)。水面高そのものは
+ * mesh/bridgeparts.ts の CANAL_WATER_SURFACE_Y(橋の桁下端の検証基準と
+ * 共用)を使う。 */
 const CANAL_WALL_RISE = 0.4;
 const CANAL_WALL_DIP = 0.3; // 護岸内面が水面下へ潜る深さ(水際を見せない)
 const CANAL_CURB_WIDTH = 0.42;
 const CANAL_SKIRT_WIDTH = 0.5; // 縁石の外の土手(地面へ馴染む)
 const CANAL_STEP = 2.0;
-/** 川へ注ぐ端部で水面高を川へ降ろすランプ幅(waterfield の岸距離) */
+/** 湖・池へ注ぐ端部で水面高を湖・池へ降ろすランプ幅(waterfield の岸距離) */
 const CANAL_MOUTH_RAMP = 7;
 /** 杭(towpathSide 側の係留杭)の間隔と寸法 */
 const PILE_SPACING = 7.5;
@@ -172,7 +175,7 @@ function shadeAt(x: number, z: number, tidiness: number): number {
  * 道路リボン: edge.path 沿いの幅 edge.width のリボン。
  * - 断面は5点(フェザー/路肩/中央/路肩/フェザー)で、中央を数cm盛り上げる
  * - 等級 grade で土→砂利→石畳の頂点カラー補間
- * - 河川・湖を渡る区間は描かず岸で止める(橋の立体は PHASE 5b)。
+ * - 湖・池を渡る区間は描かず岸で止める(橋の立体は mesh/bridgeparts.ts)。
  *   水路(canal)上は通し、水路橋位置では路面をわずかに持ち上げて
  *   水面(y=+0.04)との交差を避ける
  */
@@ -187,7 +190,7 @@ function buildRoads(model: WorldModel, field: WaterField, buf: GeoBuffer): void 
     const yBase = roadBaseY(edge.id);
     const color = gradeColor(edge.grade);
 
-    // 河川・湖を渡る区間(canal は含まない waterSdf)を除いた陸区間。
+    // 湖・池を渡る区間(canal は含まない waterSdf)を除いた陸区間。
     // 渡り区間は橋(mesh/bridgeparts.ts)が同一の標本化で受け持つ
     const crossings = waterCrossings(
       edge.path,
@@ -430,7 +433,7 @@ interface CanalFrame {
   left: Vec2;
   dir: Vec2;
   waterY: number;
-  /** 護岸・縁石を建てるか(川の中・橋のたもとでは欠く) */
+  /** 護岸・縁石を建てるか(湖・池の中・橋のたもとでは欠く) */
   wall: boolean;
 }
 
@@ -448,9 +451,10 @@ function canalFrames(
     const f = frames[i];
     if (!p || !f) continue;
     const sdf = field.waterSdf(p.x, p.z);
-    // 川へ注ぐ端部では水面高を川の水面へ連続に降ろす(contracts Water 節)
+    // 湖・池へ注ぐ端部では水面高を湖・池の水面へ連続に降ろす(contracts Water 節)
     const t = smoothstep01((sdf - 0.5) / CANAL_MOUTH_RAMP);
-    const waterY = WATER_SURFACE_Y + 0.05 + (CANAL_WATER_Y - (WATER_SURFACE_Y + 0.05)) * t;
+    const waterY =
+      WATER_SURFACE_Y + 0.05 + (CANAL_WATER_SURFACE_Y - (WATER_SURFACE_Y + 0.05)) * t;
     let wall = sdf > 0.8;
     if (wall) {
       for (const b of canalBridges) {
@@ -470,7 +474,7 @@ function canalFrames(
 
 /**
  * 水路の護岸: 縁石(#7e7c76)天端+石積み(#8e8a84)の内面+外の土手。
- * towpathSide 側は土手を広めに取り、岸沿い道の余地を残す(PHASE 4b フック)。
+ * towpathSide 側は土手を広めに取り、岸沿い道(段13「小道」)の余地を残す。
  * 橋位置(over="canal")では護岸を欠き、道路リボンが上を通る。
  */
 function buildCanalWalls(
@@ -556,8 +560,8 @@ function buildCanalWalls(
 }
 
 /**
- * 水路の水面ストリップ(川と同じ水面マテリアルへ統合するための生バッファ)。
- * 色は build.ts 側で川と同じ浅瀬/深みから決めるため、ここでは
+ * 水路の水面ストリップ(湖・池と同じ水面マテリアルへ統合するための生バッファ)。
+ * 色は build.ts 側で湖・池と同じ浅瀬/深みから決めるため、ここでは
  * 位置・縁からの距離(0=縁、1=中央)を返す。
  */
 export interface CanalSurface {
@@ -686,7 +690,7 @@ export function buildPaving(
   buildPlazas(model, buf);
   buildCanalWalls(model, field, buf);
 
-  // 魔法灯の足元の照り返し(頂点カラー焼き込み。PHASE 5b commit 18。
+  // 魔法灯の足元の照り返し(頂点カラー焼き込み。
   // 地面 mesh/build.ts と同じ純関数を共用する)
   applyLampTint(createLampTint(model), buf.positions, buf.colors);
 

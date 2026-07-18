@@ -1,64 +1,29 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  createEmptyWorldModel,
-  type Params,
-  type WorldModel,
-} from "../src/model/worldmodel";
+import { type Params, type WorldModel } from "../src/model/worldmodel";
 import {
   createWaterField,
   distToPolyline,
   polygonSignedDistance,
 } from "../src/model/waterfield";
 import { polygonsOverlap } from "../src/model/geometry";
-import { runDerive } from "../src/pipeline/derive";
-import { runGround } from "../src/pipeline/ground";
-import { runWater } from "../src/pipeline/water";
-import { runSiting } from "../src/pipeline/siting";
-import { runNetwork } from "../src/pipeline/network";
-import { runCanals } from "../src/pipeline/canals";
-import { runDensity } from "../src/pipeline/density";
-import { runWards } from "../src/pipeline/wards";
-import { runPlazas } from "../src/pipeline/plazas";
-import { runPaving } from "../src/pipeline/paving";
+import { sampleFieldGrid } from "../src/model/fieldgrid";
 import { runParcels } from "../src/pipeline/parcels";
+import { buildUpTo, makeCached } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
-  const model = createEmptyWorldModel(seed, { ...DEFAULT_PARAMS, ...over });
-  runDerive(model);
-  runGround(model);
-  runWater(model);
-  runSiting(model);
-  runNetwork(model);
-  runCanals(model);
-  runDensity(model);
-  runWards(model);
-  runPlazas(model);
-  runPaving(model);
-  runParcels(model);
-  return model;
+  return buildUpTo(runParcels, seed, over);
 }
 
-const cache = new Map<string, WorldModel>();
-function cached(seed: string, over: Partial<Params> = {}): WorldModel {
-  const key = seed + JSON.stringify(over);
-  let model = cache.get(key);
-  if (!model) {
-    model = build(seed, over);
-    cache.set(key, model);
-  }
-  return model;
-}
+const cached = makeCached(build);
 
-/** 河川・湖+水路の合成水域 sdf(正=陸側) */
+/** 湖・池+水路の合成水域 sdf(正=陸側) */
 function combinedWaterSdf(model: WorldModel): (x: number, z: number) => number {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, [
+    ...model.water.lakes,
+    ...model.water.ponds,
+  ]);
   return (x, z) => {
     let d = field.waterSdf(x, z);
     for (const canal of model.water.canals) {
@@ -239,6 +204,107 @@ describe("parcels: 敷地の性質(接道・衝突・上限)", () => {
   });
 });
 
+describe("parcels: 区画グループ(groupId。契約「区画グループとクラスタパターン」)", () => {
+  // residential は <slot>、farmland は farm<slot>
+  // (contracts/facilities.md「field(畑)・pasture(牧草地)」実装補足)
+  const PARCEL_ID_RE = /^parcel\/(.+)\/(L|R)\/(farm)?(\d+)$/;
+  const GROUP_ID_RE = /^block\/(.+)\/(L|R)\/(\d+)$/;
+
+  function parseParcelId(id: string): { edgeId: string; side: "L" | "R"; slot: number } {
+    const m = PARCEL_ID_RE.exec(id);
+    if (!m) throw new Error(`unexpected parcel id: ${id}`);
+    const edgeId = m[1];
+    const side = m[2];
+    const slot = m[4];
+    if (edgeId === undefined || (side !== "L" && side !== "R") || slot === undefined) {
+      throw new Error(`unexpected parcel id: ${id}`);
+    }
+    return { edgeId, side, slot: Number(slot) };
+  }
+
+  it("全区画に groupId が付与される", () => {
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 100 });
+      expect(model.parcels.length).toBeGreaterThan(0);
+      for (const parcel of model.parcels) {
+        expect(typeof parcel.groupId).toBe("string");
+        expect(parcel.groupId.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("groupId の形式は block/<roadEdgeId>/<L|R>/<runIndex>", () => {
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 100 });
+      for (const parcel of model.parcels) {
+        const m = GROUP_ID_RE.exec(parcel.groupId);
+        expect(m).not.toBeNull();
+        if (!m) continue;
+        expect(m[1]).toBe(parcel.roadEdgeId);
+      }
+    }
+  });
+
+  it("同一グループ内の区画は同一 edge・同一側かつスロット連番が連続する", () => {
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 100 });
+      const byGroup = new Map<string, typeof model.parcels>();
+      for (const parcel of model.parcels) {
+        let arr = byGroup.get(parcel.groupId);
+        if (!arr) {
+          arr = [];
+          byGroup.set(parcel.groupId, arr);
+        }
+        arr.push(parcel);
+      }
+      expect(byGroup.size).toBeGreaterThan(0);
+      for (const [groupId, members] of byGroup) {
+        const groupMatch = GROUP_ID_RE.exec(groupId);
+        expect(groupMatch).not.toBeNull();
+        if (!groupMatch) continue;
+        const [, groupEdgeId, groupSide] = groupMatch;
+        const slots = members
+          .map((p) => {
+            const parsed = parseParcelId(p.id);
+            // 同一 edge・同一側であること
+            expect(parsed.edgeId).toBe(groupEdgeId);
+            expect(parsed.side).toBe(groupSide);
+            expect(p.roadEdgeId).toBe(groupEdgeId);
+            return parsed.slot;
+          })
+          .sort((a, b) => a - b);
+        // スロット連番が連続すること(欠番なし)
+        for (let i = 1; i < slots.length; i++) {
+          expect(slots[i]).toBe((slots[i - 1] ?? 0) + 1);
+        }
+      }
+    }
+  });
+
+  it("孤立区画(前後が非採択)は長さ1のグループになる", () => {
+    let foundSingleton = false;
+    for (const seed of SEEDS) {
+      const model = cached(seed);
+      const counts = new Map<string, number>();
+      for (const parcel of model.parcels) {
+        counts.set(parcel.groupId, (counts.get(parcel.groupId) ?? 0) + 1);
+      }
+      for (const count of counts.values()) {
+        if (count === 1) foundSingleton = true;
+      }
+    }
+    expect(foundSingleton).toBe(true);
+  });
+
+  it("決定性: 同一 seed + params で groupId を含む parcels が完全一致する", () => {
+    for (const seed of SEEDS) {
+      const a = build(seed, { settlement: 100 });
+      const b = build(seed, { settlement: 100 });
+      expect(JSON.stringify(a.parcels)).toBe(JSON.stringify(b.parcels));
+    }
+  });
+});
+
 describe("parcels: 岸線占有率 40% 上限(契約の測り方)", () => {
   const OCCUPY_DIST = 6;
   const CAP = 0.4;
@@ -264,6 +330,138 @@ describe("parcels: 岸線占有率 40% 上限(契約の測り方)", () => {
           }
         }
         expect(occupied / shorePoints.length).toBeLessThanOrEqual(CAP);
+      }
+    }
+  });
+});
+
+describe("parcels: 農地区画(contracts/facilities.md「field(畑)・pasture(牧草地)」)", () => {
+  function polygonCentroid(polygon: WorldModel["parcels"][number]["polygon"]) {
+    let x = 0;
+    let z = 0;
+    for (const p of polygon) {
+      x += p.x;
+      z += p.z;
+    }
+    return { x: x / polygon.length, z: z / polygon.length };
+  }
+  function frontageOf(parcel: WorldModel["parcels"][number]): number {
+    const [a, b] = parcel.frontEdge;
+    return Math.hypot(b.x - a.x, b.z - a.z);
+  }
+
+  function median(values: number[]): number {
+    const s = [...values].sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 === 1
+      ? (s[m] ?? 0)
+      : ((s[m - 1] ?? 0) + (s[m] ?? 0)) / 2;
+  }
+
+  it("Settlement=0 で全 seed に農地区画が 2 件以上、Settlement=50 でも合計 1 件以上生じる", () => {
+    // 実測(6 seed): settle0 は 7〜18 件/seed、settle50 は
+    // 1〜4 件/seed。閾値は変動に堅牢な下限に取る
+    let settle50Total = 0;
+    for (const seed of SEEDS) {
+      const model0 = cached(seed, { settlement: 0 });
+      const farm0 = model0.parcels.filter((p) => p.kind === "farmland").length;
+      expect(farm0).toBeGreaterThanOrEqual(2);
+      const model50 = cached(seed, { settlement: 50 });
+      settle50Total += model50.parcels.filter(
+        (p) => p.kind === "farmland",
+      ).length;
+    }
+    expect(settle50Total).toBeGreaterThanOrEqual(1);
+  });
+
+  it("農地区画の中心は農村ゾーン(urbanity < 0.45)にある(確定判定の機械検証)", () => {
+    // 実装は縮小ステップごとの実候補の中心(= 矩形の重心)で農村ゾーンを
+    // 確定判定する(contracts/facilities.md「農村ゾーン判定の基準点」)
+    for (const seed of SEEDS) {
+      for (const settle of [0, 50]) {
+        const model = cached(seed, { settlement: settle });
+        const zoning = model.zoning;
+        if (!zoning) continue;
+        for (const parcel of model.parcels) {
+          if (parcel.kind !== "farmland") continue;
+          const c = polygonCentroid(parcel.polygon);
+          expect(sampleFieldGrid(zoning, c.x, c.z)).toBeLessThan(0.45);
+        }
+      }
+    }
+  });
+
+  it("農地区画の寸法帯: 間口はワールド内で共通・[14, 40]・residential 実測中央値の 1.5 倍以上、奥行きは下限 4.5 以上", () => {
+    // 間口 = clamp(1.7 × residential 候補間口の中央値, 14, 40)
+    // (contracts/facilities.md「農地区画の寸法帯」)。候補中央値は
+    // テストから再現しにくいため、機械検証は「採択 residential の実測
+    // 中央値の 1.5 倍以上」という契約の下限(絵の意図の数値化)で行う
+    for (const seed of SEEDS) {
+      for (const settle of [0, 20, 50]) {
+        const model = cached(seed, { settlement: settle });
+        const farmlands = model.parcels.filter((p) => p.kind === "farmland");
+        if (farmlands.length === 0) continue;
+        const residentials = model.parcels.filter(
+          (p) => p.kind === "residential",
+        );
+        const resMedian = median(residentials.map(frontageOf));
+        const frontages = farmlands.map(frontageOf);
+        const first = frontages[0] ?? 0;
+        for (const f of frontages) {
+          expect(f).toBeCloseTo(first, 6); // ワールド内で共通
+          expect(f).toBeGreaterThanOrEqual(14 - 1e-6);
+          expect(f).toBeLessThanOrEqual(40 + 1e-6);
+          expect(f).toBeGreaterThanOrEqual(1.5 * resMedian);
+        }
+        for (const parcel of farmlands) {
+          // 奥行き = 矩形面積(shoelace)/ 間口(頂点順序に依存しない導出)
+          let area2 = 0;
+          for (let i = 0; i < parcel.polygon.length; i++) {
+            const p = parcel.polygon[i];
+            const q = parcel.polygon[(i + 1) % parcel.polygon.length];
+            if (!p || !q) continue;
+            area2 += p.x * q.z - q.x * p.z;
+          }
+          const depth = Math.abs(area2) / 2 / frontageOf(parcel);
+          expect(depth).toBeGreaterThanOrEqual(4.5 - 1e-6);
+          // 上限 = 間口 × 奥行き比 1.6 × 揺らぎ上限 1.1
+          expect(depth).toBeLessThanOrEqual(first * 1.6 * 1.1 + 1e-6);
+        }
+      }
+    }
+  });
+
+  it("農地区画は residential 区画・道路・水域・広場と重ならない(kind によらぬ既存の衝突検証を再確認)", () => {
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 0 });
+      const farmlands = model.parcels.filter((p) => p.kind === "farmland");
+      for (const f of farmlands) {
+        for (const other of model.parcels) {
+          if (other.id === f.id) continue;
+          expect(polygonsOverlap(f.polygon, other.polygon)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("farmland 区画にも groupId が付与され、residential の groupId と混在しない(block/<edge>/<L|R>/<n> 形式)", () => {
+    const GROUP_ID_RE = /^block\/(.+)\/(L|R)\/(\d+)$/;
+    for (const seed of SEEDS) {
+      const model = cached(seed, { settlement: 0 });
+      const byGroup = new Map<string, WorldModel["parcels"]>();
+      for (const parcel of model.parcels) {
+        let arr = byGroup.get(parcel.groupId);
+        if (!arr) {
+          arr = [];
+          byGroup.set(parcel.groupId, arr);
+        }
+        arr.push(parcel);
+      }
+      for (const [groupId, members] of byGroup) {
+        expect(GROUP_ID_RE.test(groupId)).toBe(true);
+        const kinds = new Set(members.map((p) => p.kind));
+        // 同一グループ内は kind が単一(residential と farmland が混在しない)
+        expect(kinds.size).toBe(1);
       }
     }
   });

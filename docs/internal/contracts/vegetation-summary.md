@@ -17,7 +17,7 @@ interface Vegetation {
 }
 ```
 
-植生の性質(段14「植生」= `pipeline/vegetation.ts` が保証し、
+植生の性質(段15「植生」= `pipeline/vegetation.ts` が保証し、
 後段・メッシュビルダーが前提としてよい):
 
 - **格子走査**: 一辺 `VEG_CELL = 5.0`(実寸)のセル格子を
@@ -36,7 +36,7 @@ interface Vegetation {
      World Scale が marginWidth を介してリング厚を駆動する
   2. **外縁草地**(まばら): `boundarySdf < marginWidth × 2.2`。
      木 0.10 / 低木 0.07 / 草むら 0.06
-  3. **水辺低木・湿地植生**(加算層): 河川・湖の `waterSdf < 7`
+  3. **水辺低木・湿地植生**(加算層): 湖・池の `waterSdf < 7`
      (森リング外)。低木 += (0.6 + 0.35 × 湿地チャネル) ×
      `derived.shoreVegetation` × 岸近接(0.35〜1.0)、
      木 += 0.10 × shoreVegetation、草むら += 0.06 × shoreVegetation。
@@ -49,11 +49,12 @@ interface Vegetation {
   植生が増える勾配を作る)。最終密度場 `density.final` による市街地の
   抑制 × (1 − 0.8 × final)
 - **衝突除外(ハード。保証)**: trees / shrubs / grassPatches の候補点は
-  境界(内側 2.2 未満)、水面(河川・湖の waterSdf < 1.2)、水路
+  境界(内側 2.2 未満)、水面(湖・池の waterSdf < 1.2)、水路
   (中心線距離 − 幅/2 < 1.2)、道路(edge.path への距離 <
   edge.width/2 + 1.4)、広場(縁 + 1.0)、建物 footprint(縁 + 1.0)、
-  `centerPlan.footprint`(+ 1.5)、結界環(ringPath への距離 < 2.2)、
-  聖域(3.5 未満)・魔導塔(4.0 未満)と衝突しない。
+  施設 footprint(縁 + 1.0。Phase D 追補。下記「回避対象への facilities
+  追加」)、`centerPlan.footprint`(+ 1.5)、結界環(ringPath への距離 <
+  2.2)、聖域(3.5 未満)・魔導塔(4.0 未満)と衝突しない。
   grassPatch は多角形半径ぶんクリアランスへ上乗せして判定する
 - **上限(性能配慮)**: 木 2000 / 低木 1200 / 草むら 320。超過時は
   候補ごとに引いた間引きキー(採択後に 1 値消費)の昇順・同点は id 順で
@@ -65,6 +66,23 @@ interface Vegetation {
   半径 1.6〜3.0 の不整形 6 角形(時計回り)
 - パイプライン内アサーション: 衝突ゼロ・上限維持を検証し、違反は
   throw せず件数を console に出す
+
+#### 回避対象への facilities 追加(Phase D。計画書
+`plans/2026-07-14-worldgen-rework-facilities.md` タスク D1a・実装は D2b)
+
+- 段14「施設」(pipeline.md)は段15「植生」より前に走るため、植生は
+  施設(`model.facilities`)の存在を前提にできる。上記「衝突除外」の
+  施設 footprint クリアランス(縁 + 1.0。既存の建物 footprint と同じ帯
+  幅の流儀)を、trees / shrubs / grassPatches の候補点判定へ追加する
+  (畑・牧草地の畝や柵の中に木が生えることを防ぐ)。
+- farmland 区画自体(`Parcel.kind === "farmland"`)は既存の「建物
+  footprint」判定の対象外(施設 footprint は区画 polygon とほぼ一致する
+  ため、実質的には区画全体が回避対象になる)。residential 区画は従来どおり
+  区画自体は回避対象ではなく、建物 footprint のみが対象(既存契約のまま
+  変更しない)。
+- 施設 footprint のクリアランス値(+1.0)は既存の建物・広場と同じ値を
+  そのまま流用する提案値(施設ごとに個別のクリアランスは設けない。D2b
+  実測で不足があれば本節を同一 commit で更新する)。
 
 **植生の立体化(メッシュビルダー `src/mesh/vegetation.ts`)**:
 Part 語彙は使わず、植生専用の InstancedMesh 2 + マージ 1 で描く
@@ -94,8 +112,9 @@ WorldModel から機械的に算出し、生成物と乖離させない。
 ```ts
 interface Summary {
   buildingCounts: Record<string, number>;  // 役割別内訳(下記)
+  facilityCounts: Record<FacilityKind, number>;  // kind 別内訳(下記。D6 確定)
   centerDescription: string;               // 軸スコアから生成する短い記述文(下記)
-  waterOverview: { rivers: number; lakes: number; canals: number; bridges: number };
+  waterOverview: { lakes: number; ponds: number; canals: number; bridges: number };
   wardOverview: { level: number; ringLength: number; towers: number;
                   gates: number; shrines: number; floaters: number };
   scale: { worldSize: number; roadLength: number };
@@ -103,17 +122,36 @@ interface Summary {
 }
 ```
 
-`summary` は段15「サマリー」(`pipeline/summary.ts`)が全フィールドを
+`summary` は段16「サマリー」(`pipeline/summary.ts`)が全フィールドを
 **最終確定**する(中間PHASEの各段は同名フィールドを部分的に先埋めしてよいが、
-段15 が最終状態の WorldModel から機械的に再算出して上書きするため、
-中間の先埋めと最終値の乖離は起こらない)。段15 は乱数サブストリームを
-消費しない(モデル状態からの決定的な集計)。表示名は段15「箱庭を書き留めています…」。
+段16 が最終状態の WorldModel から機械的に再算出して上書きするため、
+中間の先埋めと最終値の乖離は起こらない)。段16 は乱数サブストリームを
+消費しない(モデル状態からの決定的な集計)。表示名は段16「箱庭を書き留めています…」。
+
+**施設カウントの追加(Phase D タスク D6 で確定・実装)**: `Summary` は
+`buildingCounts` と並ぶ施設カウントのフィールド `facilityCounts:
+Record<FacilityKind, number>` を持つ。`buildingCounts`(出現した役割のみ
+キーを持つ疎な形)とは異なり、**`facilityCounts` は `facilities.md`
+「kind 一覧」の全 7 kind(`field` / `pasture` / `well` / `stall` /
+`windmill` / `watermill` / `pier`)を常にキーとして持つ密な形**とする
+(0 件の kind もキーを落とさない)。理由: 建物の role は種類数が多く
+出現有無に意味があるが、施設は kind の全体像(全 7 種の現れ方)を横並びで
+示すことがサマリーの価値であり、0 件を隠さない方が「この箱庭には桟橋が
+無い」といった情報を読み取れる。合計 = `facilities.length`。
+値は `model.facilities` の `kind` 別集計(段16「サマリー」が最終確定)。
+既存フィールド(`buildingCounts` 以下)の型・算出規則は変えない。
+kind の並び順は `FACILITY_KIND_ORDER`(`model/worldmodel.ts`。kind 一覧の
+記載順と同一)を正とし、summary の内訳表示とギャラリーの対象一覧が共有する。
+design.md「UI とサマリー」節のサマリー表示項目に「生成施設数」を追加した。
 
 各フィールドの算出規則:
 
 - `buildingCounts`: `buildings` の `role` 別集計(`Record<role, count>`)。
   キーは出現した役割のみ(0 件の役割はキーを持たない)。中心建築
   (role "center")も 1 件として数える。値の合計 = `buildings.length`
+- `facilityCounts`: `facilities` の `kind` 別集計(`Record<FacilityKind,
+  count>`)。全 7 kind を常にキーとして持つ(0 件も明示。上記「施設カウント
+  の追加」)。値の合計 = `facilities.length`
 - `centerDescription`: `centerPlan.axes` の支配軸(最大軸。同点は
   arcane > authority > waterside > rustic の固定順)と生成物の特徴から
   組み立てる短い日本語記述文。決定論的(乱数不使用、規則のみ)。構成:
@@ -133,7 +171,7 @@ interface Summary {
     例「三基の魔導塔と結界環を持つ。」
   - 全体例:「水路の交わる魔法都市。三基の魔導塔と結界環を持つ。」
 - `waterOverview` / `wardOverview` / `scale`: 最終状態の WorldModel から
-  再算出する(rivers/lakes/canals は各配列長、bridges は
+  再算出する(lakes/ponds/canals は各配列長、bridges は
   `water.bridges.length`、ward 系は `wards` の各配列長と `ringPath` 周長、
   worldSize は `ground.size`、roadLength は `network.edges` の
   `path` 長の総和 = 小道込みの最終総延長)
@@ -149,5 +187,5 @@ WorldModel に入れると正規化ハッシュがレンダラー依存になり
 のと同じ量であり、サマリー表示側と重複した WorldModel フィールドは持たない。
 
 `hash` は `pipeline.md` の正規化ハッシュ。`runPipeline` が全段完了後
-(= 段15 の後)に格納する(PHASE 2 で導入し、以降の全PHASEで常時有効)。
+(= 段16 の後)に格納する(PHASE 2 で導入し、以降の全PHASEで常時有効)。
 `hash` 自身はハッシュ計算から除外するため、格納後もハッシュ値は変わらない。

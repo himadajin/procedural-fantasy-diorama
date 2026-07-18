@@ -1,7 +1,7 @@
 /**
  * 段11「区画」: 最終密度場(density.final)と道路沿いの敷地分割(parcels)。
  * データの正は docs/internal/contracts/network-plaza.md(Density 節)・buildings.md(Parcel 節)、
- * 設計は implementation-spec 1.3節(段10「区画」相当)・PHASE 4a。
+ * 設計は implementation-spec 1.3節(段11「区画」相当)。
  *
  * - density.final = 一次密度場 + 結界内ブースト(ringPath 内側で最大 +0.15、
  *   環の縁は幅 8 の smoothstep で減衰)。乱数を消費しない
@@ -14,11 +14,13 @@
  */
 import { makeRng } from "../rng";
 import type { Parcel, Polygon, Vec2, WorldModel } from "../model/worldmodel";
+import { stableRound } from "../model/hash";
 import {
   createBoundaryRadius,
   createWaterField,
   distToPolyline,
   polygonSignedDistance,
+  waterBodies,
 } from "../model/waterfield";
 import {
   createFieldGrid,
@@ -89,6 +91,22 @@ const SHORE_OCCUPY_DIST = 6;
 const SHORE_OCCUPY_CAP = 0.4;
 /** 水辺候補の採択率ブースト係数(watersideRate に掛かる) */
 const WATERSIDE_BOOST = 0.8;
+
+// --- 農地区画(contracts/facilities.md「field(畑)・pasture(牧草地)」) ---
+/** 農村ゾーンの urbanity 上限(network-plaza.md「zoning」と同値) */
+const RURAL_URBANITY_MAX = 0.45;
+/**
+ * 農地区画の間口係数(採択済み residential 区画の間口の実測中央値に掛ける)。
+ * 「農地は住居の典型間口より明確に大きい(1.5 倍以上)」という絵の意図を
+ * 係数 1.7 で構造的に保証しつつ、Settlement による住居間口の変動(狭小化)へ
+ * 農地の間口が自動追随する(実測に基づく値。contracts/facilities.md
+ * 「field(畑)・pasture(牧草地)」実装補足「農地区画の寸法帯」)
+ */
+const FARMLAND_FRONTAGE_SCALE = 1.7;
+const FARMLAND_FRONTAGE_MIN = 14;
+const FARMLAND_FRONTAGE_MAX = 40;
+/** 農地区画の奥行き比(residential の 1.25 より深い畝地) */
+const FARMLAND_DEPTH_RATIO = 1.6;
 
 /** 一次密度場+結界内ブースト(乱数非消費) */
 export function computeFinalDensity(model: WorldModel): FieldGrid | null {
@@ -221,8 +239,8 @@ function newlyOccupiedShorePoints(
 
 /** 衝突検査に使う周辺環境(段11・段12で共有する形) */
 export interface SiteContext {
-  /** 河川・湖の waterSdf(正=陸側) */
-  riverLakeSdf: (x: number, z: number) => number;
+  /** 湖・池の waterSdf(正=陸側) */
+  waterBodySdf: (x: number, z: number) => number;
   /** 水路の sdf(中心線距離 − 幅/2。水路が無ければ +∞) */
   canalSdf: (x: number, z: number) => number;
   /** 境界の内側距離 */
@@ -231,15 +249,11 @@ export interface SiteContext {
 
 /** モデルから衝突検査の環境を作る(段12「建物」も同じ判定を使う) */
 export function createSiteContext(model: WorldModel): SiteContext {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const boundaryRadius = createBoundaryRadius(model.ground.boundary);
   const canals = model.water.canals;
   return {
-    riverLakeSdf: field.waterSdf,
+    waterBodySdf: field.waterSdf,
     canalSdf:
       canals.length === 0
         ? () => Infinity
@@ -290,7 +304,7 @@ function rejectByCollision(
   model: WorldModel,
   ctx: SiteContext,
   rect: CandidateRect,
-  accepted: Parcel[],
+  accepted: AcceptedParcel[],
 ): boolean {
   const { derived } = model.meta;
 
@@ -298,9 +312,9 @@ function rejectByCollision(
   for (const p of rect.probes) {
     if (ctx.boundaryInside(p.x, p.z) < BOUNDARY_MARGIN) return true;
   }
-  // (2) 水面 = 河川・湖+水路
+  // (2) 水面 = 湖・池+水路
   for (const p of rect.probes) {
-    if (ctx.riverLakeSdf(p.x, p.z) < WATER_CLEAR) return true;
+    if (ctx.waterBodySdf(p.x, p.z) < WATER_CLEAR) return true;
     if (ctx.canalSdf(p.x, p.z) < WATER_CLEAR) return true;
   }
   // (1) 広場ポリゴン
@@ -359,7 +373,7 @@ function rejectByCollision(
   }
   // (6) 既採択の区画
   for (const other of accepted) {
-    const ob = polygonBounds(other.polygon);
+    const ob = polygonBounds(other.parcel.polygon);
     if (
       ob.minX > rectB.maxX ||
       ob.maxX < rectB.minX ||
@@ -368,9 +382,85 @@ function rejectByCollision(
     ) {
       continue;
     }
-    if (polygonsOverlap(rect.polygon, other.polygon)) return true;
+    if (polygonsOverlap(rect.polygon, other.parcel.polygon)) return true;
   }
   return false;
+}
+
+/**
+ * 採択済み区画(groupId 抜き)+run 検出に要るスロット情報。
+ * `id` に既に埋め込まれているスロット連番を、run 検出用に別途保持する
+ * (id のパースに依存させない)。
+ */
+interface AcceptedParcel {
+  parcel: Omit<Parcel, "groupId">;
+  side: "L" | "R";
+  slot: number;
+}
+
+/**
+ * 区画グループ(`Parcel.groupId`)の決定論的な後処理(契約:
+ * 「区画グループとクラスタパターン」節)。
+ *
+ * 同一 `roadEdgeId`・同一側(L/R)で、スロット連番が連続して採択された
+ * 区画の並び(run)を 1 グループとする。棄却された候補もスロット連番を
+ * 消費するが、連続判定は「採択済みどうしの隣接スロット」のみで行う
+ * (棄却で欠番になった箇所は run を分断する)。前後が非採択の孤立区画も
+ * 長さ 1 の run になる。乱数は消費しない。区画の採択・位置・数・順序は
+ * 一切変えない(groupId を書き加えるだけ)。
+ *
+ * 農地区画(kind "farmland")が residential 区画の続きの
+ * slot 番号で追加されうるため、run の連続判定は同一 kind どうしのみを
+ * 対象とする(kind が異なれば slot が連番でも run を分断する。contracts/
+ * facilities.md「field/pasture」実装補足「区画グループ(groupId)」)。
+ * 全区画が residential の場合はこの条件が常に真になるため、residential
+ * のみの入力に対する挙動は不変(既存の区画グループ化ロジックは変えない)。
+ */
+function assignGroupIds(entries: AcceptedParcel[]): Parcel[] {
+  // 同一 edge・同一側ごとにグルーピング(挿入順は元の採択順のまま)
+  const buckets = new Map<string, AcceptedParcel[]>();
+  for (const entry of entries) {
+    const key = `${entry.parcel.roadEdgeId}/${entry.side}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
+    }
+    bucket.push(entry);
+  }
+
+  const groupIdByParcelId = new Map<string, string>();
+  for (const [key, bucket] of buckets) {
+    // スロット連番順に並べる(採択順で既に昇順のはずだが、run 検出の
+    // 前提を id パース非依存で保証するため明示的にソートする)
+    bucket.sort((a, b) => a.slot - b.slot);
+    let runIndex = 0;
+    let runStart = 0;
+    for (let i = 0; i < bucket.length; i++) {
+      const isLast = i === bucket.length - 1;
+      const currentEntry = bucket[i];
+      const nextEntry = isLast ? undefined : bucket[i + 1];
+      const continuesRun =
+        nextEntry !== undefined &&
+        currentEntry !== undefined &&
+        nextEntry.slot === currentEntry.slot + 1 &&
+        nextEntry.parcel.kind === currentEntry.parcel.kind;
+      if (!continuesRun) {
+        const groupId = `block/${key}/${runIndex}`;
+        for (let j = runStart; j <= i; j++) {
+          const member = bucket[j];
+          if (member) groupIdByParcelId.set(member.parcel.id, groupId);
+        }
+        runIndex++;
+        runStart = i + 1;
+      }
+    }
+  }
+
+  return entries.map((entry) => ({
+    ...entry.parcel,
+    groupId: groupIdByParcelId.get(entry.parcel.id) ?? "",
+  }));
 }
 
 /** パイプライン段の実体: density.final と parcels を埋める */
@@ -391,8 +481,188 @@ export function runParcels(model: WorldModel): void {
   // --- 区画分割 ---
   const ctx = createSiteContext(model);
   const shore = collectShorePoints(model);
-  const accepted: Parcel[] = [];
+  const accepted: AcceptedParcel[] = [];
   let capReached = false;
+
+  // --- 農地区画(contracts/facilities.md「field(畑)・
+  //     pasture(牧草地)」)。residential より**先**に切り出す(実測に
+  //     基づく順序。契約「field/pasture」実装補足「切り出し順序」。残地
+  //     方式では市街化が進むと農地が構造的に全滅するため、農村ゾーンの
+  //     道路沿いを農地が先取りし、residential が残りを埋める。residential
+  //     のループ自体は無改変で、既採択の農地区画との衝突棄却(既存の
+  //     検査 (6))で自然に避ける)。
+  //     id は `parcel/<roadEdgeId>/<L|R>/farm<slot>`(residential の
+  //     数値 slot と衝突しない専用の slot 空間。契約 facilities.md) ---
+  {
+    const settle = model.meta.params.settlement / 100;
+    const farmlandRate = clamp(0.25 + 0.55 * (1 - settle), 0.25, 0.8);
+    // 間口の基準 = residential 候補走査(下のループと同じ間口式・同じ
+    // 歩み。乱数非消費の決定論的な事前スキャン)の間口の中央値。
+    // 「農地の間口は住居の典型間口の 1.5 倍以上」という契約の下限を、
+    // 係数 1.7 で余裕を持って満たす(候補中央値は採択中央値とほぼ一致
+    // することを 6 seed × Settlement{0,20,50} の実測で確認済み。
+    // facilities.md「農地区画の寸法帯」)。候補が無い縮退時は
+    // derived.parcelSize を代用する
+    const candidateFrontages: number[] = [];
+    for (const edge of model.network.edges) {
+      const total = pathLength(edge.path);
+      let s = END_MARGIN;
+      while (s < total - END_MARGIN) {
+        const at = pointAlong(edge.path, s);
+        const d0 = sampleFieldGrid(final, at.p.x, at.p.z);
+        const frontage = clamp(
+          derived.parcelSize * (1.35 - 0.75 * d0),
+          FRONTAGE_MIN,
+          FRONTAGE_MAX,
+        );
+        if (s + frontage > total - END_MARGIN) break;
+        candidateFrontages.push(frontage);
+        s += frontage + SLOT_GAP;
+      }
+    }
+    candidateFrontages.sort((a, b) => a - b);
+    const n = candidateFrontages.length;
+    const medianFrontage =
+      n === 0
+        ? derived.parcelSize
+        : n % 2 === 1
+          ? (candidateFrontages[(n - 1) / 2] ?? 0)
+          : ((candidateFrontages[n / 2 - 1] ?? 0) +
+              (candidateFrontages[n / 2] ?? 0)) /
+            2;
+    const farmFrontage = clamp(
+      FARMLAND_FRONTAGE_SCALE * medianFrontage,
+      FARMLAND_FRONTAGE_MIN,
+      FARMLAND_FRONTAGE_MAX,
+    );
+
+    for (const edge of model.network.edges) {
+      if (capReached) break;
+      const total = pathLength(edge.path);
+      const frontOffset = edge.width / 2 + FRONT_GAP;
+      let s = END_MARGIN;
+      let slot = 0;
+      while (s < total - END_MARGIN && !capReached) {
+        if (s + farmFrontage > total - END_MARGIN) break;
+        const mid = pointAlong(edge.path, s + farmFrontage / 2);
+        const nominalDepth = farmFrontage * FARMLAND_DEPTH_RATIO;
+        let acceptedHere = false;
+
+        for (const side of [1, -1] as const) {
+          if (capReached) break;
+          // 農村ゾーン事前判定(乱数非消費。候補の想定中心(揺らぎ前の
+          // 奥行きで見積もった位置)。RNG を消費するかどうかの入口の
+          // ふるいで、確定判定は縮小ステップごとの実候補の中心で行う)
+          const nominalCenter = buildRect(
+            mid.p,
+            mid.angle,
+            side,
+            farmFrontage,
+            nominalDepth,
+            frontOffset,
+          ).center;
+          const nominalUrbanity = model.zoning
+            ? sampleFieldGrid(model.zoning, nominalCenter.x, nominalCenter.z)
+            : 0;
+          // 浅い候補(最小奥行き)の中心でも判定し、どちらかが農村なら
+          // RNG 消費へ進む(深い中心は外縁の森帯まで届いて boundary 棄却
+          // されがち、浅い中心は町寄りで urbanity が高くなりがち — 両端の
+          // どちらかが農村ゾーンにあれば候補として扱う)
+          const shallowCenter = buildRect(
+            mid.p,
+            mid.angle,
+            side,
+            farmFrontage,
+            DEPTH_SHRINK_MIN,
+            frontOffset,
+          ).center;
+          const shallowUrbanity = model.zoning
+            ? sampleFieldGrid(model.zoning, shallowCenter.x, shallowCenter.z)
+            : 0;
+          if (
+            nominalUrbanity >= RURAL_URBANITY_MAX &&
+            shallowUrbanity >= RURAL_URBANITY_MAX
+          ) {
+            continue;
+          }
+
+          const id = `parcel/${edge.id}/${side === 1 ? "L" : "R"}/farm${slot}`;
+          const rng = makeRng(seed, id);
+          // 消費順を residential と同じ流儀で固定: 奥行き揺らぎ → 採択ロール
+          const depthJitter = rng.range(0.9, 1.1);
+          const adoptRoll = rng.next();
+          const baseDepth = farmFrontage * FARMLAND_DEPTH_RATIO * depthJitter;
+          // 奥行きの縮小リトライ(residential と同じ機構を流用。寸法の帯のみ
+          // 異なる)。各ステップで「実候補の中心が農村ゾーンにある」ことも
+          // 検証する(確定判定。深すぎて外縁へ届く候補は縮めれば通り、
+          // 町寄りに食い込む浅い候補は棄却される)
+          let rect: CandidateRect | null = null;
+          for (const scale of DEPTH_SHRINK_STEPS) {
+            const depth = Math.max(baseDepth * scale, DEPTH_SHRINK_MIN);
+            const candidate = buildRect(
+              mid.p,
+              mid.angle,
+              side,
+              farmFrontage,
+              depth,
+              frontOffset,
+            );
+            const candUrbanity = model.zoning
+              ? sampleFieldGrid(model.zoning, candidate.center.x, candidate.center.z)
+              : 0;
+            if (
+              candUrbanity < RURAL_URBANITY_MAX &&
+              !rejectByCollision(model, ctx, candidate, accepted)
+            ) {
+              rect = candidate;
+              break;
+            }
+            if (depth <= DEPTH_SHRINK_MIN) break;
+          }
+          if (!rect) continue;
+          if (adoptRoll >= farmlandRate) continue;
+
+          // 水辺判定(residential と同じ規約。Parcel スキーマの充足のため)。
+          // waterBodySdf/canalSdf は水域境界(三角関数由来の連続値)からの
+          // 距離のため、固定閾値との比較はハッシュと同じ精度に丸めてから
+          // 行う(contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
+          let minWaterBody = Infinity;
+          let minCanal = Infinity;
+          for (const p of rect.probes) {
+            minWaterBody = Math.min(minWaterBody, ctx.waterBodySdf(p.x, p.z));
+            minCanal = Math.min(minCanal, ctx.canalSdf(p.x, p.z));
+          }
+          const waterside = stableRound(minWaterBody) < NEAR_WATER;
+          const canalside = stableRound(minCanal) < NEAR_WATER;
+
+          // 岸線占有率 40% 上限は residential 専用(施設は建物ではないため
+          // 対象外。facilities.md に契約追補済み)
+          accepted.push({
+            parcel: {
+              id,
+              roadEdgeId: edge.id,
+              polygon: rect.polygon,
+              frontEdge: rect.frontEdge,
+              facing: rect.facing,
+              waterside,
+              canalside,
+              kind: "farmland",
+            },
+            side: side === 1 ? "L" : "R",
+            slot,
+          });
+          if (accepted.length >= derived.parcelCountMax) capReached = true;
+          acceptedHere = true;
+        }
+        slot++;
+        // 両側とも不成立の位置は 1/4 間口だけ進めて再試行する(決定論。
+        // 農村ゾーンの帯は外縁・道路・広場の地形制約で細切れになりやすく、
+        // 間口幅の固定歩みでは棄却区間を丸ごと捨ててしまうため。
+        // 成立した位置は重なり防止に全間口+隙間ぶん進める)
+        s += acceptedHere ? farmFrontage + SLOT_GAP : farmFrontage / 4;
+      }
+    }
+  }
 
   for (const edge of model.network.edges) {
     if (capReached) break;
@@ -443,15 +713,18 @@ export function runParcels(model: WorldModel): void {
         }
         if (!rect) continue;
 
-        // 水辺判定(契約: プローブの最小距離 < 4.5)
-        let minRiverLake = Infinity;
+        // 水辺判定(契約: プローブの最小距離 < 4.5)。waterBodySdf/canalSdf は
+        // 水域境界(三角関数由来の連続値)からの距離のため、固定閾値との比較は
+        // ハッシュと同じ精度に丸めてから行う
+        // (contracts/pipeline.md「WorldModel 正規化ハッシュ」節)
+        let minWaterBody = Infinity;
         let minCanal = Infinity;
         for (const p of rect.probes) {
-          minRiverLake = Math.min(minRiverLake, ctx.riverLakeSdf(p.x, p.z));
+          minWaterBody = Math.min(minWaterBody, ctx.waterBodySdf(p.x, p.z));
           minCanal = Math.min(minCanal, ctx.canalSdf(p.x, p.z));
         }
-        const waterside = minRiverLake < NEAR_WATER;
-        const canalside = minCanal < NEAR_WATER;
+        const waterside = stableRound(minWaterBody) < NEAR_WATER;
+        const canalside = stableRound(minCanal) < NEAR_WATER;
 
         // 採択確率: parcelRate × 密度係数。水辺は watersideRate で押し上げ
         const dc = sampleFieldGrid(final, rect.center.x, rect.center.z);
@@ -482,13 +755,18 @@ export function runParcels(model: WorldModel): void {
         }
 
         accepted.push({
-          id,
-          roadEdgeId: edge.id,
-          polygon: rect.polygon,
-          frontEdge: rect.frontEdge,
-          facing: rect.facing,
-          waterside,
-          canalside,
+          parcel: {
+            id,
+            roadEdgeId: edge.id,
+            polygon: rect.polygon,
+            frontEdge: rect.frontEdge,
+            facing: rect.facing,
+            waterside,
+            canalside,
+            kind: "residential",
+          },
+          side: side === 1 ? "L" : "R",
+          slot,
         });
         if (accepted.length >= derived.parcelCountMax) capReached = true;
       }
@@ -497,12 +775,14 @@ export function runParcels(model: WorldModel): void {
     }
   }
 
-  model.parcels = accepted;
+  // --- 区画グループ(groupId)の付与(乱数非消費・決定論的後処理) ---
+  const finalParcels = assignGroupIds(accepted);
+  model.parcels = finalParcels;
 
   // --- パイプライン内アサーション(throw せず件数を console に出す) ---
   // 接道保証: frontEdge 中点から接道 edge への距離 ≤ width/2 + 2.0
   const edgeById = new Map(model.network.edges.map((e) => [e.id, e]));
-  for (const parcel of accepted) {
+  for (const parcel of finalParcels) {
     const edge = edgeById.get(parcel.roadEdgeId);
     if (!edge) {
       violations++;
@@ -514,13 +794,43 @@ export function runParcels(model: WorldModel): void {
       violations++;
     }
   }
+  // groupId の整合(全区画が付与済み・形式・同一グループ内は同一 edge・
+  // 同一側かつスロット連番が連続)
+  const GROUP_ID_RE = /^block\/(.+)\/(L|R)\/(\d+)$/;
+  const groupSlots = new Map<string, number[]>();
+  for (let i = 0; i < finalParcels.length; i++) {
+    const parcel = finalParcels[i];
+    const meta = accepted[i];
+    if (!parcel || !meta) continue;
+    const m = GROUP_ID_RE.exec(parcel.groupId);
+    if (!m || m[1] !== parcel.roadEdgeId || m[2] !== meta.side) {
+      violations++;
+      continue;
+    }
+    let slots = groupSlots.get(parcel.groupId);
+    if (!slots) {
+      slots = [];
+      groupSlots.set(parcel.groupId, slots);
+    }
+    slots.push(meta.slot);
+  }
+  for (const slots of groupSlots.values()) {
+    slots.sort((a, b) => a - b);
+    for (let i = 1; i < slots.length; i++) {
+      const prev = slots[i - 1];
+      const cur = slots[i];
+      if (prev === undefined || cur === undefined || cur !== prev + 1) {
+        violations++;
+      }
+    }
+  }
   // 既存区画との重なりゼロ(構成上ゼロのはず。再検査)
-  for (let i = 0; i < accepted.length; i++) {
-    const a = accepted[i];
+  for (let i = 0; i < finalParcels.length; i++) {
+    const a = finalParcels[i];
     if (!a) continue;
     const ab = polygonBounds(a.polygon);
-    for (let j = i + 1; j < accepted.length; j++) {
-      const b = accepted[j];
+    for (let j = i + 1; j < finalParcels.length; j++) {
+      const b = finalParcels[j];
       if (!b) continue;
       const bb = polygonBounds(b.polygon);
       if (
@@ -535,7 +845,7 @@ export function runParcels(model: WorldModel): void {
     }
   }
   // 上限・密度場の整合
-  if (accepted.length > derived.parcelCountMax) violations++;
+  if (finalParcels.length > derived.parcelCountMax) violations++;
   const primary = model.density.primary;
   if (primary) {
     for (let i = 0; i < final.values.length; i++) {

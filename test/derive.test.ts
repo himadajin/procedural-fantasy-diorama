@@ -1,16 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_PARAMS,
-  type Derived,
-  type Params,
-} from "../src/model/worldmodel";
+import { DEFAULT_PARAMS, type Derived, type Params } from "../src/model/worldmodel";
 import { computeDerived } from "../src/pipeline/derive";
+import { withParams } from "./helpers";
 
 const SEEDS = ["seed-a", "seed-b", "everdusk-101"];
-
-function withParams(over: Partial<Params>): Params {
-  return { ...DEFAULT_PARAMS, ...over };
-}
 
 describe("computeDerived: 決定性", () => {
   it("同一入力で深い等価の Derived を返す", () => {
@@ -44,6 +37,7 @@ describe("computeDerived: 6パラメータの駆動先(implementation-spec 1.6�
         "laneAmount",
         "floorsBias",
         "canalScore",
+        "streetBudget",
       ],
     ],
     [
@@ -53,11 +47,12 @@ describe("computeDerived: 6パラメータの駆動先(implementation-spec 1.6�
     [
       "water",
       [
-        "riverCount",
-        "riverWidth",
+        "pondCount",
+        "pondArea",
         "lakeChance",
         "lakeArea",
         "canalScore",
+        "canalWidth",
         "marshAmount",
         "sandbarAmount",
         "watersideRate",
@@ -120,28 +115,126 @@ describe("computeDerived: 境界値", () => {
     }
   });
 
-  it("entryPointCount は 2〜4 の整数", () => {
+  it("entryPointCount は 2〜5 の整数(2 + 2.8×scale + jitter)", () => {
     for (const seed of SEEDS) {
       for (let scale = 0; scale <= 100; scale += 5) {
         const d = computeDerived(seed, withParams({ worldScale: scale }));
         expect(Number.isInteger(d.entryPointCount)).toBe(true);
         expect(d.entryPointCount).toBeGreaterThanOrEqual(2);
-        expect(d.entryPointCount).toBeLessThanOrEqual(4);
+        expect(d.entryPointCount).toBeLessThanOrEqual(5);
       }
     }
   });
 
-  it("riverCount は 0〜2 の整数で、Water 0 では必ず 0", () => {
+  it("entryPointCount は worldScale に対して単調非減少(seed 揺らぎの範囲内)", () => {
+    // entryJitter ∈ [-0.35, 0.35] は固定なので、scale の係数 2.8 に対して
+    // 揺らぎ 1 個ぶん(0.7)未満の刻みでは逆転しうる。5刻みなら
+    // Δ(2.8×scale) = 0.14 で揺らぎ幅より小さいため、代わりに粗い刻み(25)で
+    // 単調性を機械検証する(揺らぎの影響を刻み幅で確実に上回らせる)。
+    for (const seed of SEEDS) {
+      let prev = -Infinity;
+      for (const scale of [0, 25, 50, 75, 100]) {
+        const d = computeDerived(seed, withParams({ worldScale: scale }));
+        expect(d.entryPointCount).toBeGreaterThanOrEqual(prev);
+        prev = d.entryPointCount;
+      }
+    }
+  });
+
+  it("scale=0 では entryPointCount は 2 近傍(揺らぎ込みで 2)、scale=100 では 4〜5", () => {
+    for (const seed of SEEDS) {
+      const low = computeDerived(seed, withParams({ worldScale: 0 }));
+      expect(low.entryPointCount).toBe(2);
+      const high = computeDerived(seed, withParams({ worldScale: 100 }));
+      expect(high.entryPointCount).toBeGreaterThanOrEqual(4);
+      expect(high.entryPointCount).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("streetBudget = worldSize × (0.35 + 2.35×settle) × (0.55 + 0.9×scale) の式に一致する", () => {
+    for (const seed of SEEDS) {
+      for (const worldScale of [0, 25, 50, 75, 100]) {
+        for (const settlement of [0, 25, 50, 75, 100]) {
+          const d = computeDerived(seed, withParams({ worldScale, settlement }));
+          const scale = worldScale / 100;
+          const settle = settlement / 100;
+          const expected = d.worldSize * (0.35 + 2.35 * settle) * (0.55 + 0.9 * scale);
+          expect(d.streetBudget).toBeCloseTo(expected, 6);
+          expect(d.streetBudget).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it("parcelCountMax = round(60 + 200×scale + 80×settle) の式に一致し、60〜340 に収まる", () => {
+    for (const seed of SEEDS) {
+      for (const worldScale of [0, 25, 50, 75, 100]) {
+        for (const settlement of [0, 25, 50, 75, 100]) {
+          const d = computeDerived(seed, withParams({ worldScale, settlement }));
+          const scale = worldScale / 100;
+          const settle = settlement / 100;
+          const expected = Math.round(60 + 200 * scale + 80 * settle);
+          expect(d.parcelCountMax).toBe(expected);
+          expect(d.parcelCountMax).toBeGreaterThanOrEqual(60);
+          expect(d.parcelCountMax).toBeLessThanOrEqual(340);
+        }
+      }
+    }
+  });
+
+  it("parcelCountMax は worldScale・settlement それぞれに対して単調非減少", () => {
+    for (const seed of SEEDS) {
+      let prevByScale = -Infinity;
+      for (const worldScale of [0, 25, 50, 75, 100]) {
+        const d = computeDerived(seed, withParams({ worldScale, settlement: 50 }));
+        expect(d.parcelCountMax).toBeGreaterThanOrEqual(prevByScale);
+        prevByScale = d.parcelCountMax;
+      }
+      let prevBySettle = -Infinity;
+      for (const settlement of [0, 25, 50, 75, 100]) {
+        const d = computeDerived(seed, withParams({ worldScale: 50, settlement }));
+        expect(d.parcelCountMax).toBeGreaterThanOrEqual(prevBySettle);
+        prevBySettle = d.parcelCountMax;
+      }
+    }
+  });
+
+  it("pondCount は 0〜4 の整数で、Water 0 では必ず 0", () => {
     for (const seed of SEEDS) {
       for (let water = 0; water <= 100; water += 5) {
         const d = computeDerived(seed, withParams({ water }));
-        expect(Number.isInteger(d.riverCount)).toBe(true);
-        expect(d.riverCount).toBeGreaterThanOrEqual(0);
-        expect(d.riverCount).toBeLessThanOrEqual(2);
+        expect(Number.isInteger(d.pondCount)).toBe(true);
+        expect(d.pondCount).toBeGreaterThanOrEqual(0);
+        expect(d.pondCount).toBeLessThanOrEqual(4);
       }
       const dry = computeDerived(seed, withParams({ water: 0 }));
-      expect(dry.riverCount).toBe(0);
+      expect(dry.pondCount).toBe(0);
       expect(dry.lakeChance).toBe(0);
+    }
+  });
+
+  it("pondArea = lakeArea × 0.18 の式に一致する", () => {
+    for (const seed of SEEDS) {
+      for (const water of [0, 25, 50, 75, 100]) {
+        const d = computeDerived(seed, withParams({ water }));
+        expect(d.pondArea).toBeCloseTo(d.lakeArea * 0.18, 10);
+      }
+    }
+  });
+
+  it("canalWidth は 2.2〜5 にクランプされ、水量に対して単調に増える", () => {
+    for (const seed of SEEDS) {
+      let prev = -Infinity;
+      for (const water of [0, 10, 25, 50, 75, 90, 100]) {
+        const d = computeDerived(seed, withParams({ water }));
+        expect(d.canalWidth).toBeGreaterThanOrEqual(2.2);
+        expect(d.canalWidth).toBeLessThanOrEqual(5);
+        expect(d.canalWidth).toBeGreaterThanOrEqual(prev);
+        prev = d.canalWidth;
+      }
+      // 全パラメータ 50(water=50)は旧仕様(河川の最終幅×0.35)と等価になる基準値
+      const mid = computeDerived(seed, withParams({ water: 50 }));
+      expect(mid.canalWidth).toBeCloseTo(1.75 + 3.85 * 0.5, 10);
     }
   });
 

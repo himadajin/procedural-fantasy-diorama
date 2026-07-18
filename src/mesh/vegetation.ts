@@ -1,7 +1,7 @@
 /**
  * 植生メッシュビルダー: Vegetation(trees / shrubs / grassPatches)を
- * 専用の InstancedMesh 2 + マージ 1 で立体化する(PHASE 6 commit 20。
- * contracts/vegetation-summary.md Vegetation 節「植生の立体化」)。
+ * 専用の InstancedMesh 2 + マージ 1 で立体化する
+ * (contracts/vegetation-summary.md Vegetation 節「植生の立体化」)。
  *
  * - `vegetation-trunks`: 幹の 6 角円錐台(castShadow: false)。色 #55452f
  * - `vegetation-canopy`: 不整形な塊のプール。樹冠(木ごとに 2〜3 個)と
@@ -14,7 +14,7 @@
  *   broadleaf = 主塊+側塊 1〜2 / conifer = 縦積み 3 塊の先細り。
  *   個体差は tree フィールド+位置ハッシュ由来(乱数ストリーム非消費)
  * - 色は art-direction 5.3節。樹冠は明度階段の「屋根と壁の間」(同 2.2節)
- * - 描画プリセットの表示個体数上限(PHASE 7 commit 22): 個体(樹木・低木)を
+ * - 描画プリセットの表示個体数上限: 個体(樹木・低木)を
  *   位置ハッシュの優先順位で降順に整列してインスタンスを積み、
  *   各メッシュの userData.vegBudget(prefix 表)で viewer 側が count を絞る。
  *   幹と樹冠の間引きは同じ個体集合で揃う。上限無制限のとき表示集合は

@@ -1,6 +1,6 @@
 /**
  * 段10「舗装」: 道路・広場・水路の footprint で zoneMask の舗装チャネルを
- * 上書きする(contracts/ground-water.md ZoneMask 節、implementation-spec PHASE 3)。
+ * 上書きする(contracts/ground-water.md ZoneMask 節)。
  *
  * - 各セルの舗装被覆度 p(0〜1)を、道路(edge.path への距離 − width/2)、
  *   広場(polygon の符号付き距離)、水路(スプラインへの距離 − width/2 −

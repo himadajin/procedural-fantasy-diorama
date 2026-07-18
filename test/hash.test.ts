@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_PARAMS, type Params } from "../src/model/worldmodel";
 import { hashWorldModel } from "../src/model/hash";
 import { runPipeline } from "../src/pipeline/run";
-
-function withParams(over: Partial<Params>): Params {
-  return { ...DEFAULT_PARAMS, ...over };
-}
+import { withParams } from "./helpers";
 
 describe("hashWorldModel: 決定性(contracts/pipeline.md)", () => {
   it("同一入力の2回生成でハッシュが一致し、summary.hash に格納される", async () => {
@@ -39,35 +36,18 @@ describe("hashWorldModel: 決定性(contracts/pipeline.md)", () => {
 describe("hashWorldModel: 代表 seed×params のスナップショット固定", () => {
   // 意図した生成変更でこの表が変わる場合は、スナップショット更新を同一commitに
   // 含め、意図を commit メッセージに記す(implementation-spec 1.10節)
-  // commit 21(PHASE 7)でサマリーぶんを更新。意図した変更:
-  // 段15「サマリー」が summary(buildingCounts / centerDescription /
-  // waterOverview / wardOverview / scale)を最終確定する
-  // (contracts/vegetation-summary.md Summary 節)。段15 は乱数を消費しないが、
-  // 従来 buildingCounts は {}・centerDescription は "" のままだったのに対し、
-  // 本段が両者を最終状態から機械算出して埋めるため、8 組すべてのハッシュが
-  // 変わる(その他のフィールドは commit 20 から不変)。summary.complexity は
-  // WorldModel から除外した(レンダラー実測=表示依存のため。同節の設計判断)
-  // が、従来も 0 固定でハッシュに寄与していたのはキー名 "complexity" 等の
-  // 構造ぶんであり、除外と summary 埋めの両方が今回のハッシュ差に含まれる。
-  // summary.hash 自身は従来どおりハッシュ計算から除外される。
-  // 新旧対応(commit 20 → commit 21):
-  //   everdusk-101 {}              884882c7 → 1125a04d
-  //   everdusk-101 {water:0}       f1a62db2 → eed82045
-  //   everdusk-101 {water:95}      58609e07 → f7773829
-  //   everdusk-101 {worldScale:0}  cd8205af → aff7f80d
-  //   everdusk-101 {worldScale:100} 06acdfcb → 7bfd75e6
-  //   seed-a {}                    413344bc → 9913230d
-  //   seed-b {}                    360ce1b7 → a7018aa7
-  //   seed-b {water:70}            37add040 → 8765d9eb
+  // 現在の 8 SNAPSHOT 値は下記のとおり。値の変遷は本ファイルには保持せず、
+  // 更新時の commit メッセージのみに記す(contracts/pipeline.md
+  // 「WorldModel 正規化ハッシュ」節)。
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "1125a04d"],
-    ["everdusk-101", { water: 0 }, "eed82045"],
-    ["everdusk-101", { water: 95 }, "f7773829"],
-    ["everdusk-101", { worldScale: 0 }, "aff7f80d"],
-    ["everdusk-101", { worldScale: 100 }, "7bfd75e6"],
-    ["seed-a", {}, "9913230d"],
-    ["seed-b", {}, "a7018aa7"],
-    ["seed-b", { water: 70 }, "8765d9eb"],
+    ["everdusk-101", {}, "8389c6c3"],
+    ["everdusk-101", { water: 0 }, "3a392865"],
+    ["everdusk-101", { water: 95 }, "c4040dc3"],
+    ["everdusk-101", { worldScale: 0 }, "f3b1bb84"],
+    ["everdusk-101", { worldScale: 100 }, "9fc2d005"],
+    ["seed-a", {}, "fb2a515b"],
+    ["seed-b", {}, "667371c9"],
+    ["seed-b", { water: 70 }, "d13b0761"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

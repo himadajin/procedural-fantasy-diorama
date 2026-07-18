@@ -2,15 +2,16 @@
  * 段8「結界計画」: 結界環(ringPath / ringSegments)・結界門・魔導塔・聖域・
  * 魔法灯・浮遊要素の位置計画と、結界門スナップ後の BridgeSite 再抽出。
  * データの正は docs/internal/contracts/wards.md(Wards 節)・ground-water.md(Water 節)、
- * 設計は implementation-spec 1.3節(段8)・1.6節・PHASE 3・9節。
- * 立体化は PHASE 5b、デバッグ描画は PHASE 3 commit 11 の担当。
+ * 設計は implementation-spec 1.3節(段8)・1.6節・9節。
+ * 立体化は mesh/wardparts.ts(contracts/wards.md「結界構造の立体化」
+ * 「魔法灯・浮遊要素・橋の立体化」)の担当。
  *
  * ringPath の生成手順(contracts/wards.md):
  *   一次密度場の等値線(marchPositiveRegion)を初期形状
  *   → 中心まわりの偏角リサンプル+循環平滑化(平滑性)
  *   → 星形化(自己交差の除去)
  *   → footprint / 境界マージンへの半径クランプ
- *   → 水域(河川・湖・水路)の径方向回避。回避不能な区間は "overwater"
+ *   → 水域(湖・池・水路)の径方向回避。回避不能な区間は "overwater"
  *   失敗時は等値線レベルを引き上げ(=囲い半径を縮小して)リトライする。
  *   リトライ回数も乱数ストリーム "wards/ring" から消費して決定性を保つ。
  *   全リトライ失敗時は境界と footprint に収まる円環へフォールバックする。
@@ -25,6 +26,7 @@ import {
   pointInPolygon,
   polygonArea,
   polygonSignedDistance,
+  waterBodies,
 } from "../model/waterfield";
 import { sampleFieldGrid } from "../model/fieldgrid";
 import {
@@ -65,13 +67,9 @@ const LAMP_SPACING = 13;
 /** BridgeSite 再抽出の標本間隔(段5・段6と同じ) */
 const BRIDGE_SAMPLE_STEP = 2;
 
-/** 河川・湖・水路を合成した水域 sdf(正=陸側) */
+/** 湖・池・水路を合成した水域 sdf(正=陸側) */
 function combinedWaterSdf(model: WorldModel): (x: number, z: number) => number {
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   const canals = model.water.canals;
   if (canals.length === 0) return field.waterSdf;
   return (x, z) => {
@@ -287,12 +285,17 @@ interface GateInfo {
 /**
  * 結界環×道路 edge の全交点に結界門を置き、交点を edge.path へ挿入する
  * (局所スナップ。道路の大規模な引き直しはしない)。
+ * スナップ対象は class "main" / "connector" に限定する
+ * (contracts/wards.md「gates」。"street" / "lane" には門を開かない —
+ * 門は幹線格の道に限る。結界環が street・lane と交差しても門は生成せず、
+ * その交点は壁の接地検証からも除外しない=当たる区間はそのまま "wall" として扱う)
  */
 function planGates(model: WorldModel, ring: Vec2[]): GateInfo[] {
   const gates: GateInfo[] = [];
   const counts = new Map<string, number>();
   const n = ring.length;
   for (const edge of model.network.edges) {
+    if (edge.class !== "main" && edge.class !== "connector") continue;
     const crossings: {
       pi: number;
       t: number;
@@ -817,7 +820,10 @@ function planFloaters(
 
 /**
  * BridgeSite を全道路 edge について再抽出する(結界門スナップ後の正)。
- * 河川・湖・水路を合成した水域で標本化し、over は中点で最も深い水域要素。
+ * 湖・池・水路を合成した水域で標本化し、over は中点で最も深い水域要素
+ * (道路は湖・池を渡らないため実務上 over は "canal" になる想定だが、
+ * スキーマ・判定ロジックは "lake" / "pond" も許容する。contracts/ground-water.md
+ * 「bridges の性質」)。
  */
 function reextractBridges(
   model: WorldModel,
@@ -828,20 +834,20 @@ function reextractBridges(
   for (const edge of model.network.edges) {
     for (const crossing of waterCrossings(edge.path, waterSdf, BRIDGE_SAMPLE_STEP)) {
       const p = crossing.position;
-      let over: BridgeSite["over"] = "river";
+      let over: BridgeSite["over"] = "canal";
       let best = Infinity;
-      for (const river of model.water.rivers) {
-        const d = distToPolyline(p.x, p.z, river.points) - river.width / 2;
-        if (d < best) {
-          best = d;
-          over = "river";
-        }
-      }
       for (const lake of model.water.lakes) {
         const d = polygonSignedDistance(p.x, p.z, lake);
         if (d < best) {
           best = d;
           over = "lake";
+        }
+      }
+      for (const pond of model.water.ponds) {
+        const d = polygonSignedDistance(p.x, p.z, pond);
+        if (d < best) {
+          best = d;
+          over = "pond";
         }
       }
       for (const canal of model.water.canals) {
@@ -930,9 +936,13 @@ export function runWards(model: WorldModel): void {
         if (segmentIntersection(a, b, c, d)) assertionViolations++;
       }
     }
-    // 3) 結界横断道路はすべて門位置を通る(wardLevel ≥ 2)
+    // 3) 結界横断道路はすべて門位置を通る(wardLevel ≥ 2。門スナップ対象は
+    //    main / connector に限定するため、本検証も同じ対象に限る。
+    //    street・lane が結界環を横切っても門は生成せず、その交点はそのまま
+    //    wall として扱う=検証対象外)
     if (derived.wardLevel >= 2) {
       for (const edge of model.network.edges) {
+        if (edge.class !== "main" && edge.class !== "connector") continue;
         for (let i = 0; i + 1 < edge.path.length; i++) {
           const a = edge.path[i];
           const b = edge.path[i + 1];
@@ -985,7 +995,7 @@ export function runWards(model: WorldModel): void {
     console.warn(`wards: パイプライン内アサーション違反 ${assertionViolations} 件`);
   }
 
-  // サマリー(段13 の担当だが、中間PHASEでは部分的に埋める)
+  // サマリー(段13 の担当だが、本段でも先取りして部分的に埋める)
   model.summary.wardOverview = {
     level: wards.wardLevel,
     ringLength,

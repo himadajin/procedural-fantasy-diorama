@@ -25,6 +25,10 @@
   担当する。時間・表示状態・プリセットを WorldModel に書き戻さない。
 - `ui/` は params と seed の編集、Generate の発火、サマリー表示のみを行う。
   生成内容には関与しない。
+- `mesh/` は WorldModel の Part 型のうち未知のものに遭遇しても生成を
+  止めない: 対応するハンドラがない部品型は `console.warn` で件数を
+  報告した上で読み飛ばす(1件も出ないことが正常状態であり、警告は契約と
+  実装の乖離を知らせる開発時シグナルとして扱う)。
 
 ## RNG API(`src/rng/`)
 
@@ -65,19 +69,20 @@ interface Rng {
 |---|---|---|---|---|
 | 1 | 導出設定 | pipeline/derive | seed, params | meta.derived |
 | 2 | 地面 | pipeline/ground | meta | ground(zoneMask下地) |
-| 3 | 水系 | pipeline/water | meta, ground | water.rivers/lakes/shoreline、ground.edgeStyle、zoneMask(湿地・砂洲) |
+| 3 | 水系 | pipeline/water | meta, ground | water.lakes/ponds/shoreline、ground.edgeStyle、zoneMask(湿地・砂洲) |
 | 4 | 立地評価 | pipeline/siting | meta, ground, water | centerPlan.position/footprint/axes、network.entryPoints |
-| 5 | 道路網 | pipeline/network | 〜centerPlan | network.nodes/edges、water.bridges |
+| 5 | 道路網 | pipeline/network | 〜centerPlan | network.nodes/edges(class は main/connector に加え street。Phase B。後半サブフェーズ `pipeline/streets.ts` が発芽・成長させ追記する) |
 | 6 | 水路 | pipeline/canals | 〜network | water.canals、water.bridges(追加) |
-| 7 | 一次密度場 | pipeline/density | 〜canals | density.primary |
+| 7 | 一次密度場 | pipeline/density | 〜canals | density.primary、zoning(市街度。Phase B) |
 | 8 | 結界計画 | pipeline/wards | 〜density.primary | wards 一式、water.bridges(再抽出) |
-| 9 | 広場 | pipeline/plazas | 〜wards | plazas、centerPlan.facing/heightHint |
+| 9 | 広場 | pipeline/plazas | 〜wards | plazas、centerPlan.facing/heightHint、network.nodes/edges(中心前広場の接続路を street として追記のみ。Phase B) |
 | 10 | 舗装 | pipeline/paving | 〜plazas(network / water.canals / plazas) | ground.zoneMask(舗装チャネル上書き) |
 | 11 | 区画 | pipeline/parcels | 〜舗装 | density.final、parcels |
 | 12 | 建物 | pipeline/buildings | 〜parcels | buildings(骨格+部品リスト。中心建築を含む)、plazas(中庭 "courtyard" の追記) |
 | 13 | 小道 | pipeline/lanes | 〜buildings | network.nodes/edges(lane の追記のみ)、ground.zoneMask(小道の舗装追記)、summary.scale.roadLength(加算) |
-| 14 | 植生 | pipeline/vegetation | 〜lanes | vegetation |
-| 15 | サマリー | pipeline/summary | 全部 | summary |
+| 14 | 施設 | pipeline/facilities | 〜lanes(parcels / plazas / network.nodes / water.canals / water.shoreline) | facilities |
+| 15 | 植生 | pipeline/vegetation | 〜facilities | vegetation |
+| 16 | サマリー | pipeline/summary | 全部 | summary |
 
 - 各段はパイプライン内アサーション(データ検証)を持ってよい。
   違反は throw せず件数を console に出し、生成は続行する
@@ -85,11 +90,17 @@ interface Rng {
 - 各段の表示名(「水系を計画中…」等)は Generating インジケーターに
   そのまま使う(art-direction 9.5節)。
 - 段6「水路」の BridgeSite 追加は仮のもので、段8「結界計画」が結界門
-  スナップ後に全道路 edge を河川・湖・水路の合成水域で標本化し直して
+  スナップ後に全道路 edge を湖・池・水路の合成水域で標本化し直して
   bridges 全体を置き換える(ground-water.md Water 節)。水路は waterfield・
   岸線に影響させない(同節の設計判断)。zoneMask への舗装上書きは
   段5/6/9 の各段では行わず、段10「舗装」へ集約する
   (ground-water.md ZoneMask 節)。段10 は乱数サブストリームを消費しない。
+- **Phase B 註記**: 段9「広場」は中心前広場確定後に接続路(class
+  `"street"`)を `network` へ追記する(network-plaza.md Plaza 節「中心前
+  広場の接続路」)。したがって段10「舗装」・段11「区画」・段13「小道」は
+  段9 より後に走るため、読む `network.edges` にはこの接続路を**含んだ**
+  状態が渡る(段9 より前の段5/6/7/8 は含まない状態のまま)。タスク B4 で
+  実装済み(2026-07-12)。
 - 段13「小道」(PHASE 4b)は段12「建物」の後に走る専用段とし、
   裏手の小道(区画の列の奥)と水路沿いの岸沿い道(towpathSide 側)を
   lane class の edge として network へ**追記のみ**で加える
@@ -126,22 +137,58 @@ interface Rng {
   buildings.md「水辺建築の拡張」)。乱数は派生サブストリーム
   `"building/<id>/waterfront"` のみを消費し、既存の
   `"building/<id>"` 系ストリームの消費は変えない。
-- 段14「植生」(PHASE 6 commit 20)は段13「小道」の後に走り、
-  `vegetation` のみを書く(他フィールドには触れない)。散布はセル格子の
-  マスクベース(森リング > 外縁草地 > 水辺低木・湿地植生 >
-  道・広場周辺 > 結界内僅少。vegetation-summary.md Vegetation 節)で、
-  建物・道路・広場・水面・水路バッファとの衝突をハード除外する。
-  乱数はセルごとの独立サブストリーム `"vegetation/<ix>_<iz>"` のみを
-  消費する。表示名は段14「草木を茂らせています…」。
-- 段15「サマリー」(PHASE 7 commit 21)は全段の後に走り、`summary` の
-  全フィールドを最終状態の WorldModel から機械的に**再算出**して確定する
-  (中間PHASEの各段の部分先埋めを上書きするため、乖離は起こらない。
-  vegetation-summary.md Summary 節)。`buildingCounts`(役割別集計)・
-  `centerDescription`(支配軸+特徴からの記述文)・`waterOverview` /
-  `wardOverview` / `scale` を書く。複雑度(頂点数・インスタンス数・
-  draw call)は表示依存の実測値のため WorldModel に持たず UI が
-  `renderer.info` から埋める(同節の設計判断)。段15 は乱数サブストリームを
-  消費しない(決定的な集計)。表示名は段15「箱庭を書き留めています…」。
+- 段11「区画」(Phase D。計画書 `plans/2026-07-14-worldgen-rework-facilities.md`
+  タスク D2a。2026-07-14 の D2a 差し戻しで切り出し順を改訂)は、農村ゾーン
+  (`zoning` の urbanity < 0.45)の道路沿いに `Parcel.kind: "farmland"` の
+  区画を residential より**先**に切り出す(農地が農村の道路沿いを先取りし、
+  residential が残りを埋める。residential のループ自体は無改変で、既採択の
+  farmland 区画との既存の衝突棄却で自然に避ける。走査則・寸法帯・採択率は
+  facilities.md「field(畑)・pasture(牧草地)」節が正)。乱数は既存の
+  `"parcel/<id>"` ストリームの流儀のみを使う(farmland の id は
+  `parcel/<roadEdgeId>/<L|R>/farm<slot>` の専用 slot 空間。消費順も
+  residential と同一)。farmland の先取りにより residential の採択結果
+  (区画数・位置)は farmland の有無に依存して変わる(旧規定「residential
+  の切り出しロジックには手を入れない」はループ無改変の意味では維持されるが、
+  出力の不変は差し戻しで撤回。実測は facilities.md 同節)。
+  段12「建物」は `kind: "farmland"` の区画を建物生成・クラスタリングの
+  対象から除外する(farmland 区画に対して RNG を消費しない。
+  buildings.md「全単射の対象範囲」実装補足)ため、段12 の既存 RNG
+  ストリーム契約(本節の他の箇条)は residential 区画に対してのみ従来どおり
+  適用される。
+- 段14「施設」(Phase D。計画書
+  `plans/2026-07-14-worldgen-rework-facilities.md` タスク D2a〜D5)は
+  段13「小道」の後・段15「植生」の前に走り、`facilities` のみを書く
+  (他フィールドには触れない。植生が施設を回避できるようにするための
+  順序。facilities.md を正とする)。畑・牧草地(farmland 区画へ)、
+  井戸・屋台(広場・農村道路ノードへ)、風車・水車(農村外縁・水路/湖岸へ)、
+  桟橋(汀線へ)を、facilities.md「kind 一覧・配置条件」の配置条件・
+  数量式・衝突/帯検証則に従って生成する。乱数は新設ストリーム
+  `"facility/<...>"`(facilities.md「RNG ラベル体系」)のみを消費し、
+  既存の全ストリームの消費列は変えない。桟橋は段12「建物」の水辺拡張が
+  確定した `claimedRegions` を読み、重ならない位置のみ採択する
+  (facilities.md「waterfront claimed 検査への参加」。buildings.md の
+  `claimedRegions` 配列自体には追記しない片方向参照)。表示名は
+  段14「暮らしの気配を配っています…」(提案値。D2a〜D6 で調整しうる)。
+- 段15「植生」(PHASE 6 commit 20。Phase D で段14 から繰り下げ)は
+  段14「施設」の後に走り、`vegetation` のみを書く(他フィールドには
+  触れない)。散布はセル格子のマスクベース(森リング > 外縁草地 >
+  水辺低木・湿地植生 > 道・広場周辺 > 結界内僅少。
+  vegetation-summary.md Vegetation 節)で、建物・道路・広場・水面・
+  水路バッファ・**施設**(facilities。vegetation-summary.md「回避対象への
+  facilities 追加」)との衝突をハード除外する。乱数はセルごとの独立
+  サブストリーム `"vegetation/<ix>_<iz>"` のみを消費する。表示名は
+  段15「草木を茂らせています…」。
+- 段16「サマリー」(PHASE 7 commit 21。Phase D で段15 から繰り下げ)は
+  全段の後に走り、`summary` の全フィールドを最終状態の WorldModel から
+  機械的に**再算出**して確定する(中間PHASEの各段の部分先埋めを上書きする
+  ため、乖離は起こらない。vegetation-summary.md Summary 節)。
+  `buildingCounts`(役割別集計)・`centerDescription`(支配軸+特徴からの
+  記述文)・`waterOverview` / `wardOverview` / `scale` に加え、施設カウント
+  (Phase D タスク D6 で追加。vegetation-summary.md Summary 節「施設カウント
+  の追加」)を書く。複雑度(頂点数・インスタンス数・draw call)は表示依存の
+  実測値のため WorldModel に持たず UI が `renderer.info` から埋める
+  (同節の設計判断)。段16 は乱数サブストリームを消費しない(決定的な集計)。
+  表示名は段16「箱庭を書き留めています…」。
 
 ## チャンク実行フレームワーク
 
@@ -158,7 +205,10 @@ runPipeline(seed: string, params: Params, opts?: {
 
 - ステップ間で requestAnimationFrame に制御を返し、生成中もカメラ操作と
   UIを生かす(フリーズ不可)。rAF が無い環境(テスト)では setTimeout に
-  フォールバックする。
+  フォールバックする。この rAF/setTimeout の参照はチャンク実行の
+  スケジューリング(いつ制御を返すか)のみに関わる意図的な例外であり、
+  生成結果や決定性には影響しない(各ステップ自体は入力のみに依存する
+  純関数のままであり、フレームタイミングに依存する値は生成しない)。
 - `runPipeline` は全段完了後に正規化ハッシュ(下記)を `summary.hash` へ
   格納してから resolve する。
 - 完了時、呼び出し側(main)が旧シーンサブツリーを dispose 付きで差し替える。
@@ -171,19 +221,132 @@ runPipeline(seed: string, params: Params, opts?: {
 決定性検証(implementation-spec 1.10節)の正式定義:
 
 1. WorldModel を深さ優先で走査する。オブジェクトのキーは辞書順にソートする。
-2. 数値は 1e-6 で丸めた固定精度(小数6桁)で文字列化する。
+2. 数値は 1e-3 で丸めた固定精度(小数3桁)で文字列化する。
    文字列・真偽値はそのまま文字列化する。
 3. 走査順にキーと値を連結した文字列を FNV-1a(32bit)でハッシュし、
    16進8桁の文字列とする。
 
 - `summary.hash` 自身はハッシュ計算から除外する。
 - 実装は `src/model/hash.ts` の `hashWorldModel`(three 非依存の純関数)。
+  丸め精度(小数3桁)は同ファイルの `NUMERIC_PRECISION_DIGITS` 定数に
+  一元化されており、`formatNumber`(ハッシュの文字列化)と `stableRound`
+  (下記「幾何値の構造的分岐比較」)が共有する。
 - Vitest では「同一入力で2回生成してハッシュ一致」と
   「代表 seed×params 組のハッシュのスナップショット固定」の両方を行う。
 - 画面ではサマリーの「ハッシュ」行に同じ値を出す(実機・ブラウザ間の
   決定性確認用)。開発用オーバーレイは既定非表示とし、URL パラメータ
-  `?debug=1` のときのみ表示する(PHASE 7 commit 22 で統合済み。
-  下記「描画プリセット・LOD・デバッグ表示」)。
+  `?debug=1` のときのみ表示する(下記「描画プリセット・LOD・デバッグ表示」)。
+- **クロスアーキテクチャの安定化**: 超越関数(`Math.sin`・`Math.atan2` 等)
+  の実装は CPU アーキテクチャ・JS エンジンごとに末尾ビットが異なりうる
+  (実測で 1e-14〜1e-15 オーダーの ULP 差。arm64/x86_64 間で確認済み)。
+  この差自体は座標・回転など連続値としての出力には実害がないため、数値を
+  固定精度で丸めてから文字列化する手順(上記2.)で吸収する設計とし、
+  丸め精度は実測(arm64 macOS ⇔ Docker `node:24` on x86_64 Linux での
+  `test/hash.test.ts` 8 SNAPSHOT 完全一致)により小数3桁に決定した
+  (下記「幾何値の構造的分岐比較」の対策と併用が前提)。ただし、これは
+  実測に基づく設計上の対策であり、原理的な無保証を解くものではない:
+  将来の未知のエンジン・アーキテクチャでの一致を無条件に保証するもの
+  ではなく、ハッシュの一致は最終的には**同一 JS エンジン内でのみ保証**
+  される、という位置づけ自体は変わらない。
+- **幾何値の構造的分岐比較**: 幾何計算値(三角関数由来の連続値)を
+  固定閾値と比較して生成の構造的分岐(regen の要否・採否等、生成される
+  ものが質的に変わる分岐)を行う箇所は、比較の直前にハッシュと同じ精度で
+  丸めてから比較する(`src/model/hash.ts` の `stableRound` を使う)。
+  上記 ULP 差がちょうど閾値付近の値で分岐そのものを反転させる
+  (arm64 で ≥ 側、x86_64 で < 側、のように)ことを防ぐための規則で、
+  最終的な座標・回転が丸め後も浮動小数点のままであることは許容する
+  (3D 手続き生成である以上不可避であり、上記の丸めで実用上吸収する)。
+  RNG 由来の値(`rng.next()` 等)・Params 由来の値(settle/water 等、
+  UI スライダーの厳密な小数入力)どうしの比較はビット決定論的なため
+  この規則の対象外。
+- mesh 側の位置ハッシュ補助関数 `hash3`(`src/mesh/buildings.ts`)・
+  `hash2`(`src/mesh/paving.ts`)は、いずれも戻り値域 `0 ≤ h < 1` を
+  満たすことを契約とする(頂点カラーの明度ムラ `1 + AMP×(2h-1)` の
+  振幅がムラ帯域を超えないための前提。負値・1 以上を返す実装は不可)。
+  乱数ストリームは消費しない。
+
+## ギャラリー生成エントリ(`src/pipeline/`。`../plans/2026-07-14-gallery.md` G1 以降で実装)
+
+ギャラリー(`../specs/design.md`「ギャラリー(語彙の単体鑑賞)」節)は、
+`runPipeline` と並ぶ**第二の正式な生成エントリ**を持つ。名称・シグネチャは
+実装時に確定するが、本節の契約は実装に先行して固定する
+(`../specs/implementation-spec.md`「1.11 ギャラリー」節も参照)。
+
+**入力**: 対象id(下記)、seed、関連パラメータ(造形に効くもののみの
+部分 Params。省略項目は `../specs/design.md` の既定値50を補う)。
+
+**対象idの体系**: `<種別>/<名前>` の形の安定な文字列とする。由来
+(建物の role 等)から一意に定まり、実装の変更で揺れない体系とする。
+
+- MVP(本計画のG1で実装): 一般建物の全 role — `building/house`、
+  `building/waterside`、`building/bridgehead`、`building/hall`、
+  `building/warehouse`、`building/outskirt`(`model/worldmodel.ts` の
+  `BuildingRole` から `"center"` を除いた6 role。中心建築はワールドの
+  唯一の主中心を表す特別な役割のため、MVPでは対象に含めない)。
+- 将来の拡張(本計画のG0では実装しない。対象対応表に行を足すのみで
+  成立させる): 中心建築 `center`、施設 `facility/<kind>`(Phase D。
+  `../plans/2026-07-14-worldgen-rework-facilities.md`。kind は
+  `facilities.md`「Facility スキーマ」の一覧 — `field` / `pasture` /
+  `well` / `stall` / `windmill` / `watermill` / `pier`。対象idの体系・
+  造形の純関数分離は同書「造形の純関数分離」節が正)。facility/<kind> の
+  対象化(対象対応表への追加・ギャラリーからの本番造形関数の呼び出し)は
+  D1a では行わず、D2b(field/pasture)以降の各実装タスクが kind ごとに
+  行う(3.8b 節の造形フロー: ギャラリーでの単体調整 → ワールド配置確認)。
+- 対象idは URL(`../specs/implementation-spec.md`「1.11 ギャラリー」節)の
+  `?gallery=<対象id>` にそのまま使う。
+
+**極小ワールドの合成規約**: `createEmptyWorldModel(seed, params)` で
+空の WorldModel を作り、対象を1体生成するために必要な最小限のフィールド
+(平坦な地面1枚、区画1枚など)だけを直接上書きして合成する。本番の
+パイプライン段(`pipeline/derive` 等、上記「パイプライン段契約」節)を
+順に実行する必要はなく、対象の生成に必要なフィールドの素の合成でよい。
+ただし、段そのものではなく段が内部で使う純関数(`pipeline/derive.ts` の
+`computeDerived`、`pipeline/ground.ts` の `generateZoneMask`(2026-07-14
+G1b 追補)等)を呼んで `meta.derived`・`ground.zoneMask` のような必須
+フィールドを埋めることは、この規約の範囲内とする(対象生成の本体ではなく
+極小モデルの合成の一部であり、本番の判定式・地面の材質下地を再実装しない
+ための選択)。特に `ground.zoneMask` は `createEmptyWorldModel` の初期値
+(`createZoneMask(0, 0)`)のままにしてはならない: cellSize=0 の退化した
+マスクは `mesh/` 側のサンプリング(`zoneColorAt` / `sampleZoneMask`)を
+退化させ、地面の描画が破綻する(G1b で実バグとして確認)。同様に、
+出力整形(`summary` フィールドの機械算出)には `pipeline/summary.ts` の
+`runSummary`(乱数非消費・モデル状態からの決定的な集計。段そのものが
+既に「対象生成」を含まない純粋な集計関数)を直接呼んでよい。
+
+**本番の生成関数と `buildWorld` のみを呼ぶ制約(本契約の核心)**:
+合成した極小 WorldModel に対しては、本番の生成関数(一般建物であれば
+`buildParcelBuilding` と、区画コンテキストを作る `createSiteContext`。
+将来の対象では対応する本番の生成関数)のみを呼んで対象を1体生成する。
+表示は本番の `buildWorld`(`src/mesh/`)をそのまま使う。ギャラリー専用の
+造形ロジック・専用のメッシュ生成・専用の描画コードを新設することを
+禁止する(本番の絵と乖離させないため。`../plans/2026-07-14-gallery.md`
+3.1節)。ギャラリー固有のコードは、極小モデルの合成・UI・URL状態の
+範囲に限る。three非依存(上記「モジュール境界規則」に従う)。
+
+**role の強制(2026-07-14 G1 追補)**: 一般建物の役割(`BuildingRole`)は
+`pipeline/buildings.ts` の `decideRole` が広場隣接・橋詰め近接・水辺隣接
+などの乱数抽選込みで決めるため、対象id `building/<role>` の役割を
+入力(seed・区画データ)の合成だけで確実に反映させることはできない
+(例: `warehouse` は `rng.chance(0.6)` に懸かり、対象を選んでも house に
+なる seed があり得る)。このため `buildParcelBuilding` の第4引数
+`BuildLayoutOptions` に `roleOverride: BuildingRole | null` を追加した:
+非 null なら `decideRole` の抽選結果を**乱数消費は通常どおり行ったうえで**
+役割の値だけ置き換える(`forceRectangle`・`sizeOverride` と同じ「抽選消費
+は保つが結果は捨てる」意味論)。本番のワールド生成(`runBuildings` の
+本番ループ・`finalizeCourtyardGroups` 等の既存呼び出し)は常に
+`roleOverride: null` を渡し、`decideRole` の抽選・消費列を一切変えない。
+ギャラリーは `pipeline/gallery.ts` から
+`buildParcelBuilding(model, ctx, parcel, { ...SINGLE_BUILD_OPTIONS, roleOverride: <対象role> })`
+の形で呼ぶ。`buildParcelBuilding`・`BuildLayoutOptions`・
+`SINGLE_BUILD_OPTIONS` は本節の呼び出し元として `pipeline/buildings.ts`
+から `export` する(いずれもギャラリー導入前は非公開だった)。
+
+**出力**: 正規化ハッシュ(上記「WorldModel 正規化ハッシュ」節と同一定義)を
+`summary.hash` へ格納した、本物の WorldModel(極小だが `runPipeline` の
+出力と同じ型)を返す。ワールド側の既存スナップショット(代表 seed×params
+組のハッシュ)には追加しない。決定性は「同一入力2回で完全一致」の
+性質テストで保証し、ギャラリー固有の固定スナップショット表は作らない
+(`../specs/implementation-spec.md`「1.11 ギャラリー」節「検証方針」)。
 
 ## 描画プリセット・LOD・デバッグ表示(viewer / ui。PHASE 7 commit 22)
 

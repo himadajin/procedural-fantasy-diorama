@@ -18,10 +18,12 @@ import {
   fieldGradient,
   gridCellCount,
   marchPositiveRegion,
+  waterBodies,
   type WaterField,
 } from "../model/waterfield";
 import { buildCanalSurfaces, buildPaving, gradeColor } from "./paving";
 import { buildBuildings } from "./buildings";
+import { buildFacilities } from "./facilities";
 import { buildVegetation } from "./vegetation";
 import { applyLampTint, createLampTint } from "./wardparts";
 
@@ -63,9 +65,9 @@ const FOG_RIM_DEPTH_RATIO = 0.09;
 const FOG_RIM_TAPER = 0.55;
 /** 外縁水面のとき、海面を地面の縁の下へ差し込む量(隙間を見せない) */
 const SEA_UNDERLAP = 2;
-/** 霧閉じのとき、川の水面を外縁の縁までわずかに延長する量(切り口を台座の陰へ) */
-const RIVER_MOUTH_EXTENSION = 2;
-/** 霧閉じの台座の深さへ、河口の岸スカートを馴染ませる距離(境界からの距離) */
+/** 霧閉じのとき、水面を外縁の縁までわずかに延長する量(切り口を台座の陰へ) */
+const WATER_EDGE_EXTENSION = 2;
+/** 霧閉じの台座の深さへ、水際の岸スカートを馴染ませる距離(境界からの距離) */
 const RIM_BLEND_DIST = 24;
 /** 外縁水面の広がり(ワールド一辺比)。どの角度からも水平線まで届く */
 const SEA_EXTENT_RATIO = 2.2;
@@ -103,7 +105,7 @@ function zoneColorAt(
 /**
  * 地面+岸スカートのメッシュ。
  * 地面は水域ポリゴンを穴として除いた陸地(landSdf > 0)の三角形分割
- * (細分グリッドのクリップ。implementation-spec PHASE 2)。
+ * (細分グリッドのクリップ。implementation-spec 3章「地面と水系」)。
  * 岸スカートは陸地の縁の全周に、地面高 y=0 から水面下(岸=−1.6、
  * 霧閉じの外縁=さらに下)まで落とす帯メッシュ。同じ等値線から作るため
  * 地面との間に隙間ができない。
@@ -147,7 +149,7 @@ function buildGround(model: WorldModel, field: WaterField): THREE.Mesh {
       const oz = len > 1e-9 ? -g.z / len : 0;
       outward.push({ x: ox, z: oz });
       // 岸(水域が活性)か外縁(境界が活性)かで下端の深さ・絞りを変える。
-      // 霧閉じでは、境界に近づく岸(河口の土手)も台座の深さへ連続に馴染ませ、
+      // 霧閉じでは、境界に近づく岸(水際の土手)も台座の深さへ連続に馴染ませ、
       // 台座に切れ込み(隙間)を見せない
       const boundaryDist = field.boundarySdf(p.x, p.z);
       const isShore = field.waterSdf(p.x, p.z) <= boundaryDist;
@@ -201,7 +203,7 @@ function buildGround(model: WorldModel, field: WaterField): THREE.Mesh {
     }
   }
 
-  // 魔法灯の足元の照り返し(頂点カラー焼き込み。PHASE 5b commit 18。
+  // 魔法灯の足元の照り返し(頂点カラー焼き込み。
   // 舗装 mesh/paving.ts と同じ純関数を共用する。art-direction 3節)
   applyLampTint(createLampTint(model), positions, colors);
 
@@ -244,7 +246,7 @@ export interface WaterDetailUniform {
 }
 
 /**
- * 水面メッシュ。河川スプライン+湖ポリゴン(+外縁水面)から生成し、
+ * 水面メッシュ。湖・池ポリゴン(+外縁水面)から生成し、
  * 水面高 y=-0.6 に置く。岸距離による浅瀬→深みの色を頂点カラーに焼き、
  * 低周波の緩い法線揺らぎと控えめなフレネル風ハイライトを
  * onBeforeCompile の軽い拡張で加える(implementation-spec 1.8節、
@@ -260,14 +262,14 @@ function buildWater(
   const size = model.ground.size;
   const seaEdge = model.ground.edgeStyle === "water";
 
-  // 水面の領域: 水域に、外縁水面(境界の外)または河口の延長を加える
+  // 水面の領域: 水域に、外縁水面(境界の外)または水際の延長を加える
   const surfaceSdf = seaEdge
     ? (x: number, z: number): number =>
         Math.min(field.waterSdf(x, z), field.boundarySdf(x, z) - SEA_UNDERLAP)
     : (x: number, z: number): number =>
         Math.max(
           field.waterSdf(x, z),
-          -(field.boundarySdf(x, z) + RIVER_MOUTH_EXTENSION),
+          -(field.boundarySdf(x, z) + WATER_EDGE_EXTENSION),
         );
   const march = marchPositiveRegion(
     (x, z) => -surfaceSdf(x, z),
@@ -328,8 +330,8 @@ function buildWater(
     }
   }
 
-  // 水路の水面: 川と同じマテリアル・同じ頂点カラー規範のまま同一メッシュへ
-  // 統合する(art-direction 5.3節「水路の水色は川と共通」。draw call も増えない)。
+  // 水路の水面: 湖・池と同じマテリアル・同じ頂点カラー規範のまま同一メッシュへ
+  // 統合する(art-direction 5.3節「水路の水色は湖・池と共通」。draw call も増えない)。
   // 高さは地面よりわずかに上の掘り込みチャネル(contracts/ground-water.md Water 節)
   for (const surf of canalSurfaces) {
     const base = positions.length / 3;
@@ -342,7 +344,7 @@ function buildWater(
         surf.positions[i * 3 + 2] ?? 0,
       );
       normals.push(0, 1, 0);
-      // 縁→中央を岸距離とみなし、川と同じ浅瀬→深みの写像で色を決める
+      // 縁→中央を岸距離とみなし、湖・池と同じ浅瀬→深みの写像で色を決める
       const t = smoothstep01(((surf.edgeT[i] ?? 0) * surf.width) / 2 / band);
       colors.push(
         shallow.r + (deep.r - shallow.r) * t,
@@ -436,11 +438,7 @@ function buildWater(
 export function buildWorld(model: WorldModel): THREE.Group {
   const group = new THREE.Group();
   group.name = "generated-world";
-  const field = createWaterField(
-    model.ground.boundary,
-    model.water.rivers,
-    model.water.lakes,
-  );
+  const field = createWaterField(model.ground.boundary, waterBodies(model.water));
   group.add(buildGround(model, field));
   // ビューワー側の時間 uniform(表示演出。WorldModel には影響しない)。
   // 水面の揺らぎと建物発光束の明滅が共有する(reduced-motion では
@@ -461,10 +459,23 @@ export function buildWorld(model: WorldModel): THREE.Group {
 
   // 建物+結界構造+魔法灯・浮遊要素+橋(躯体/屋根/発光マージ+各
   // InstancedMesh。部品展開は mesh/wardparts.ts / mesh/bridgeparts.ts。
-  // mesh/buildings.ts が束ねる。計画デバッグ描画は PHASE 5b で全廃)
+  // mesh/buildings.ts が束ねる)
   for (const obj of buildBuildings(model, timeUniform)) group.add(obj);
 
-  // 植生(PHASE 6 commit 20): 幹・樹冠+低木の InstancedMesh と草むらの
+  // 施設: マージ束(躯体+屋根)+回転部品(風車ロータ・水輪)の
+  // 個別メッシュ(mesh/facilities.ts)。回転部品は userData.spin を持ち、
+  // viewer(spin.ts)が表示演出として回す。生成時に 1 回収集して
+  // userData.spinners へ置く(毎フレームの traverse を避ける)
+  const spinners: THREE.Object3D[] = [];
+  for (const obj of buildFacilities(model)) {
+    group.add(obj);
+    obj.traverse((child) => {
+      if (child.userData.spin) spinners.push(child);
+    });
+  }
+  group.userData.spinners = spinners;
+
+  // 植生: 幹・樹冠+低木の InstancedMesh と草むらの
   // マージメッシュ(mesh/vegetation.ts。draw call +3 以内)
   for (const obj of buildVegetation(model)) group.add(obj);
 
