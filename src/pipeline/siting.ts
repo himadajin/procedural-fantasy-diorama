@@ -37,8 +37,9 @@ const W_PENALTY = 1.2;
 const PROX_FALLOFF_RATIO = 0.09;
 /** seed タイブレークの振幅(スコア本体より十分小さい微小量) */
 const TIEBREAK_AMP = 1e-4;
-/** 4軸スコアの seed 揺らぎ(同点付近のタイブレーク用。1.7節) */
-const AXES_JITTER = 0.02;
+/** 4軸スコアの seed 揺らぎ(同点付近のタイブレーク用。1.7節。
+ *  ギャラリーの中心建築対象が段4 と同一式で axes を合成するため export) */
+export const AXES_JITTER = 0.02;
 /** 進入点の角度探索の分割数(水域回避の候補) */
 const ENTRY_CANDIDATES = 96;
 

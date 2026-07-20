@@ -11,6 +11,7 @@
  * (共有状態を作らない)。
  */
 import { DEFAULT_PARAMS, type Params } from "../model/worldmodel";
+import { CENTER_GALLERY_PARAM_KEYS, galleryUrlParamKeys } from "./gallery-url";
 
 interface SliderDef {
   key: keyof Params;
@@ -58,13 +59,14 @@ const SLIDERS: SliderDef[] = [
 /**
  * ギャラリーで公開するスライダー(contracts/pipeline.md
  * 「ギャラリー生成エントリ」節の入力定義「関連パラメータ(造形に効く
- * もののみ)」)。対象1体の生成(`buildParcelBuilding`)に実際に効く
- * 2キーのみ(`pipeline/derive.ts` computeDerived:
- * wallTier/roofTier/detailAmount/tidiness ← Prosperity、
- * floorsBias ← Settlement)。他4キーは対象の造形に影響しないため含めない
+ * もののみ)」)。対象により異なるため、全対象のキーの和集合ぶんの
+ * スライダーを生成し、選択中の対象のキー(`galleryUrlParamKeys`)のみを
+ * 表示・適用する。一般建物・施設は Prosperity / Settlement の 2 キー、
+ * 中心建築は 4 軸スコア・派生値に効く 5 キー
  */
-const GALLERY_SLIDER_KEYS: (keyof Params)[] = ["prosperity", "settlement"];
-const GALLERY_SLIDERS = SLIDERS.filter((d) => GALLERY_SLIDER_KEYS.includes(d.key));
+const GALLERY_SLIDERS = SLIDERS.filter((d) =>
+  CENTER_GALLERY_PARAM_KEYS.includes(d.key),
+);
 
 export type TabKey = "world" | "gallery";
 
@@ -305,6 +307,7 @@ export function createPanel(
   const gallerySliders = document.createElement("div");
   gallerySliders.className = "pfd-sliders";
   const galleryInputs = new Map<keyof Params, HTMLInputElement>();
+  const gallerySliderRows = new Map<keyof Params, HTMLElement>();
   for (const def of GALLERY_SLIDERS) {
     const { wrap, range } = buildSliderRow(
       "pfd-gallery",
@@ -313,7 +316,17 @@ export function createPanel(
     );
     gallerySliders.appendChild(wrap);
     galleryInputs.set(def.key, range);
+    gallerySliderRows.set(def.key, wrap);
   }
+  // 選択中の対象に関連するスライダーのみ表示する(キーは URL と共用)
+  const updateGallerySliderVisibility = (): void => {
+    const keys = galleryUrlParamKeys(targetSelect.value);
+    for (const [key, wrap] of gallerySliderRows) {
+      wrap.style.display = keys.includes(key) ? "" : "none";
+    }
+  };
+  updateGallerySliderVisibility();
+  targetSelect.addEventListener("change", updateGallerySliderVisibility);
 
   const galleryActions = document.createElement("div");
   galleryActions.className = "pfd-gallery-actions";
@@ -430,8 +443,11 @@ export function createPanel(
 
   const getGalleryParams = (): Params => {
     const params = { ...DEFAULT_PARAMS };
+    // 選択中の対象に関連するキーのみ適用する(非表示スライダーの値は
+    // 対象の生成に影響させない。契約「関連パラメータ」)
+    const keys = galleryUrlParamKeys(targetSelect.value);
     for (const [key, input] of galleryInputs) {
-      params[key] = Number(input.value);
+      if (keys.includes(key)) params[key] = Number(input.value);
     }
     return params;
   };

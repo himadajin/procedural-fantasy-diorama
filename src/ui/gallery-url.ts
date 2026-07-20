@@ -6,18 +6,37 @@
  * main.ts / panel.ts から呼ばれる。
  *
  * 関連パラメータは「造形に効くもの」に限る(contracts/pipeline.md
- * 「ギャラリー生成エントリ」節の入力定義)。
- * 現状は Prosperity / Settlement のみが対象生成(buildParcelBuilding)に
- * 影響するため、この2キーのみを URL の対象とする。省略項目・不正値は
- * design.md の既定値(50)を補う。
+ * 「ギャラリー生成エントリ」節の入力定義)。対象により異なる:
+ * 一般建物・施設は Prosperity / Settlement の 2 キーのみが対象生成に
+ * 影響する。中心建築(`building/center`)は 4 軸スコアと派生値を通じて
+ * Water / Arcana / Monumentality も効くため 5 キーとする。
+ * 省略項目・不正値は design.md の既定値(50)を補う。
  */
 import { DEFAULT_PARAMS, type Params } from "../model/worldmodel";
 
-/** URL に載せる関連パラメータのキー(造形に効くもののみ) */
+/** URL に載せる関連パラメータのキー(一般建物・施設。造形に効くもののみ) */
 export const GALLERY_URL_PARAM_KEYS: readonly (keyof Params)[] = [
   "prosperity",
   "settlement",
 ];
+
+/** 中心建築対象の関連パラメータのキー(4軸スコア・派生値に効くもの) */
+export const CENTER_GALLERY_PARAM_KEYS: readonly (keyof Params)[] = [
+  "prosperity",
+  "settlement",
+  "water",
+  "arcana",
+  "monumentality",
+];
+
+/** 対象idに応じた関連パラメータのキー(UI のスライダー表示と URL が共用) */
+export function galleryUrlParamKeys(
+  targetId: string,
+): readonly (keyof Params)[] {
+  return targetId === "building/center"
+    ? CENTER_GALLERY_PARAM_KEYS
+    : GALLERY_URL_PARAM_KEYS;
+}
 
 export interface GalleryUrlState {
   targetId: string;
@@ -52,7 +71,7 @@ export function parseGalleryUrl(
   const seed = seedRaw || defaultSeed;
 
   const params: Params = { ...DEFAULT_PARAMS };
-  for (const key of GALLERY_URL_PARAM_KEYS) {
+  for (const key of galleryUrlParamKeys(targetId)) {
     params[key] = clampParam(q.get(key), DEFAULT_PARAMS[key]);
   }
 
@@ -71,7 +90,7 @@ export function serializeGalleryUrl(
   const q = new URLSearchParams();
   q.set("gallery", targetId);
   q.set("seed", seed);
-  for (const key of GALLERY_URL_PARAM_KEYS) {
+  for (const key of galleryUrlParamKeys(targetId)) {
     q.set(key, String(params[key]));
   }
   return `?${q.toString()}`;

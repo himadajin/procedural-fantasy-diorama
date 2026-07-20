@@ -43,8 +43,9 @@ const CENTER_ANGLE_OFFSETS = [
 const SHRINK_STEPS = [1, 0.85, 0.7, 0.55];
 /** 交差点広場の採択確率 */
 const CROSSING_CHANCE = 0.35;
-/** 支配軸ごとの heightHint 係数(契約) */
-const AXIS_HEIGHT_FACTOR = {
+/** 支配軸ごとの heightHint 係数(契約。ギャラリーの中心建築対象が
+ *  段9 と同一式で heightHint を合成するため export) */
+export const AXIS_HEIGHT_FACTOR = {
   arcane: 1.15,
   authority: 1.0,
   waterside: 0.85,
