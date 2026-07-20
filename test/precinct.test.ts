@@ -20,6 +20,7 @@ function makeInput(
     monument: 0.5,
     usable: 27,
     openSide: axis === "waterside" ? "back" : null,
+    towerTopHint: 34,
     rng: makeRng("everdusk-101", "building/center"),
     ...overrides,
   };

@@ -373,3 +373,27 @@
   connector の幾何条件、`shed` → `lean-to` 改名、fence の材の汎化、
   ギャラリー対象 id を `building/center` に統一(pipeline.md の予約語を
   改訂)。
+- 2026-07-20 E1: ギャラリーに `building/center` を追加(commit 4395308)。
+  centerPlan は段4/段9 と同一式・同一ストリームで合成、背面池を常設、
+  仮想周辺最高点 9.0。関連パラメータは対象別キー(中心建築 5 キー)。
+- 2026-07-20 E2: 敷地計画層 `planPrecinct` を追加(commit 7fa6847)。
+  純データ・40 テスト。造形未接続でハッシュ不変。
+- 2026-07-20 E3+E4: **統合して 1 commit で実施(計画からの逸脱)**。
+  理由: E3 単独の中間状態(新しい囲い+旧文法の量塊)は新旧の座標系を
+  つなぐ捨てコードが必要で、検証価値もないため。造形上の決定:
+  - 部品語彙: `battlement`(building-trim プールへ 1 凸=1 ピース分解)と
+    `lean-to`(閉じたくさび)を採用。`cone` は不採用(角柱様式のため
+    `spire` で代替。契約の表から削除)
+  - アクセント塔の比率: 幅を「敷地比 max 目標高 × 0.15」で決め
+    (planPrecinct 入力に towerTopHint を追加)、胴が 16 超のときは
+    2 段+中間コーニスのセットバックで分節。これで arcane の
+    「煙突化」を解消(最初の実装では旧来どおり細長くなり、目視で棄却)
+  - zoneMask 上書きは `CenterExpansion.zoneRects`(量塊の実体矩形)経由。
+    `stampBuildingsZone` は role center をスキップし量塊矩形のみ捺す
+  - 中庭 Plaza id 変更(plaza/courtyard/center/<n>)に伴い
+    plazas/buildings テストの判別規則を更新。ハッシュスナップショット
+    8 件を更新(意図した差分: 中心建築の全面刷新)
+  - 目視(ギャラリー): authority = 胸壁付き外周壁+門楼+前庭+主館+
+    背後の天守+隅塔で「城郭」が読める。arcane = 太い基部+2 段胴+
+    鐘楼+水晶。E5 の品質パスへ持ち越し: ギャラリーの霧が濃く細部確認が
+    しづらい点、回廊・欄間の造形確認、waterside / rustic の詳細検収

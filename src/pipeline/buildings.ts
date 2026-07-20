@@ -90,6 +90,7 @@ import {
   buildingTopY,
   expandCenterBuilding,
   glowPartArea,
+  type CenterExpansion,
 } from "./center";
 
 function clamp(v: number, min: number, max: number): number {
@@ -3887,7 +3888,10 @@ const PAVED_CHANNEL = ZONE_KINDS.indexOf("paved");
  * ポリゴンスタンプ max 合成 → (1−p) 縮め。石造系の壁は paved、他は dirt。
  * dirt → paved の順で適用。乱数サブストリームは消費しない)。
  */
-function stampBuildingsZone(model: WorldModel): void {
+function stampBuildingsZone(
+  model: WorldModel,
+  centerExpansion: CenterExpansion | null,
+): void {
   const mask = model.ground.zoneMask;
   if (mask.resolution <= 0 || model.buildings.length === 0) return;
   const grid = maskCellGrid(mask);
@@ -3896,8 +3900,19 @@ function stampBuildingsZone(model: WorldModel): void {
   const dirt = new Float64Array(cells);
   const paved = new Float64Array(cells);
   for (const b of model.buildings) {
+    // 中心建築の footprint は群の外郭(中庭・囲い内の空地を含む)のため
+    // 上書きせず、量塊の実体 footprint のみを上書きする(契約「footprint」)
+    if (b.role === "center") continue;
     const target = STONE_WALLS.has(b.materials.wall) ? paved : dirt;
     stampPolygon(grid, target, b.footprint, blend);
+  }
+  if (centerExpansion) {
+    const target = STONE_WALLS.has(centerExpansion.building.materials.wall)
+      ? paved
+      : dirt;
+    for (const rect of centerExpansion.zoneRects) {
+      stampPolygon(grid, target, rect, blend);
+    }
   }
   applyCoverageToChannel(mask, dirt, DIRT_CHANNEL);
   applyCoverageToChannel(mask, paved, PAVED_CHANNEL);
@@ -4079,12 +4094,14 @@ export function runBuildings(model: WorldModel): void {
   // --- 中心建築(一般建物の後に展開する:
   //     スカイライン検証が周辺一般建物の最高点を入力とするため。
   //     契約は contracts/buildings.md「中心建築」) ---
-  const centerBuilding = expandCenterBuilding(model, ctx, buildings);
+  const centerExpansion = expandCenterBuilding(model, ctx, buildings);
+  const centerBuilding = centerExpansion.building;
   buildings.push(centerBuilding);
   model.buildings = buildings;
 
-  // --- 建物 footprint による zoneMask の土/舗装上書き ---
-  stampBuildingsZone(model);
+  // --- 建物 footprint による zoneMask の土/舗装上書き
+  //     (中心建築は群外郭ではなく量塊の実体のみ。契約「footprint」) ---
+  stampBuildingsZone(model, centerExpansion);
 
   // --- パイプライン内アサーション(throw せず件数を console に出す) ---
   const parcelById = new Map(model.parcels.map((p) => [p.id, p]));

@@ -539,7 +539,7 @@ function buildSingleCenterWorld(seed: string, params: Params): WorldModel {
   };
 
   const ctx = createSiteContext(model);
-  model.buildings = [expandCenterBuilding(model, ctx, [peripheral])];
+  model.buildings = [expandCenterBuilding(model, ctx, [peripheral]).building];
 
   runSummary(model);
   model.summary.hash = hashWorldModel(model);

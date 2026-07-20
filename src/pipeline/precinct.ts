@@ -112,6 +112,13 @@ export interface PrecinctInput {
   usable: number;
   /** 開放辺(waterside のみ非 null を渡す) */
   openSide: OpenSide;
+  /**
+   * アクセント塔の頂部高の目安(スカイライン契約の目標。
+   * max(heightHint, 周辺最高点 × skylineRatio × 1.03))。
+   * 高い塔ほど基部を太くし、細長い棒にならない比率を保つ(art-direction
+   * 6節「素の角柱を目標高へ引き伸ばさない」)
+   */
+  towerTopHint: number;
   /** 骨格ストリーム("building/center") */
   rng: Rng;
 }
@@ -217,7 +224,13 @@ export function planPrecinct(input: PrecinctInput): PrecinctPlan {
   ];
 
   // --- アクセント塔(軸別の位置。契約 4軸表) ---
-  const towerW = clamp(usable * 0.16, 3.6, 7.0);
+  // 幅は敷地比と目標高比の大きい方(高い塔ほど太く。頂部高の約 1/7)。
+  // 上限は敷地比(狭い敷地で塔が主館を食わない)
+  const towerW = clamp(
+    Math.max(usable * 0.16, input.towerTopHint * 0.15),
+    3.6,
+    Math.max(4.2, usable * 0.26),
+  );
   let towerU: number;
   let towerV: number;
   if (axis === "authority") {
