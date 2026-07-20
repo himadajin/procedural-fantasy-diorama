@@ -49,6 +49,8 @@ const CENTER_PART_TYPES = new Set([
   "arch",
   "battlement",
   "lean-to",
+  "deck",
+  "pile",
 ]);
 const GLOW_TYPES = new Set(["crystal", "sigil", "glow-window"]);
 

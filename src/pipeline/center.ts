@@ -521,6 +521,36 @@ export function expandCenterBuilding(
     push("door", [dp.x, plinthH, dp.z], normalRot(n), [1.3, 2.2, 0.18], "wood");
   }
 
+  // --- 船小屋の水上張り出し(deck + pile。「水辺建築の拡張」の部品流儀。
+  //     契約 4軸表: overWater は群外郭の接地契約のままで量塊単位には持たない) ---
+  if (precinct.boathouse) {
+    const bh = precinct.boathouse;
+    const bw = bh.u1 - bh.u0;
+    const cu = (bh.u0 + bh.u1) / 2;
+    const deckD = 1.2; // 群外郭からの張り出し許容(契約 1.2)内
+    const deckMid = toWorld(cu, H + deckD / 2);
+    // 床板(床の天端 0.35 = 桟橋・デッキと同じ読み)
+    push(
+      "deck",
+      [deckMid.x, 0.13, deckMid.z],
+      rotU,
+      [bw * 0.9, 0.22, deckD],
+      "rough-wood",
+      { waterfront: 1 },
+    );
+    for (const su of [-1, 1]) {
+      const pp = toWorld(cu + su * (bw * 0.45 - 0.2), H + deckD - 0.25);
+      push(
+        "pile",
+        [pp.x, SHORE_SKIRT_BOTTOM_Y, pp.z],
+        rotU,
+        [0.28, 0.13 - SHORE_SKIRT_BOTTOM_Y, 0.28],
+        "wood",
+        { waterfront: 1 },
+      );
+    }
+  }
+
   // --- スカイライン契約: クラウンのみが目標高へ届く(契約) ---
   const targetTop = Math.max(towerTopHint, hallRoofTop + 4);
 
@@ -1094,6 +1124,19 @@ export function expandCenterBuilding(
             : sdef.sign < 0
               ? rotV + Math.PI
               : rotV;
+        // 回廊の外縁の壁(浮いた屋根帯にしない。内縁は柱列、外縁は壁)
+        const outerOff = sdef.sign * (walkW / 2);
+        const wallMid = toWorld(
+          sdef.horizontal ? sdef.cu : sdef.cu + outerOff,
+          sdef.horizontal ? sdef.cv + outerOff : sdef.cv,
+        );
+        push(
+          "courtyard-wall",
+          [wallMid.x, 0, wallMid.z],
+          sdef.horizontal ? rotU : rotV,
+          [sdef.len, colH - 0.05, 0.3],
+          plinthMaterial,
+        );
         push(
           "lean-to",
           [mid.x, colH, mid.z],

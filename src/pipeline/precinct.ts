@@ -103,6 +103,9 @@ export interface PrecinctPlan {
   /** 内郭の横断壁(城郭型の 2 段構え。前庭帯と主庭帯の境。
    *  契約「囲い」のリズム要素。null = なし) */
   innerWall: { v: number; gateWidth: number } | null;
+  /** 船小屋(waterside の開放辺 = 背面のときのみ。水際の annex。
+   *  水上への張り出し(deck / pile)は展開層が加える。契約 4軸表) */
+  boathouse: PrecinctRect | null;
   /** クラウンの基部(masses にも role "crown" で入る) */
   crown: { u: number; v: number; width: number };
 }
@@ -488,6 +491,33 @@ export function planPrecinct(input: PrecinctInput): PrecinctPlan {
     }
   }
 
+  // --- 船小屋(waterside の開放辺 = 背面のときのみ。契約 4軸表)。
+  //     クラウンと反対側の背面隅に置く(左右の開放辺は中庭矩形との
+  //     調停が要るため当面 back のみ。E7 の実装判断) ---
+  let boathouse: PrecinctRect | null = null;
+  if (axis === "waterside" && openSide === "back") {
+    const bs = -Math.sign(towerU) || -1;
+    const room = H - hw - 0.5;
+    if (room >= 3.0) {
+      const bw = clamp(room * 0.85, 3.0, 4.8);
+      const bd = 4.4;
+      boathouse = {
+        u0: bs > 0 ? H - bw : -H,
+        u1: bs > 0 ? H : -H + bw,
+        v0: H - bd,
+        v1: H,
+      };
+      masses.push({
+        role: "annex",
+        rect: boathouse,
+        floors: 1,
+        roofType: "gable",
+        // 棟は岸線と直交(v 方向)= 舟入りの妻面が水を向く
+        ridgeAlongU: false,
+      });
+    }
+  }
+
   // --- 内郭の横断壁(城郭型かつ 2 段構えのときのみ) ---
   const innerWall =
     axis === "authority" && twoCourts
@@ -505,6 +535,7 @@ export function planPrecinct(input: PrecinctInput): PrecinctPlan {
     masses,
     connectors,
     innerWall,
+    boathouse,
     crown,
   };
 }

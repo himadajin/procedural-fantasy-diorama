@@ -425,7 +425,7 @@ const CENTER_PERIPHERAL_TOP = 9;
  * 造形(水面プローブ・接地契約)のために常設する。centerPlan.footprint
  * (最大 44 → 半辺 22)と重ならない距離に置く
  */
-const CENTER_POND_FRONT_Z = 30;
+const CENTER_POND_FRONT_Z = 25; // 開放辺判定(waterside の背面開放・船小屋)が届く距離。footprint(半辺最大 22)とは重ならない
 const CENTER_POND_DEPTH = 16;
 const CENTER_POND_HALF_WIDTH = 30;
 
