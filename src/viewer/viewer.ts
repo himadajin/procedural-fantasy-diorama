@@ -22,6 +22,11 @@ export interface Viewer {
   worldGroup: THREE.Group;
   /** ワールド実寸の変更に追従(霧密度、影カメラ、空の半径) */
   setWorldSize(size: number): void;
+  /**
+   * 霧の有効/無効(art-direction 3節: ギャラリー = 単体鑑賞では
+   * 霧を適用しない。密度は setWorldSize の基準式に追従する)
+   */
+  setFogEnabled(enabled: boolean): void;
   worldSize(): number;
   /**
    * 描画プリセットの適用(pixelRatio・影解像度・影カメラ far)。
@@ -101,9 +106,14 @@ export function createViewer(container: HTMLElement): Viewer | null {
   scene.add(worldGroup);
 
   let size = 0;
+  let fogEnabled = true;
+  const setFogEnabled = (enabled: boolean) => {
+    fogEnabled = enabled;
+    if (size > 0) fog.density = enabled ? FOG_DENSITY_FACTOR / size : 0;
+  };
   const setWorldSize = (next: number) => {
     size = next;
-    fog.density = FOG_DENSITY_FACTOR / next;
+    fog.density = fogEnabled ? FOG_DENSITY_FACTOR / next : 0;
 
     // 影カメラをワールド境界にフィットさせる
     const cam = sun.shadow.camera;
@@ -176,6 +186,7 @@ export function createViewer(container: HTMLElement): Viewer | null {
     renderer,
     worldGroup,
     setWorldSize,
+    setFogEnabled,
     worldSize: () => size,
     setRenderPreset,
     onFrame: (cb) => {

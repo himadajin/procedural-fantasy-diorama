@@ -192,6 +192,8 @@ if (!viewer) {
     if (worldScene.group) worldScene.group.visible = tab === "world";
     if (galleryScene.group) galleryScene.group.visible = tab === "gallery";
     const scene = tab === "world" ? worldScene : galleryScene;
+    // 霧は箱庭のみ(art-direction 3節: ギャラリーでは適用しない)
+    viewer!.setFogEnabled(tab === "world");
     if (scene.model) {
       viewer!.setWorldSize(scene.model.ground.size);
       applyFraming(scene, scene.model);
@@ -379,6 +381,7 @@ if (!viewer) {
     applyPresetToWorld(group);
 
     if (tab === activeTab) {
+      viewer!.setFogEnabled(tab === "world");
       viewer!.setWorldSize(model.ground.size);
       applyFraming(scene, model);
       controls.resetCamera(scene.firstGeneration);
