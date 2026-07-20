@@ -302,27 +302,33 @@ interface Plaza {
   主道どうしの交差ノード(確率的)。`"courtyard"` は段12「建物」の
   中心建築展開(PHASE 5a)**および**一般建物の中庭型クラスタ(Phase C)が
   中庭壁の内側に追加する(buildings.md「中心建築」節、および
-  「中庭型(courtyard)の性質」節)。中心建築は `id: "plaza/courtyard"`
-  (グループを持たないため単一)、一般建物の中庭型クラスタは
-  `id: "plaza/courtyard/<groupId>"`(2026-07-13 追補。下記「id は由来から
-  安定」参照)を持ち、id 空間が分離しているため衝突しない
+  「中庭型(courtyard)の性質」節)。中心建築は
+  `id: "plaza/courtyard/center/<連番>"`(複数可。連番は計画順 0 起点。
+  Phase E で単一の `"plaza/courtyard"` から改訂 2026-07-20)、
+  一般建物の中庭型クラスタは `id: "plaza/courtyard/<groupId>"`
+  (2026-07-13 追補。下記「id は由来から安定」参照)を持つ。判別は
+  接頭辞 `plaza/courtyard/center/` の有無で行う(groupId は
+  `block/<key>/<runIndex>` 形式のため字面衝突もしない)
 - `polygon` は `position` 中心の不整形 n 角形(時計回り。radius 基準で
-  0.88〜1.0 倍の揺らぎ。頂点は radius の円内)
+  0.88〜1.0 倍の揺らぎ。頂点は radius の円内)。例外: kind `"courtyard"`
+  の polygon は矩形(追加主体ごとの規定 — buildings.md「中心建築」節・
+  「中庭型(courtyard)の性質」節 — を正とする)
 - 衝突回避: 採択順(center → gate → bridgehead → crossing)で、既採択
   広場との円距離(半径和+マージン)、水域(水路を含む)、
   `centerPlan.footprint`、`ground.boundary` との衝突を検査し、回避
   できない候補は縮小し、それでも収まらなければ棄却する
 - `id` は由来から安定(`"plaza/center"`、`"plaza/gate/<gateId>"`、
   `"plaza/bridgehead/<bridgeId>"`、`"plaza/crossing/<nodeId>"`、
-  `"plaza/courtyard"`(中心建築)、`"plaza/courtyard/<groupId>"`
+  `"plaza/courtyard/center/<連番>"`(中心建築。Phase E 改訂)、
+  `"plaza/courtyard/<groupId>"`
   (一般建物の中庭型クラスタ。2026-07-13 追補))
 - **全広場の道路接続保証(Phase B。courtyard を除く)**: `"courtyard"` を
   除く全ての広場は、少なくとも 1 本の道路 edge が広場 `polygon` の
   周長に接するか、内部を通る。この除外は `kind: "courtyard"` であること
   のみを基準とし、追加主体(中心建築か一般建物の中庭型クラスタか)を
   問わない(2026-07-13 追補: 一般建物の中庭型クラスタが追加する
-  `plaza/courtyard/<groupId>` も、既存の中心建築の `plaza/courtyard` と
-  同様にこの保証の対象外とする)。`"gate"`(結界門の内側 = 道路との交点
+  `plaza/courtyard/<groupId>` も、中心建築の
+  `plaza/courtyard/center/<連番>` と同様にこの保証の対象外とする)。`"gate"`(結界門の内側 = 道路との交点
   近傍)・`"bridgehead"`(橋の袂 = 道路の終端)・`"crossing"`(主道どうしの
   交差ノード上)は原則として構成上これを満たすが、配置後に接触検証を行い、
   外れた場合はアンカー(`"gate"` は門位置、`"bridgehead"` は橋詰めの

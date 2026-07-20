@@ -126,7 +126,8 @@ interface Rng {
   乱数を消費しない(network-plaza.md Density 節)。
 - 段12「建物」は一般建物の展開後、中心建築 1 棟(role "center"、
   parcelId null)を専用の拡張文法(pipeline/center)で展開して
-  buildings の末尾に追加し、中庭の Plaza(kind "courtyard")を
+  buildings の末尾に追加し、中庭の Plaza(kind "courtyard"。複数可、
+  id `plaza/courtyard/center/<連番>`。Phase E)を
   plazas へ追記する(PHASE 5a。buildings.md Parcel / Building 節
   「中心建築」)。乱数は `"building/center"` /
   `"building/center/details"` のみを消費する。スカイライン検証
@@ -284,7 +285,9 @@ runPipeline(seed: string, params: Params, opts?: {
   `BuildingRole` から `"center"` を除いた6 role。中心建築はワールドの
   唯一の主中心を表す特別な役割のため、MVPでは対象に含めない)。
 - 将来の拡張(本計画のG0では実装しない。対象対応表に行を足すのみで
-  成立させる): 中心建築 `center`、施設 `facility/<kind>`(Phase D。
+  成立させる): 中心建築 `building/center`(role 体系に合わせる。
+  Phase E タスク E1 で追加。`../plans/2026-07-20-center-complex.md`
+  3.9節)、施設 `facility/<kind>`(Phase D。
   `../plans/2026-07-14-worldgen-rework-facilities.md`。kind は
   `facilities.md`「Facility スキーマ」の一覧 — `field` / `pasture` /
   `well` / `stall` / `windmill` / `watermill` / `pier`。対象idの体系・
