@@ -40,14 +40,14 @@ describe("hashWorldModel: 代表 seed×params のスナップショット固定"
   // 更新時の commit メッセージのみに記す(contracts/pipeline.md
   // 「WorldModel 正規化ハッシュ」節)。
   const SNAPSHOTS: [string, Partial<Params>, string][] = [
-    ["everdusk-101", {}, "2b3644f9"],
-    ["everdusk-101", { water: 0 }, "9fc9c8b9"],
-    ["everdusk-101", { water: 95 }, "a04e64ef"],
-    ["everdusk-101", { worldScale: 0 }, "2db85c34"],
-    ["everdusk-101", { worldScale: 100 }, "06dbd67d"],
-    ["seed-a", {}, "6bc3f0d9"],
-    ["seed-b", {}, "13f88b49"],
-    ["seed-b", { water: 70 }, "179ceb89"],
+    ["everdusk-101", {}, "94186772"],
+    ["everdusk-101", { water: 0 }, "0b7c6a08"],
+    ["everdusk-101", { water: 95 }, "494af0fd"],
+    ["everdusk-101", { worldScale: 0 }, "61eb9cbe"],
+    ["everdusk-101", { worldScale: 100 }, "69cfd5e2"],
+    ["seed-a", {}, "5b397365"],
+    ["seed-b", {}, "fc25ecd8"],
+    ["seed-b", { water: 70 }, "4aff8ad5"],
   ];
 
   for (const [seed, over, expected] of SNAPSHOTS) {

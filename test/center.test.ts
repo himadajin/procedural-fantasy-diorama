@@ -181,8 +181,17 @@ describe("center: 基本契約(contracts「中心建築」)", () => {
         expect(
           partsOf(b, "gable").length + partsOf(b, "hip").length,
         ).toBeGreaterThanOrEqual(1);
-        // アクセント塔の段構成(基部・胴・望楼で tower ≥ 3)
-        expect(partsOf(b, "tower").length).toBeGreaterThanOrEqual(3);
+        // クラウン(屋根層を積む塔状の建物)の層の壁ブロック
+        expect(partsOf(b, "tower").length).toBeGreaterThanOrEqual(1);
+        expect(partsOf(b, "hip").length).toBeGreaterThanOrEqual(1);
+        // 細い角柱の禁止(契約「クラウン」: 縦横比の規律。
+        // 全 tower 部品の 高さ/幅 ≤ 4.6)
+        for (const t of partsOf(b, "tower")) {
+          const aspect =
+            t.transform.scale[1] /
+            Math.max(t.transform.scale[0], t.transform.scale[2]);
+          expect(aspect, `tower aspect seed=${seed}`).toBeLessThanOrEqual(4.6);
+        }
         // 正面の大扉+前庭階段
         expect(partsOf(b, "door").length).toBeGreaterThanOrEqual(1);
         expect(partsOf(b, "stair").length).toBeGreaterThanOrEqual(1);
@@ -315,7 +324,7 @@ describe("center: 4軸 → 敷地計画の型(contracts 4軸表)", () => {
       const model = cached(seed, WATERSIDE);
       const b = center(model);
       expect(rankCenterAxes(model.centerPlan.axes).dominant).toBe("waterside");
-      expect(partsOf(b, "tower").length).toBeGreaterThanOrEqual(3);
+      expect(partsOf(b, "tower").length).toBeGreaterThanOrEqual(2);
       expect(partsOf(b, "spire").length).toBeGreaterThanOrEqual(1);
       expect(b.materials.wall).toBe("stone");
       expect(b.materials.roof).toBe("tile");

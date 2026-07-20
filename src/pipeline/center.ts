@@ -7,7 +7,7 @@
  * - 段12「建物」が一般建物の展開後に呼び、buildings の末尾へ 1 棟追加する
  *   (スカイライン検証が周辺一般建物の最高点を入力とするため)
  * - 中心建築は建築群(precinct): 囲い(壁・門)+中庭 1 つ以上+
- *   役割を持つ量塊(主館・アクセント塔・門楼・離れ)+縫合の複合体。
+ *   役割を持つ量塊(主館・クラウン・門楼・離れ)+縫合の複合体。
  *   展開は 2 層 — 第 1 層 planPrecinct(pipeline/precinct)が敷地計画を
  *   純データで決め、本ファイル(第 2 層)が部品へ展開する
  * - 4軸(centerPlan.axes)の最大軸が敷地計画の型を、2位軸が装飾傾向を
@@ -15,11 +15,11 @@
  *   waterside=湖畔の荘園 / rustic=農場屋敷。
  *   2位軸 arcane → 紋様・発光開口を付加、authority → 薔薇窓・尖頭窓を付加
  * - スカイライン契約: 中心最高点 ≥ 周辺一般建物の最高点 × derived.skylineRatio。
- *   担い手はアクセント塔のみ。段構成(基部 → 分節した胴 → 望楼層 → 頂部)で
- *   目標高を消化する(素の角柱 1 本の引き伸ばしは契約で禁止)
+ *   担い手はクラウン(屋根の層を持つ塔状の建物。天守・段塔・望楼)のみ。
+ *   屋根層の積層で高さを消化する(素の角柱の引き伸ばしは契約で禁止)
  * - 発光(crystal / sigil / glow-window)は art-direction 5.4節の規律に従い、
  *   面積合計を glowAreaCap × 箱庭面積 × CENTER_GLOW_SHARE 以下に打ち切る。
- *   配置はアクセント塔の望楼層・頂部(と聖域型の回廊欄間)へ集中させる
+ *   配置はクラウンの最上層・頂部(と聖域型の回廊欄間)へ集中させる
  * - 乱数は "building/center"(骨格)と "building/center/details"(窓の詳細)
  *   のみ消費する(消費数の固定は要求しない。契約「乱数」)
  * - 浮遊要素クラスタの立体化は contracts/wards.md「魔法灯・浮遊要素・橋の
@@ -155,7 +155,7 @@ export function centerMaterials(
 /** 展開結果(Building と、zoneMask 上書き対象 = 量塊の実体 footprint) */
 export interface CenterExpansion {
   building: Building;
-  /** main-hall / annex / gatehouse / accent-tower の実体 footprint
+  /** main-hall / annex / gatehouse / crown の実体 footprint
    *  (契約「footprint」: zoneMask の上書きは量塊の実体のみ) */
   zoneRects: Polygon[];
 }
@@ -521,120 +521,100 @@ export function expandCenterBuilding(
     push("door", [dp.x, plinthH, dp.z], normalRot(n), [1.3, 2.2, 0.18], "wood");
   }
 
-  // --- スカイライン契約: アクセント塔のみが目標高へ届く(契約) ---
+  // --- スカイライン契約: クラウンのみが目標高へ届く(契約) ---
   const targetTop = Math.max(towerTopHint, hallRoofTop + 4);
 
-  // --- アクセント塔(段構成: 基部 → 分節した胴 → 望楼層 → 頂部) ---
-  const towerBodyMaterial = rustic ? "rough-wood" : materials.wall;
-  const towerTopKind: "crystal" | "spire" | "spire-crystal" =
-    dominant === "arcane"
-      ? "crystal"
-      : arcaneDeco
-        ? "spire-crystal"
-        : "spire";
-  const emitAccentTower = (): number => {
-    const { u, v, width } = precinct.accentTower;
+  // --- クラウン(屋根の層を持つ塔状の建物。天守方式。契約「量塊の造形」) ---
+  const crownBodyMaterial = rustic ? "rough-wood" : materials.wall;
+  /** クラウンの軒の張り出し(層の屋根スカート。主館の軒より浅め) */
+  const CROWN_EAVE = 0.55;
+  const emitCrown = (): number => {
+    const { u, v, width } = precinct.crown;
     const p = toWorld(u, v);
-    // 基壇
     push(
       "plinth",
       [p.x, bottomY, p.z],
       rotU,
-      [width + 0.5, plinthH - bottomY, width + 0.5],
+      [width + 0.6, plinthH - bottomY, width + 0.6],
       plinthMaterial,
     );
-    // 高さ配分(頂部から逆算。素の 1 本を伸ばさず段で消化する)
-    const total = targetTop - plinthH;
-    const baseH = clamp(total * 0.18, 2.2, 6.0);
-    const belfryH = clamp(2.6 + 0.9 * mon, 2.6, 3.6);
-    const courseH = 0.28;
-    const baseW = width;
-    const shaftW = width * 0.8;
-    // 高い塔は胴を 2 段+セットバックで分節する(素の 1 本を伸ばさない)
-    const preShaftH =
-      total - baseH - belfryH - courseH * 2 - width * 1.5;
-    const twoStage = preShaftH > 16;
-    const shaftTopW = twoStage ? shaftW * 0.92 * 0.8 * 0.88 : shaftW * 0.86;
-    const belfryW = shaftTopW * 0.94;
-    let topH: number;
-    const crystalW = Math.min(1.0, belfryW * 0.32);
-    const crystalH = clamp(belfryW * 0.6, 1.1, 2.2);
-    const spireH = belfryW * 1.5;
-    if (towerTopKind === "crystal") {
-      topH = 0.35 + crystalH;
-    } else if (towerTopKind === "spire-crystal") {
-      topH = spireH + 0.55;
-    } else {
-      topH = spireH;
+    // 層の数(契約 4軸表)と各層の幅(上へ逓減)
+    const nTiers =
+      dominant === "authority" || dominant === "arcane"
+        ? mon > 0.55
+          ? 4
+          : 3
+        : dominant === "waterside"
+          ? 2
+          : targetTop - plinthH > 13
+            ? 2
+            : 1;
+    const tierW: number[] = [];
+    for (let i = 0; i < nTiers; i++) tierW.push(width * (1 - 0.17 * i));
+    // 層間スカート露出高: 下層の屋根面が次層の壁面に切られる高さ
+    const skirt: number[] = [];
+    for (let i = 0; i < nTiers - 1; i++) {
+      const halfSpan = (tierW[i]! + 2 * CROWN_EAVE) / 2;
+      skirt.push(tanPitch * (halfSpan - tierW[i + 1]! / 2));
     }
-    const shaftH = Math.max(
-      3.0,
-      total - baseH - belfryH - topH - courseH * (twoStage ? 3 : 2),
+    // 最上層の屋根(正方形 hip = 方形)の立ち上がり
+    const topRise = tanPitch * ((tierW[nTiers - 1]! + 2 * CROWN_EAVE) / 2);
+    // 頂部飾り(topper)の高さ
+    const watchW = Math.max(1.5, tierW[nTiers - 1]! * 0.36);
+    const crystalW = Math.min(1.0, tierW[nTiers - 1]! * 0.3);
+    const crystalH = clamp(tierW[nTiers - 1]! * 0.5, 1.1, 2.2);
+    const topperH =
+      dominant === "arcane"
+        ? crystalH * 0.7
+        : dominant === "authority"
+          ? 1.7 + watchW * 1.2 - 0.8
+          : tierW[nTiers - 1]! * 0.45;
+    // 壁高の配分: 合計 = 目標高 − 基壇 − スカート − 最上屋根 − 頂部飾り
+    const sumSkirt = skirt.reduce((a, b) => a + b, 0);
+    const wallBudget =
+      targetTop - plinthH - sumSkirt - topRise - topperH +
+      ROOF_BASE_SINK * nTiers;
+    const weights: number[] = [];
+    for (let i = 0; i < nTiers; i++) weights.push(i === 0 ? 1.5 : 1.0);
+    const wSum = weights.reduce((a, b) => a + b, 0);
+    const tierH: number[] = weights.map((w) =>
+      Math.max(2.3, (wallBudget * w) / wSum),
     );
-    // 基部(太い。わずかに先細り)
+
+    // 層の展開(壁ブロックは tower 部品の緩い batter で締める)
     let y = plinthH;
-    push("tower", [p.x, y, p.z], rotU, [baseW, baseH, baseW], towerBodyMaterial, {
-      taper: 0.96,
-    });
-    y += baseH;
-    // コーニス帯 1
-    push(
-      "plinth",
-      [p.x, y, p.z],
-      rotU,
-      [baseW * 0.96 + 0.3, courseH, baseW * 0.96 + 0.3],
-      plinthMaterial,
-    );
-    y += courseH;
-    // 胴(taper で先細り。高い塔は 2 段+中間コーニスのセットバック)
-    const shaftBaseY = y;
-    /** 胴の区間(sigil・発光開口列の半幅計算に使う) */
-    const shaftSegments: { y0: number; h: number; w: number; taper: number }[] =
-      [];
-    if (twoStage) {
-      const h1 = shaftH * 0.55;
-      const h2 = shaftH - h1;
-      push("tower", [p.x, y, p.z], rotU, [shaftW, h1, shaftW], towerBodyMaterial, {
-        taper: 0.92,
-      });
-      shaftSegments.push({ y0: y, h: h1, w: shaftW, taper: 0.92 });
-      y += h1;
-      const w2 = shaftW * 0.92 * 0.8;
+    const tierBaseY: number[] = [];
+    for (let i = 0; i < nTiers; i++) {
+      tierBaseY.push(y);
       push(
-        "plinth",
+        "tower",
         [p.x, y, p.z],
         rotU,
-        [shaftW * 0.92 + 0.3, courseH, shaftW * 0.92 + 0.3],
-        plinthMaterial,
+        [tierW[i]!, tierH[i]!, tierW[i]!],
+        crownBodyMaterial,
+        { taper: 0.97 },
       );
-      y += courseH;
-      push("tower", [p.x, y, p.z], rotU, [w2, h2, w2], towerBodyMaterial, {
-        taper: 0.88,
-      });
-      shaftSegments.push({ y0: y, h: h2, w: w2, taper: 0.88 });
-      y += h2;
-    } else {
-      push("tower", [p.x, y, p.z], rotU, [shaftW, shaftH, shaftW], towerBodyMaterial, {
-        taper: 0.86,
-      });
-      shaftSegments.push({ y0: y, h: shaftH, w: shaftW, taper: 0.86 });
-      y += shaftH;
+      const roofSpan = tierW[i]! + 2 * CROWN_EAVE;
+      const rise = tanPitch * (roofSpan / 2);
+      push(
+        "hip",
+        [p.x, y + tierH[i]! - ROOF_BASE_SINK, p.z],
+        rotU,
+        [roofSpan, rise, roofSpan],
+        materials.roof,
+        { pitch },
+      );
+      if (i < nTiers - 1) {
+        y += tierH[i]! - ROOF_BASE_SINK + skirt[i]!;
+      } else {
+        y += tierH[i]! - ROOF_BASE_SINK + topRise;
+      }
     }
-    // コーニス帯 2
-    push(
-      "plinth",
-      [p.x, y, p.z],
-      rotU,
-      [shaftTopW + 0.35, courseH, shaftTopW + 0.35],
-      plinthMaterial,
-    );
-    y += courseH;
-    // 望楼層(4 面に開口)
-    push("tower", [p.x, y, p.z], rotU, [belfryW, belfryH, belfryW], towerBodyMaterial, {
-      taper: 1.0,
-    });
-    const belfryY = y;
-    y += belfryH;
+    let actualTop = y;
+
+    // 最上層の開口(4 面。魔導 = 発光開口、城郭 = 尖頭窓、他 = 窓)
+    const topTierY = tierBaseY[nTiers - 1]!;
+    const topW = tierW[nTiers - 1]!;
     const faces: { du: number; dv: number; n: Vec2 }[] = [
       { du: 0, dv: -1, n: f },
       { du: 0, dv: 1, n: vDir },
@@ -642,11 +622,8 @@ export function expandCenterBuilding(
       { du: 1, dv: 0, n: uDir },
     ];
     for (const face of faces) {
-      const bp = toWorld(
-        u + face.du * (belfryW / 2),
-        v + face.dv * (belfryW / 2),
-      );
-      const oy = belfryY + (belfryH - 1.6) * 0.45;
+      const bp = toWorld(u + face.du * (topW / 2), v + face.dv * (topW / 2));
+      const oy = topTierY + Math.max(0.5, (tierH[nTiers - 1]! - 1.5) * 0.4);
       if (dominant === "arcane") {
         pushGlow(
           "glow-window",
@@ -660,7 +637,7 @@ export function expandCenterBuilding(
           "arch-window",
           [bp.x, oy, bp.z],
           normalRot(face.n),
-          [0.9, 1.8, 0.18],
+          [0.9, 1.7, 0.18],
           materials.trim,
         );
       } else {
@@ -668,70 +645,112 @@ export function expandCenterBuilding(
           "window",
           [bp.x, oy, bp.z],
           normalRot(face.n),
-          [0.95, 1.4, GLOW_WINDOW_DEPTH],
+          [0.95, 1.35, GLOW_WINDOW_DEPTH],
           materials.trim,
         );
       }
     }
-    // 頂部
-    let actualTop = y;
-    if (towerTopKind === "crystal") {
+    // 下層の正面窓(層ごとに 1〜2)
+    for (let i = 0; i < nTiers - 1; i++) {
+      const wy = tierBaseY[i]! + Math.max(0.6, tierH[i]! * 0.35);
+      const nWin = tierW[i]! > 7 ? 2 : 1;
+      for (let k = 0; k < nWin; k++) {
+        const off = nWin === 1 ? 0 : (k === 0 ? -1 : 1) * tierW[i]! * 0.22;
+        const fp = toWorld(u + off, v - tierW[i]! / 2);
+        push(
+          "window",
+          [fp.x, wy, fp.z],
+          frontRot,
+          [winW * 0.9, winH * 0.9, GLOW_WINDOW_DEPTH],
+          materials.trim,
+        );
+      }
+    }
+
+    // 頂部飾り(軸別)
+    if (dominant === "arcane") {
+      // 方形屋根の頂に水晶灯(ソケット+水晶。契約 4軸表)
       push(
         "tower",
-        [p.x, y, p.z],
+        [p.x, actualTop - 0.35, p.z],
         rotU,
-        [belfryW * 0.6, 0.6, belfryW * 0.6],
+        [crystalW * 1.4, 0.5, crystalW * 1.4],
         plinthMaterial,
-        { taper: 0.45 },
+        { taper: 0.6 },
       );
       pushGlow(
         "crystal",
-        [p.x, y + 0.35, p.z],
+        [p.x, actualTop + 0.05, p.z],
         rotU + Math.PI / 4,
         [crystalW, crystalH, crystalW],
         "glow",
         undefined,
         true,
       );
-      actualTop = y + 0.35 + crystalH;
-    } else {
+      actualTop += 0.05 + crystalH;
+    } else if (dominant === "authority") {
+      // 小さな物見+尖塔(契約 4軸表)
+      const wy = actualTop - 0.5;
+      push(
+        "tower",
+        [p.x, wy, p.z],
+        rotU,
+        [watchW, 1.7, watchW],
+        crownBodyMaterial,
+        { taper: 0.94 },
+      );
       push(
         "spire",
-        [p.x, y - 0.05, p.z],
+        [p.x, wy + 1.65, p.z],
         rotU,
-        [belfryW * 1.35, spireH, belfryW * 1.35],
+        [watchW * 1.25, watchW * 1.2, watchW * 1.25],
         materials.roof,
       );
-      actualTop = y - 0.05 + spireH;
-      if (towerTopKind === "spire-crystal") {
+      actualTop = wy + 1.65 + watchW * 1.2;
+      if (arcaneDeco) {
         pushGlow(
           "crystal",
-          [p.x, actualTop - 0.35, p.z],
+          [p.x, actualTop - 0.3, p.z],
           rotU + Math.PI / 4,
           [0.55, 0.9, 0.55],
           "glow",
           undefined,
           true,
         );
-        actualTop += 0.55;
+        actualTop += 0.6;
+      }
+    } else {
+      // 望楼・物見: 方形屋根の頂に細い尖塔
+      const sw = Math.max(0.9, topW * 0.22);
+      push(
+        "spire",
+        [p.x, actualTop - 0.4, p.z],
+        rotU,
+        [sw, topW * 0.5, sw],
+        materials.roof,
+      );
+      actualTop += -0.4 + topW * 0.5;
+      if (arcaneDeco) {
+        pushGlow(
+          "crystal",
+          [p.x, actualTop - 0.25, p.z],
+          rotU + Math.PI / 4,
+          [0.5, 0.85, 0.5],
+          "glow",
+          undefined,
+          true,
+        );
+        actualTop += 0.6;
       }
     }
-    // 結界紋様(魔導: 胴のリング 2 段+正面の菱形紋。予算内のみ)
+
+    // 結界紋様(魔導: 層の壁面の帯+正面の菱形紋。契約 4軸表・予算内のみ)
     if (arcaneDeco) {
-      const halfAt = (yy: number): number => {
-        const last = shaftSegments[shaftSegments.length - 1];
-        for (const s of shaftSegments) {
-          if (yy <= s.y0 + s.h || s === last) {
-            const t = clamp((yy - s.y0) / s.h, 0, 1);
-            return (s.w / 2) * (1 - (1 - s.taper) * t);
-          }
-        }
-        return shaftTopW / 2;
-      };
-      const ringYs = [shaftBaseY + shaftH * 0.45, shaftBaseY + shaftH * 0.85];
-      outer: for (const ry of ringYs) {
-        const half = halfAt(ry);
-        const len = half * 2 * 0.85;
+      const ringTiers = nTiers >= 3 ? [1, nTiers - 1] : [nTiers - 1];
+      outer: for (const ti of ringTiers) {
+        const ry = tierBaseY[ti]! + tierH[ti]! * 0.72;
+        const half = tierW[ti]! / 2;
+        const len = tierW[ti]! * 0.8;
         for (const face of faces) {
           const pos = toWorld(
             u + face.du * (half + 0.04),
@@ -750,10 +769,10 @@ export function expandCenterBuilding(
           }
         }
       }
-      // 菱形紋(正面の胴上部)
-      const dy = shaftBaseY + shaftH - 1.6;
+      // 菱形紋(最下層の正面)
+      const dy = tierBaseY[0]! + tierH[0]! * 0.55;
       const r = 0.8;
-      const halfD = halfAt(dy) + 0.05;
+      const halfD = tierW[0]! / 2 + 0.05;
       const edges: { ou: number; oy: number; tilt: number }[] = [
         { ou: r / 2, oy: r / 2, tilt: -Math.PI / 4 },
         { ou: r / 2, oy: -r / 2, tilt: Math.PI / 4 },
@@ -776,31 +795,10 @@ export function expandCenterBuilding(
           break;
         }
       }
-      // 発光開口の縦列(魔導支配のみ。胴の正面)
-      if (dominant === "arcane") {
-        const y0 = shaftBaseY + 2.2;
-        const y1 = shaftBaseY + shaftH - 2.0;
-        const nWin = clamp(Math.floor((y1 - y0) / 4.4), 1, 4);
-        for (let i = 0; i < nWin; i++) {
-          const wy = y0 + ((y1 - y0) / Math.max(1, nWin - 1)) * i;
-          const fp = toWorld(u, v - halfAt(wy + GLOW_WINDOW_H / 2));
-          if (
-            !pushGlow(
-              "glow-window",
-              [fp.x, wy, fp.z],
-              frontRot,
-              [GLOW_WINDOW_W, GLOW_WINDOW_H, GLOW_WINDOW_DEPTH],
-              materials.trim,
-            )
-          ) {
-            break;
-          }
-        }
-      }
     }
     return actualTop;
   };
-  const accentTop = emitAccentTower();
+  const crownTop = emitCrown();
 
   // --- 囲い(壁セグメント+門+胸壁)。契約 4軸表 ---
   const enclosureKind = precinct.enclosure.kind;
@@ -839,6 +837,29 @@ export function expandCenterBuilding(
           [len, 0.55, wallT * 0.8],
           wallMaterialId,
         );
+        // バットレス(外面に等間隔。契約「囲い」のリズム要素)
+        const nBut = Math.floor(len / 4.5);
+        for (let bi = 1; bi <= nBut; bi++) {
+          const t = -len / 2 + (bi * len) / (nBut + 1);
+          // セグメント方向の単位ベクトル(ローカル)と外向き法線
+          const ux = horizontal ? 1 : 0;
+          const uv = horizontal ? 0 : 1;
+          const bu = (seg.a.u + seg.b.u) / 2 + ux * t;
+          const bv = (seg.a.v + seg.b.v) / 2 + uv * t;
+          const outU = horizontal ? 0 : Math.sign(seg.a.u);
+          const outV = horizontal ? Math.sign(seg.a.v) : 0;
+          const bp = toWorld(
+            bu + outU * (wallT / 2 + 0.22),
+            bv + outV * (wallT / 2 + 0.22),
+          );
+          push(
+            "plinth",
+            [bp.x, 0, bp.z],
+            rot,
+            [0.6, wallH * 0.72, 0.55],
+            wallMaterialId,
+          );
+        }
       }
     }
   }
@@ -862,6 +883,45 @@ export function expandCenterBuilding(
     }
   }
 
+  // --- 内郭の横断壁(城郭型の 2 段構え。契約「囲い」のリズム要素) ---
+  if (precinct.innerWall) {
+    const iw = precinct.innerWall;
+    const gw = iw.gateWidth;
+    const innerH = wallH * 1.0;
+    for (const [u0, u1] of [
+      [-H + 0.4, -gw / 2],
+      [gw / 2, H - 0.4],
+    ] as const) {
+      const len = u1 - u0;
+      if (len < 1.2) continue;
+      const mid = toWorld((u0 + u1) / 2, iw.v);
+      push(
+        "courtyard-wall",
+        [mid.x, 0, mid.z],
+        rotU,
+        [len, innerH, 0.55],
+        wallMaterialId,
+      );
+      push(
+        "battlement",
+        [mid.x, innerH, mid.z],
+        rotU,
+        [len, 0.5, 0.45],
+        wallMaterialId,
+      );
+    }
+    // 内門(小さなアーチ)
+    const gp = toWorld(0, iw.v);
+    push(
+      "arch",
+      [gp.x, 0, gp.z],
+      rotU,
+      [gw + 1.6, innerH + 0.9, 1.0],
+      plinthMaterial,
+      { open: gw / (gw + 1.6), rise: 0.68 },
+    );
+  }
+
   // --- 門楼(gatehouse): アーチ開口+小屋根 ---
   const gatehouseMass = precinct.masses.find((m) => m.role === "gatehouse");
   if (gatehouseMass) {
@@ -883,7 +943,7 @@ export function expandCenterBuilding(
       },
     );
     if (enclosureKind === "wall") {
-      // 城郭型: 門楼の天端に胸壁
+      // 城郭型: 門楼の天端に胸壁+両脇の双塔(契約「囲い」のリズム要素)
       push(
         "battlement",
         [gp.x, archTotalH, gp.z],
@@ -891,6 +951,26 @@ export function expandCenterBuilding(
         [gw + 0.4, 0.55, gd * 0.8],
         plinthMaterial,
       );
+      const ftw = 2.1;
+      const flankH = archTotalH + 1.4;
+      for (const s of [-1, 1]) {
+        const fp = toWorld(gc.u + s * (gw / 2 + ftw / 2 - 0.2), gc.v);
+        push(
+          "tower",
+          [fp.x, 0, fp.z],
+          rotU,
+          [ftw, flankH, ftw],
+          materials.wall,
+          { taper: 0.93 },
+        );
+        push(
+          "battlement",
+          [fp.x, flankH, fp.z],
+          rotU,
+          [ftw + 0.2, 0.5, ftw * 0.8],
+          plinthMaterial,
+        );
+      }
     } else {
       // 聖域型: 小さな寄棟屋根
       const rh = tanPitch * ((gd + 1.2) / 2) * 0.7;
@@ -906,7 +986,7 @@ export function expandCenterBuilding(
   }
 
   // --- 隅塔(authority。頂部高はアクセント塔の 0.6 倍以下。契約) ---
-  const turretCap = accentTop * 0.6;
+  const turretCap = crownTop * 0.6;
   for (const t of precinct.turrets) {
     const tw = t.width;
     const tu = clamp(t.u, -H + tw / 2, H - tw / 2);
@@ -934,21 +1014,45 @@ export function expandCenterBuilding(
     );
   }
 
-  // --- 縫合(connector): 低い接続壁 ---
+  // --- 縫合(connector): 低い接続壁 / 屋根付き渡り廊下(契約「量塊の造形」) ---
   for (const c of precinct.connectors) {
     const du = c.b.u - c.a.u;
     const dv = c.b.v - c.a.v;
     const len = Math.hypot(du, dv);
-    if (len < 0.8) continue;
+    if (len < 0.5) continue;
     const mid = toWorld((c.a.u + c.b.u) / 2, (c.a.v + c.b.v) / 2);
     const horizontal = Math.abs(du) >= Math.abs(dv);
-    push(
-      "courtyard-wall",
-      [mid.x, 0, mid.z],
-      horizontal ? rotU : rotV,
-      [len, Math.min(wallH, 2.2), 0.45],
-      wallMaterialId,
-    );
+    const rot = horizontal ? rotU : rotV;
+    if (c.kind === "passage") {
+      // 渡り廊下: 壁体+切妻屋根(主館とクラウンを繋ぐ)
+      const pw = 1.9;
+      const ph = 2.9;
+      push(
+        "wall",
+        [mid.x, plinthH, mid.z],
+        rot,
+        [len + 0.4, ph, pw],
+        materials.wall,
+        { floor: 0 },
+      );
+      const span = pw + 2 * EAVE_OVERHANG;
+      push(
+        "gable",
+        [mid.x, plinthH + ph - ROOF_BASE_SINK, mid.z],
+        rot,
+        [len + 0.4 + 2 * GABLE_END_OVERHANG, tanPitch * (span / 2) * 0.8, span],
+        materials.roof,
+        { pitch },
+      );
+    } else {
+      push(
+        "courtyard-wall",
+        [mid.x, 0, mid.z],
+        rot,
+        [len, Math.min(wallH, 2.2), 0.45],
+        wallMaterialId,
+      );
+    }
   }
 
   // --- 回廊(聖域型: cloister の中庭を囲む列柱+片流れ屋根) ---

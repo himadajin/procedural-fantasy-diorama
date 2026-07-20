@@ -83,7 +83,7 @@ describe("precinct: 量塊と中庭の関係(契約「敷地計画」)", () => {
 
     it(`${axis}: main-hall と accent-tower が常に 1 つずつある`, () => {
       expect(plan.masses.filter((m) => m.role === "main-hall").length).toBe(1);
-      expect(plan.masses.filter((m) => m.role === "accent-tower").length).toBe(
+      expect(plan.masses.filter((m) => m.role === "crown").length).toBe(
         1,
       );
     });
@@ -188,7 +188,7 @@ describe("precinct: 軸別の型(契約 4軸表)", () => {
       if (horizontal) expect(s.a.v).toBeLessThan(H - 1e-9);
     }
     // 塔は水際(背面)の隅
-    expect(plan.accentTower.v).toBeGreaterThan(0);
+    expect(plan.crown.v).toBeGreaterThan(0);
   });
 
   it("rustic: 柵囲い+作業庭 1 つ+非対称の物見塔", () => {
@@ -198,7 +198,7 @@ describe("precinct: 軸別の型(契約 4軸表)", () => {
     expect(plan.courts[0]!.kind).toBe("work-yard");
     expect(plan.turrets.length).toBe(0);
     // 物見塔は中心軸から外れる(非対称)
-    expect(Math.abs(plan.accentTower.u)).toBeGreaterThan(1);
+    expect(Math.abs(plan.crown.u)).toBeGreaterThan(1);
   });
 });
 
@@ -209,7 +209,7 @@ describe("precinct: 縮退規則(契約「縮退規則」)", () => {
     );
     expect(plan.usable).toBe(USABLE_MIN);
     expect(plan.masses.some((m) => m.role === "main-hall")).toBe(true);
-    expect(plan.masses.some((m) => m.role === "accent-tower")).toBe(true);
+    expect(plan.masses.some((m) => m.role === "crown")).toBe(true);
     expect(plan.courts.length).toBeGreaterThanOrEqual(1);
   });
 

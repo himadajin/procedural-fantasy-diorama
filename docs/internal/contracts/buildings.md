@@ -1010,7 +1010,8 @@ towers / gates / shrines と同様に floaters の anchor にはならない=
   - **量塊**: role `main-hall`(1)/ `crown`(1。垂直アクセント。
     Phase E5 で `accent-tower` から改名 2026-07-20)/ `gatehouse`
     (0〜1)/ `annex`(0〜3)/ `connector`(接続壁・回廊・渡り廊下。
-    0〜n)。量塊どうしは重ならない。connector は接続対象と辺で接する
+    0〜n)。量塊どうしは重ならない(例外: crown は主館へ貫入して
+    立ってよい — 天守・交差塔の意匠。E5)。connector は接続対象と辺で接する
     (接することが要件、重なりは不可)。annex は main-hall または囲いへ
     connector で接続する(孤立した量塊を作らない)
   - **アプローチ**: 主門 → 前庭 → 主館の大扉が facing 軸線上に整列する
