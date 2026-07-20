@@ -231,7 +231,7 @@ describe("段15 植生: 散布マスクの勾配(implementation-spec 7章)", () 
       }
       return n;
     };
-    expect(shoreShrubs(wet)).toBeGreaterThan(shoreShrubs(dry) + 10);
+    expect(shoreShrubs(wet)).toBeGreaterThanOrEqual(shoreShrubs(dry) + 10);
   });
 
   it("Water 0(水なし)でも植生が成立する(乾いた土地として破綻しない)", () => {

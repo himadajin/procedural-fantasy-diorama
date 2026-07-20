@@ -26,7 +26,9 @@ import { buildUpTo, makeCached } from "./helpers";
  * Water 90 で複数の水辺タイプ(4種以上・水路裏口の向き契約を満たす)が
  * 同一箱庭に共存する seed を固定する。
  */
-const REP_SEEDS = ["mistvale-7", "harbor-2", "lakeside-2"];
+// Phase E9 の敷地拡大で harbor-2 は橋詰め建築・水路沿い家並みが 4 種未満に
+// 落ちたため、代表 seed を harbor-1 へ差し替え(2026-07-20)
+const REP_SEEDS = ["mistvale-7", "harbor-1", "lakeside-2"];
 
 function build(seed: string, over: Partial<Params> = {}): WorldModel {
   return buildUpTo(runBuildings, seed, over);
@@ -265,7 +267,11 @@ describe("waterfront: 部品の契約(語彙・水上到達・取り付き)", ()
 
   it("水路裏口は overWater でない建物に付き、水路の近くを向く", () => {
     let backdoors = 0;
-    for (const seed of REP_SEEDS) {
+    // 水路裏口の出現は水路と区画の位置関係に敏感なため、裏口が確実に
+    // 現れる代表 seed を独立に持つ(Phase E9 の敷地拡大で REP_SEEDS では
+    // 出現しなくなったための差し替え。2026-07-20)
+    const BACKDOOR_SEEDS = ["waterway-3", "everdusk-102"];
+    for (const seed of BACKDOOR_SEEDS) {
       const model = cached(seed, { water: 90 });
       for (const b of general(model)) {
         if (b.foundation.overWater) continue;

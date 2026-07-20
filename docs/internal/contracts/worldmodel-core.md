@@ -177,7 +177,11 @@ interface Derived {
   centerArcaneBias: number;  // 中心建築が魔導型に寄るバイアス。0〜1(1.7節の魔導軸に作用)
 
   // --- Monumentality 駆動 ---
-  centerFootprint: number;   // 中心建築 footprint 一辺の目安。14〜44
+  centerFootprint: number;   // 中心建築 footprint 一辺の目安。17〜50
+                             // (Phase E9 改訂 2026-07-20: 14〜44 から拡大。
+                             // 建築群化に伴い、facing が斜めのとき使用領域が
+                             // 最大 3 割縮む損失を織り込む。
+                             // plans/2026-07-20-center-complex.md 8節)
   centerHeight: number;      // 中心建築の高さ目安。10〜28
                              // (Phase E 改訂 2026-07-20: 12〜56 から縮小。
                              // スカイラインの担い手が「細い塔」から「クラウン =

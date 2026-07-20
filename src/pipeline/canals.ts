@@ -747,7 +747,10 @@ function planFallbackCanal(
     const dz = center.z - p.z;
     const len = Math.hypot(dx, dz);
     if (len < 1e-6) continue;
-    const stop = len - (footHalf * 1.4 + FOOTPRINT_CLEARANCE);
+    // 停止マージン: Phase E9 の敷地拡大(centerFootprint 14+30 → 18+34)に
+    // 合わせて 1.4 → 1.15 へ縮小。水路が囲い(群外郭)の近くまで届き、
+    // 堀のような佇まいになる(最短長 minLen との両立も回復する)
+    const stop = len - (footHalf * 1.15 + FOOTPRINT_CLEARANCE);
     if (stop < minLen) continue;
     // p → center 方向へ走査し、水中(waterSdf < clear)に留まる最後の弧長を探す
     let lastWetT = -1;

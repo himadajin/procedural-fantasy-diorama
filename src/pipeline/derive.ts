@@ -95,7 +95,7 @@ export function computeDerived(seed: string, params: Params): Derived {
     centerArcaneBias: arcana,
 
     // --- Monumentality 駆動 ---
-    centerFootprint: 14 + 30 * monument,
+    centerFootprint: 17 + 33 * monument,
     centerHeight: 10 + 18 * monument,
     centerPlazaRadius: 10 + 22 * monument,
     upgradeRadius: 20 + 80 * monument,

@@ -707,15 +707,27 @@ function placeBackyardParts(
       stableRound(Math.max(...effective.map((u) => u.depth))) >=
         BACKYARD_MIN_BAND
     ) {
+      const ownPolys = model.parcels
+        .filter((p) => ownParcelIds.has(p.id))
+        .map((p) => p.polygon);
       const blocked = effective.some((u) => {
         const v0 = buildingRearV;
         const v1 = buildingRearV + u.depth;
-        const candidate = ensureClockwise([
+        const corners = [
           toWorld(u.u0, v0),
           toWorld(u.u1, v0),
           toWorld(u.u1, v1),
           toWorld(u.u0, v1),
-        ]);
+        ];
+        // 自区画帯の包含(契約「裏庭の性質」帯判定 (12) を配置側でも保証。
+        // 曲がった道沿い・歪んだ区画で帯が区画外へ出る場合は縮小へ回す)
+        for (const c of corners) {
+          const minDist = Math.min(
+            ...ownPolys.map((poly) => polygonSignedDistance(c.x, c.z, poly)),
+          );
+          if (minDist > 1.1) return true;
+        }
+        const candidate = ensureClockwise(corners);
         return wallRegionBlocked(model, ctx, candidate, ownParcelIds, buildings);
       });
       if (!blocked) break;
@@ -3342,6 +3354,10 @@ const ROWHOUSE_MIN_DEPTH = 2.2;
 /** 導出した帯状矩形の全コーナーがメンバー区画から収まるべき帯(courtyard の
  *  帯制約 (12) と同じ 1.2。曲線道路での逸脱を防ぐ安全弁。実装補足) */
 const ROWHOUSE_PARCEL_BAND = 1.2;
+/** 連棟メンバー facing の先頭区画からの逸脱上限(rad ≈ 5°)。曲がった道
+ *  沿いの列は先頭フレームの帯状矩形が帯制約 (12)・扉契約 (13) を満たせない
+ *  ため合成しない(契約「連棟(rowhouse)の性質」実装補足) */
+const ROWHOUSE_MAX_FACING_DEV = (5 * Math.PI) / 180;
 /** 住戸境界の分節縦梁(既存 beam 部品)の太さ(見付け) */
 const ROWHOUSE_DIVIDER_WIDTH = 0.14;
 
@@ -3415,6 +3431,16 @@ function finalizeRowhouseGroups(
       }
     }
     if (!allHouse) continue;
+
+    // メンバー facing の逸脱(曲率)検査。逸脱が大きい列は合成しない
+    // (契約「連棟(rowhouse)の性質」実装補足。フォールバック = 単棟のまま)
+    let maxFacingDev = 0;
+    for (const m of members) {
+      let d = Math.abs(m.facing - head.facing);
+      d = Math.min(d, Math.PI * 2 - d);
+      maxFacingDev = Math.max(maxFacingDev, d);
+    }
+    if (maxFacingDev > ROWHOUSE_MAX_FACING_DEV) continue;
 
     // --- 基準フレーム(先頭区画の接道方位。乱数非消費) ---
     const [fa, fb] = head.frontEdge;
