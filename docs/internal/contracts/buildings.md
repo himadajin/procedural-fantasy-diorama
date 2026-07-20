@@ -1004,22 +1004,25 @@ towers / gates / shrines と同様に floaters の anchor にはならない=
     の矩形を 1 つ以上計画する。中庭どうし・中庭と量塊は重ならない
   - **囲い**: 使用領域外周(またはその一部)に壁セグメント列+主門 1
     (facing 側。アプローチ軸上)+副門 0〜2。囲いの硬さ(石壁 / 低壁 /
-    柵)と開放度は軸で決める(下表)
-  - **量塊**: role `main-hall`(1)/ `accent-tower`(1)/ `gatehouse`
-    (0〜1)/ `annex`(0〜3)/ `connector`(接続壁・回廊。0〜n)。
-    量塊どうしは重ならない。connector は接続対象と辺で接する
+    柵)と開放度は軸で決める(下表)。城郭型は壁のリズム要素 —
+    壁面のバットレス、内郭 / 外郭の壁高の段差、門楼の格上げ(双塔化)—
+    を持たせてよい(E5。寸法は造形の提案値とし目視検収で調整する)
+  - **量塊**: role `main-hall`(1)/ `crown`(1。垂直アクセント。
+    Phase E5 で `accent-tower` から改名 2026-07-20)/ `gatehouse`
+    (0〜1)/ `annex`(0〜3)/ `connector`(接続壁・回廊・渡り廊下。
+    0〜n)。量塊どうしは重ならない。connector は接続対象と辺で接する
     (接することが要件、重なりは不可)。annex は main-hall または囲いへ
     connector で接続する(孤立した量塊を作らない)
   - **アプローチ**: 主門 → 前庭 → 主館の大扉が facing 軸線上に整列する
   - **付属塔の高さ上限**: 囲い・門楼に付く塔(隅塔・門楼塔)の頂部高は
-    accent-tower 頂部高の 0.6 倍以下(目安。E5 の目視検収で調整可)。
+    crown 頂部高の 0.6 倍以下(目安。E5 の目視検収で調整可)。
     「垂直アクセントは 1 本だけ」の原則を数値で担保する
   - **縮退規則(最小敷地)**: 使用領域の一辺は下限 10 でクランプする
     (現行実装のクランプを契約へ昇格)。使用領域が狭く計画が両立しない
     ときは、次の優先順で要素を落とす:
     (1) annex 数を減らす → (2) gatehouse を省く → (3) 囲いを部分囲い
     (前面+側面の一部)へ縮める → (4) 中庭を forecourt 1 つへ縮める。
-    main-hall と accent-tower は常に生成する。計画上の中庭は常に 1 以上
+    main-hall と crown は常に生成する。計画上の中庭は常に 1 以上
     だが、Plaza 化は内接円径 6 以上のもののみ(Plaza 0 個も許容)
 - **量塊の造形**(第 2 層):
   - main-hall: 間口 = 使用領域の 0.55〜0.75、2〜4 階、屋根は gable /
@@ -1027,10 +1030,16 @@ towers / gates / shrines と同様に floaters の anchor にはならない=
     (stair。steps 2〜10)
   - annex: 一般建物と同スケール(1〜2 階)。一般建物の骨格流儀
     (壁×階+屋根+開口列)で展開する
-  - accent-tower: 段構成「太い基部 → コーニス帯で分節した胴(taper)→
-    一回り細い望楼層(4 面に開口)→ 頂部(軸別。下表)」。
-    素の角柱 1 本を目標高へ引き伸ばす展開は禁止する
+  - crown: **屋根の層を持つ塔状の建物**(天守方式。Phase E5 改訂
+    2026-07-20)。「壁ブロック+寄棟屋根の層」を 2〜4 層、上へ一回りずつ
+    逓減して積み、頂部は軸別(下表)。全高 / 基部幅の縦横比は概ね 3 以下
+    を目安とする。細い角柱(tower 部品の素の 1 本)を目標高へ引き伸ばす
+    展開は禁止する(旧「基部 → 胴 → 望楼層」の段構成塔から改訂。
+    改訂理由: 俯瞰ジオラマでは細い塔は情報を持たず、屋根層の水平リズムが
+    高さの読みを作るため。art-direction 6節)
   - gatehouse: 門開口(`arch` 流用可)+小屋根または双柱
+  - connector(渡り廊下形態): 低い壁のほか、屋根付きの渡り廊下
+    (壁+lean-to / gable)としてよい(E5。量塊どうしの縫合を立体化する)
 - **Building フィールド**: id `"building/center"`、parcelId null、
   role `"center"`、facing = centerPlan.facing、floors = 主館の階数
   (2〜4。一般建物の 1〜3 の例外)、roof.type = `"compound"` 固定
@@ -1045,18 +1054,18 @@ towers / gates / shrines と同様に floaters の anchor にはならない=
   限り矩形から 1.2 まで許容する(一般建物の軒はみ出し許容の流儀。
   centerPlan.footprint までのマージン 1.2 の範囲内)。
   zoneMask の建物上書き(石造系 → paved)は群外郭の全域ではなく
-  **量塊(main-hall / annex / gatehouse / accent-tower)の実体 footprint
+  **量塊(main-hall / annex / gatehouse / crown)の実体 footprint
   のみ**に適用する。中庭の地面表現は中庭 Plaza の描画が担う
 - **4軸 → 敷地計画の型**(implementation-spec 1.7節。axes の最大軸が
   型を、2位軸が装飾傾向を決める。同点は arcane > authority >
   waterside > rustic の固定順で解決):
 
-  | 軸 | 型 | 囲い | 中庭 | 量塊 | accent-tower |
+  | 軸 | 型 | 囲い | 中庭 | 量塊 | crown |
   |---|---|---|---|---|---|
-  | authority | 城郭・宮殿 | 石壁+隅塔 2〜4+門楼 | forecourt+main-court の 2 段構え | 主館+annex(衛兵所・厨房棟) | 主館背後の天守型。頂部は尖塔(spire) |
-  | arcane | 聖域・修道院 | 低めの石壁。幾何学は最も規則的 | cloister(回廊が主庭を四角く囲む) | 聖堂型主館+annex(書庫・工房) | 鐘楼型。頂部は水晶(crystal / spire-crystal) |
-  | waterside | 湖畔の荘園 | 低壁。水面側は開放 | main-court が水面へ開く | U字傾向の主館+annex(船小屋 = 水際。水上への張り出しは「水辺建築の拡張」の部品流儀(pile / deck・params.waterfront = 1)で表現する。Building の foundation / overWater は群外郭の接地契約で従来どおり判定し、量塊単位には持たない、温室風の離れ) | 水際の隅塔。頂部は尖塔(spire)。位置は最も水面に近い隅(8 方向プローブの現行流儀) |
-  | rustic | 農場屋敷 | 柵状の低い囲い(木部)。幾何学は最も崩す | work-yard 1 つ | 主屋+annex(納屋・厩)。非対称配置 | 鳩舎風の物見塔(木造)。高さはスカイライン契約の下限 |
+  | authority | 城郭・宮殿 | 石壁+隅塔 2〜4+門楼 | forecourt+main-court の 2 段構え | 主館+annex(衛兵所・厨房棟) | 主館背後の**天守 / ドンジョン**(屋根層 3〜4 層)。最上層に小さな物見+尖塔(spire) |
+  | arcane | 聖域・修道院 | 低めの石壁。幾何学は最も規則的 | cloister(回廊が主庭を四角く囲む) | 聖堂型主館+annex(書庫・工房) | **段塔**(パゴダ風。急勾配スレートの屋根層 3〜4 層)。最上層に水晶灯(crystal)、紋様は層の壁面 |
+  | waterside | 湖畔の荘園 | 低壁。水面側は開放 | main-court が水面へ開く | U字傾向の主館+annex(船小屋 = 水際。水上への張り出しは「水辺建築の拡張」の部品流儀(pile / deck・params.waterfront = 1)で表現する。Building の foundation / overWater は群外郭の接地契約で従来どおり判定し、量塊単位には持たない、温室風の離れ) | **望楼**(屋根層 2 層の控えめな塔屋)。頂部は尖塔(spire)。位置は最も水面に近い隅(8 方向プローブの現行流儀) |
+  | rustic | 農場屋敷 | 柵状の低い囲い(木部)。幾何学は最も崩す | work-yard 1 つ | 主屋+annex(納屋・厩)。非対称配置 | 鳩舎風の物見塔(木造・屋根層 1〜2 層)。高さはスカイライン契約の下限 |
 
   - 装飾(2位軸。スコア ≥ 0.15 のときのみ付加し、微小スコアの
     seed 揺らぎで装飾が跳ばないようにする): arcane → 結界紋様(sigil)と
@@ -1085,10 +1094,10 @@ towers / gates / shrines と同様に floaters の anchor にはならない=
 - **スカイライン契約**: 周辺最高点 P = 一般建物の全部品の最高点
   (`position.y + scale.y` の最大。一般建物が無い場合は 0)。
   中心建築の最高点(同じ定義)は `P × derived.skylineRatio` 以上で
-  なければならない。担い手は accent-tower のみとし(Phase E)、
+  なければならない。担い手は crown のみとし(Phase E)、
   その段構成全体の頂部高を
   `max(centerPlan.heightHint, P × skylineRatio × 1.03)` まで
-  引き上げてこれを満たす。accent-tower 以外の量塊は目標高へ
+  引き上げてこれを満たす。crown 以外の量塊は目標高へ
   引き伸ばさない(高さは自身の階数・屋根から決まる)。
   段12 のパイプライン内アサーションが事後検証する
   (違反は throw せず件数を console に出す)
@@ -1100,7 +1109,7 @@ towers / gates / shrines と同様に floaters の anchor にはならない=
   `glowPartArea` が正)は `glowAreaCap × 箱庭面積(boundary の面積)×
   0.35`(中心建築の取り分。残りは PHASE 5b の結界要素)以下とし、
   超えないよう発光開口・紋様の追加を打ち切る。段12 のアサーションで検証。
-  発光は accent-tower の望楼層・頂部水晶(および arcane の回廊欄間の
+  発光は crown の最上層・頂部水晶(および arcane の回廊欄間の
   sigil)へ集中させ、群全体へ散らさない(Phase E。art-direction 2.2節の
   「面積と数を絞る」の適用)
 - **乱数**: 骨格は `"building/center"`、開口・窓の詳細は

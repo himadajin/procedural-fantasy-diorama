@@ -178,11 +178,17 @@ interface Derived {
 
   // --- Monumentality 駆動 ---
   centerFootprint: number;   // 中心建築 footprint 一辺の目安。14〜44
-  centerHeight: number;      // 中心建築の高さ目安。12〜56
+  centerHeight: number;      // 中心建築の高さ目安。10〜28
+                             // (Phase E 改訂 2026-07-20: 12〜56 から縮小。
+                             // スカイラインの担い手が「細い塔」から「クラウン =
+                             // 屋根層を持つ塔状の建物」へ変わり、高さの誇張を
+                             // 周辺の 1.7〜2.0 倍へ抑えたため。buildings.md
+                             // 「中心建築」・art-direction 6節)
   centerPlazaRadius: number; // 中心前広場の半径。10〜32
   upgradeRadius: number;     // 中心周辺の建物格上げ半径。20〜100
   parcelReserve: number;     // 中心周辺の区画予約半径(centerFootprint 比)。1.2〜2.4
-  skylineRatio: number;      // スカイライン倍率。1.8〜3.5(PHASE 5a のアサーション基準)
+  skylineRatio: number;      // スカイライン倍率。1.4〜2.0(段12 のアサーション基準。
+                             // Phase E 改訂 2026-07-20: 1.8〜3.5 から縮小。同上)
 }
 ```
 
