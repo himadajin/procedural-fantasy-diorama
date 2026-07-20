@@ -623,7 +623,12 @@ describe("buildings: 中庭型(courtyard)(contracts/buildings.md「中庭型(cou
         const model = cached(seed, over);
         const groups = parcelsByGroup(model);
         const courtyardPlazas = model.plazas.filter(
-          (p) => p.kind === "courtyard" && p.id.startsWith("plaza/courtyard/"),
+          (p) =>
+            p.kind === "courtyard" &&
+            p.id.startsWith("plaza/courtyard/") &&
+            // 中心建築の中庭(plaza/courtyard/center/<連番>)は
+            // 一般建物の中庭型グループ検証の対象外(Phase E)
+            !p.id.startsWith("plaza/courtyard/center/"),
         );
         for (const plaza of courtyardPlazas) {
           plazaCount++;

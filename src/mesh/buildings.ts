@@ -630,6 +630,38 @@ function courtyardWallPart(part: Part, buf: GeoBuffer, base: THREE.Color): void 
   subBox(buf, xf, base, -0.5, 0.5, 0.88, 1, -0.5, 0.5);
 }
 
+/**
+ * 片流れ屋根(lean-to): 高い縁 = ローカル −z 側の閉じたくさび
+ * (勾配面+背の立面+妻三角 2+軒裏)。回廊・下屋用
+ * (contracts/buildings.md「Phase E の追加語彙」)。
+ */
+function leanToPart(part: Part, buf: GeoBuffer, base: THREE.Color): void {
+  const xf = makeXform(part);
+  const inside = xf([0, 0.3, -0.15]);
+  const A: L = [-0.5, 1, -0.5];
+  const B: L = [0.5, 1, -0.5];
+  const C: L = [0.5, 0, 0.5];
+  const D: L = [-0.5, 0, 0.5];
+  const A0: L = [-0.5, 0, -0.5];
+  const B0: L = [0.5, 0, -0.5];
+  const s4 = [1, 1, 1, 1];
+  face(buf, xf, [A, B, C, D], s4, inside, base); // 勾配面
+  face(buf, xf, [A0, B0, B, A], s4, inside, base); // 背の立面(高い側)
+  face(buf, xf, [B0, C, B], [1, 1, 1], inside, base); // 妻三角
+  face(buf, xf, [A0, D, A], [1, 1, 1], inside, base);
+  const soff = [
+    ROOF_SOFFIT_SHADE,
+    ROOF_SOFFIT_SHADE,
+    ROOF_SOFFIT_SHADE,
+    ROOF_SOFFIT_SHADE,
+  ];
+  face(buf, xf, [A0, B0, C, D], soff, inside, base); // 軒裏
+}
+
+/** 胸壁(battlement)の凸ピッチと凸幅(実寸固定。ピース生成時に計算) */
+const MERLON_PITCH = 1.15;
+const MERLON_W = 0.6;
+
 // --- 結界構造(contracts/buildings.md 結界構造の追加語彙、
 //     contracts/wards.md「結界構造の立体化」) ---
 
@@ -972,10 +1004,11 @@ export const MERGE_HANDLERS: Record<
   fence: (part, buf, base) => boxPart(part, buf, base, FENCE_FOOT_AO),
   stair: (part, buf, base) => stairPart(part, buf, base),
   dormer: (part, buf, base) => dormerPart(part, buf, base),
-  // --- 中心建築(塔・尖塔・中庭壁・大型開口) ---
+  // --- 中心建築(塔・尖塔・中庭壁・大型開口・片流れ屋根) ---
   tower: (part, buf, base) => towerPart(part, buf, base),
   spire: (part, buf, base) => spirePart(part, buf, base),
   "courtyard-wall": (part, buf, base) => courtyardWallPart(part, buf, base),
+  "lean-to": (part, buf, base) => leanToPart(part, buf, base),
   "rose-window": (part, buf, base) => roseWindowPart(part, buf, base),
   "arch-window": (part, buf, base) => archWindowPart(part, buf, base),
   // --- 結界構造(結界壁・結界門のアーチ) ---
@@ -1024,6 +1057,17 @@ const INSTANCED_TYPES: Record<
   beam: (part, base, pools) =>
     boxPiece(pools, part, base, -0.5, 0.5, 0, 1, -0.5, 0.5),
   chimney: (part, base, pools) => chimneyPieces(pools, part, base),
+  // --- 胸壁(1 凸 = 1 ピース。凸ピッチ・凸幅は実寸固定。
+  //     contracts/buildings.md「Phase E の追加語彙」) ---
+  battlement: (part, base, pools) => {
+    const [sx] = part.transform.scale;
+    const n = Math.max(1, Math.round(sx / MERLON_PITCH));
+    const wf = Math.min(0.9, MERLON_W / Math.max(sx, 1e-6));
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n - 0.5;
+      boxPiece(pools, part, base, t - wf / 2, t + wf / 2, 0, 1, -0.5, 0.5);
+    }
+  },
   // --- 境界標・立石(専用プール ward-stones) ---
   "ward-stone": (part, base, pools) => {
     const [px, py, pz] = part.transform.position;

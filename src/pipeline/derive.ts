@@ -95,12 +95,12 @@ export function computeDerived(seed: string, params: Params): Derived {
     centerArcaneBias: arcana,
 
     // --- Monumentality 駆動 ---
-    centerFootprint: 14 + 30 * monument,
-    centerHeight: 12 + 44 * monument,
+    centerFootprint: 17 + 33 * monument,
+    centerHeight: 10 + 18 * monument,
     centerPlazaRadius: 10 + 22 * monument,
     upgradeRadius: 20 + 80 * monument,
     parcelReserve: 1.2 + 1.2 * monument,
-    skylineRatio: 1.8 + 1.7 * monument,
+    skylineRatio: 1.4 + 0.6 * monument,
   };
 }
 

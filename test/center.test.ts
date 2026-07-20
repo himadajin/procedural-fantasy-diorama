@@ -1,7 +1,7 @@
 /**
- * 中心建築の拡張文法のテスト。
+ * 中心建築(建築群)の拡張文法のテスト。
  * 契約は docs/internal/contracts/buildings.md「中心建築」
- * (スカイライン契約・4軸→骨格/装飾・発光の規律)、
+ * (スカイライン契約・4軸→敷地計画の型/装飾・発光の規律・建築群の 4 原則)、
  * 設計は implementation-spec 1.7節。
  */
 import { describe, expect, it } from "vitest";
@@ -25,7 +25,8 @@ import { buildUpTo, makeCached } from "./helpers";
 
 const SEEDS = ["everdusk-101", "seed-a", "seed-b"];
 
-/** 中心建築の追加語彙+再利用語彙(contracts/buildings.md「中心建築」の追加語彙) */
+/** 中心建築の追加語彙+再利用語彙(contracts/buildings.md「中心建築」・
+ *  「Phase E の追加語彙」) */
 const CENTER_PART_TYPES = new Set([
   "plinth",
   "wall",
@@ -35,6 +36,8 @@ const CENTER_PART_TYPES = new Set([
   "door",
   "chimney",
   "stair",
+  "beam",
+  "fence",
   "tower",
   "spire",
   "crystal",
@@ -43,6 +46,11 @@ const CENTER_PART_TYPES = new Set([
   "rose-window",
   "arch-window",
   "courtyard-wall",
+  "arch",
+  "battlement",
+  "lean-to",
+  "deck",
+  "pile",
 ]);
 const GLOW_TYPES = new Set(["crystal", "sigil", "glow-window"]);
 
@@ -97,7 +105,7 @@ describe("center: 決定性", () => {
 });
 
 describe("center: 基本契約(contracts「中心建築」)", () => {
-  it("id / parcelId / role / footprint / floors / 語彙が契約どおり", () => {
+  it("id / parcelId / role / footprint / floors / roof / 語彙が契約どおり", () => {
     for (const seed of SEEDS) {
       for (const over of [{}, ARCANE, AUTHORITY, WATERSIDE, RUSTIC]) {
         const model = cached(seed, over);
@@ -105,10 +113,13 @@ describe("center: 基本契約(contracts「中心建築」)", () => {
         expect(b.id).toBe("building/center");
         expect(b.parcelId).toBeNull();
         expect(b.facing).toBe(model.centerPlan.facing);
-        expect([4, 6, 8]).toContain(b.footprint.length);
+        // footprint は群の外郭 = 使用領域の矩形(4 頂点。Phase E)
+        expect(b.footprint.length).toBe(4);
         expect(Number.isInteger(b.floors)).toBe(true);
-        expect(b.floors).toBeGreaterThanOrEqual(1);
-        expect(b.floors).toBeLessThanOrEqual(5);
+        expect(b.floors).toBeGreaterThanOrEqual(2);
+        expect(b.floors).toBeLessThanOrEqual(4);
+        // roof.type は "compound" 固定(群。Phase E)
+        expect(b.roof.type).toBe("compound");
         expect(b.roof.pitch).toBeGreaterThanOrEqual(50);
         expect(b.roof.pitch).toBeLessThanOrEqual(58);
         for (const p of b.parts) {
@@ -159,29 +170,63 @@ describe("center: 基本契約(contracts「中心建築」)", () => {
     }
   });
 
-  it("中庭(kind courtyard)は中心建築の footprint と重ならない", () => {
+  it("建築群の骨格: 囲い・主館・アクセント塔が常にある(4 原則)", () => {
+    for (const seed of SEEDS) {
+      for (const over of [{}, ARCANE, AUTHORITY, WATERSIDE, RUSTIC]) {
+        const b = center(cached(seed, over));
+        // 囲い(courtyard-wall または fence)のセグメントが複数
+        const enclosure =
+          partsOf(b, "courtyard-wall").length + partsOf(b, "fence").length;
+        expect(enclosure, `seed=${seed}`).toBeGreaterThanOrEqual(3);
+        // 主館(壁×2 階以上)と屋根
+        expect(partsOf(b, "wall").length).toBeGreaterThanOrEqual(2);
+        expect(
+          partsOf(b, "gable").length + partsOf(b, "hip").length,
+        ).toBeGreaterThanOrEqual(1);
+        // クラウン(屋根層を積む塔状の建物)の層の壁ブロック
+        expect(partsOf(b, "tower").length).toBeGreaterThanOrEqual(1);
+        expect(partsOf(b, "hip").length).toBeGreaterThanOrEqual(1);
+        // 細い角柱の禁止(契約「クラウン」: 縦横比の規律。
+        // 全 tower 部品の 高さ/幅 ≤ 4.6)
+        for (const t of partsOf(b, "tower")) {
+          const aspect =
+            t.transform.scale[1] /
+            Math.max(t.transform.scale[0], t.transform.scale[2]);
+          expect(aspect, `tower aspect seed=${seed}`).toBeLessThanOrEqual(4.6);
+        }
+        // 正面の大扉+前庭階段
+        expect(partsOf(b, "door").length).toBeGreaterThanOrEqual(1);
+        expect(partsOf(b, "stair").length).toBeGreaterThanOrEqual(1);
+      }
+    }
+  });
+
+  it("中庭 Plaza は中心建築の群外郭の内側にあり、id が契約どおり", () => {
     let courtyards = 0;
-    // SEEDS に加え、中庭が確実に現れる代表 seed を補う
-    // (中庭の出現は centerPlan.position 経由で水域配置の影響を受けるため、
-    // 特定 seed×combo では偶然出現しないことがある。事前に確認済み)
     for (const seed of [...SEEDS, "seed-c", "harbor-1"]) {
       for (const over of [{}, ARCANE, AUTHORITY, WATERSIDE, RUSTIC]) {
         const model = cached(seed, over);
         const b = center(model);
         for (const plaza of model.plazas) {
           if (plaza.kind !== "courtyard") continue;
-          // 中心建築の中庭は id "plaza/courtyard"(単一)。一般建物の中庭型
-          // クラスタは id "plaza/courtyard/<groupId>"
-          // を持ち、id 空間が分離しているため中心建築の courtyard 検証とは
-          // 区別する(契約「中庭型(courtyard)の性質」・network-plaza.md
-          // 「Plaza」節)。いずれも中心建築 footprint とは重ならないはず
-          if (plaza.id === "plaza/courtyard") courtyards++;
-          else expect(plaza.id).toMatch(/^plaza\/courtyard\/block\//);
-          expect(polygonsOverlap(plaza.polygon, b.footprint)).toBe(false);
+          if (plaza.id.startsWith("plaza/courtyard/center/")) {
+            // 中心建築の中庭は群外郭(footprint)の内側(Phase E)
+            courtyards++;
+            for (const v of plaza.polygon) {
+              expect(
+                polygonSignedDistance(v.x, v.z, b.footprint),
+              ).toBeLessThanOrEqual(1e-6);
+            }
+          } else {
+            // 一般建物の中庭型クラスタ(id 空間は接頭辞で分離。
+            // network-plaza.md Plaza 節)。中心建築の外郭とは重ならない
+            expect(plaza.id).toMatch(/^plaza\/courtyard\/block\//);
+            expect(polygonsOverlap(plaza.polygon, b.footprint)).toBe(false);
+          }
         }
       }
     }
-    // 中庭が空検証にならない(規模の大きい類型では現れる)
+    // 中庭が空検証にならない
     expect(courtyards).toBeGreaterThan(0);
   });
 });
@@ -210,6 +255,24 @@ describe("center: スカイライン契約(周辺最高点 × skylineRatio)", ()
     }
   });
 
+  it("担い手はアクセント塔のみ: 屋根量塊の最高点は塔頂より明確に低い", () => {
+    for (const seed of SEEDS) {
+      for (const over of [ARCANE, AUTHORITY] as Partial<Params>[]) {
+        const b = center(cached(seed, over));
+        const top = buildingTopY(b);
+        // 壁(量塊の躯体)の最高点は塔頂の 0.7 倍以下
+        let wallTop = 0;
+        for (const p of partsOf(b, "wall")) {
+          wallTop = Math.max(
+            wallTop,
+            p.transform.position[1] + p.transform.scale[1],
+          );
+        }
+        expect(wallTop).toBeLessThanOrEqual(top * 0.7);
+      }
+    }
+  });
+
   it("Monumentality 30 → 95 で footprint の規模が広がる", () => {
     for (const seed of SEEDS) {
       const small = Math.abs(
@@ -223,8 +286,8 @@ describe("center: スカイライン契約(周辺最高点 × skylineRatio)", ()
   });
 });
 
-describe("center: 4軸の組み合わせ分岐(implementation-spec 1.7節)", () => {
-  it("(Mon高, Arc高) → 魔導系: 支配軸 arcane、水晶+細長い主塔+発光開口+紋様", () => {
+describe("center: 4軸 → 敷地計画の型(contracts 4軸表)", () => {
+  it("(Mon高, Arc高) → 聖域: 支配軸 arcane、水晶の鐘楼+発光開口+紋様", () => {
     for (const seed of SEEDS) {
       const model = cached(seed, ARCANE);
       const b = center(model);
@@ -232,27 +295,20 @@ describe("center: 4軸の組み合わせ分岐(implementation-spec 1.7節)", () 
       expect(partsOf(b, "crystal").length).toBeGreaterThanOrEqual(1);
       expect(partsOf(b, "glow-window").length).toBeGreaterThanOrEqual(1);
       expect(partsOf(b, "sigil").length).toBeGreaterThanOrEqual(1);
-      // 主塔は細長い(様式言語: 高さ / 幅 ≥ 5)
-      const towers = partsOf(b, "tower");
-      expect(towers.length).toBeGreaterThanOrEqual(1);
-      const tallest = towers.reduce((a, t) =>
-        t.transform.scale[1] > a.transform.scale[1] ? t : a,
-      );
-      expect(
-        tallest.transform.scale[1] / tallest.transform.scale[0],
-      ).toBeGreaterThanOrEqual(5);
       // 素材は石造系+スレート(契約の表)
       expect(["stone", "ashlar"]).toContain(b.materials.wall);
       expect(b.materials.roof).toBe("slate");
     }
   });
 
-  it("(Mon高, Arc低, Pro高) → 権威系: 支配軸 authority、双塔+尖塔+大型開口、発光なし", () => {
+  it("(Mon高, Arc低, Pro高) → 城郭: 支配軸 authority、胸壁+門楼+尖塔群、発光なし", () => {
     for (const seed of SEEDS) {
       const model = cached(seed, AUTHORITY);
       const b = center(model);
       expect(rankCenterAxes(model.centerPlan.axes).dominant).toBe("authority");
-      expect(partsOf(b, "tower").length).toBeGreaterThanOrEqual(2);
+      // 城郭の記号: 胸壁+門楼(アーチ)+隅塔・天守の尖塔
+      expect(partsOf(b, "battlement").length).toBeGreaterThanOrEqual(1);
+      expect(partsOf(b, "arch").length).toBeGreaterThanOrEqual(1);
       expect(partsOf(b, "spire").length).toBeGreaterThanOrEqual(2);
       // 大型開口(薔薇窓または尖頭窓)が整列して現れる
       const bigOpenings =
@@ -265,19 +321,19 @@ describe("center: 4軸の組み合わせ分岐(implementation-spec 1.7節)", () 
     }
   });
 
-  it("(Mon中, Water高) → 水辺系: 支配軸 waterside、館+塔(瓦屋根)", () => {
+  it("(Mon中, Water高) → 湖畔の荘園: 支配軸 waterside、館+塔(瓦屋根)", () => {
     for (const seed of SEEDS) {
       const model = cached(seed, WATERSIDE);
       const b = center(model);
       expect(rankCenterAxes(model.centerPlan.axes).dominant).toBe("waterside");
-      expect(partsOf(b, "tower").length).toBeGreaterThanOrEqual(1);
+      expect(partsOf(b, "tower").length).toBeGreaterThanOrEqual(2);
       expect(partsOf(b, "spire").length).toBeGreaterThanOrEqual(1);
       expect(b.materials.wall).toBe("stone");
       expect(b.materials.roof).toBe("tile");
     }
   });
 
-  it("(Mon低, Set低) → 素朴系: 支配軸 rustic、大農家+物見塔(木造)", () => {
+  it("(Mon低, Set低) → 農場屋敷: 支配軸 rustic、柵囲い+木の物見塔", () => {
     for (const seed of SEEDS) {
       const model = cached(seed, RUSTIC);
       const b = center(model);
@@ -285,6 +341,8 @@ describe("center: 4軸の組み合わせ分岐(implementation-spec 1.7節)", () 
       expect(b.floors).toBeLessThanOrEqual(2);
       expect(["rough-wood", "plaster"]).toContain(b.materials.wall);
       expect(["thatch", "shingle"]).toContain(b.materials.roof);
+      // 柵囲い(木部)
+      expect(partsOf(b, "fence").length).toBeGreaterThanOrEqual(1);
       // 物見塔(木造)+ 尖り屋根
       const towers = partsOf(b, "tower");
       expect(towers.some((t) => t.materialId === "rough-wood")).toBe(true);
@@ -330,7 +388,7 @@ describe("center: 発光の規律(art-direction 5.4節)", () => {
     }
   });
 
-  it("Arcana 低(権威・素朴系)では発光部品が存在しない(発光は魔法のみ)", () => {
+  it("Arcana 低(城郭・農場屋敷)では発光部品が存在しない(発光は魔法のみ)", () => {
     for (const seed of SEEDS) {
       for (const over of [AUTHORITY, RUSTIC]) {
         const b = center(cached(seed, over));

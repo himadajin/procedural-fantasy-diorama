@@ -12,6 +12,7 @@
  */
 import {
   DEFAULT_PARAMS,
+  type Building,
   type BuildingRole,
   type Params,
   type Parcel,
@@ -23,11 +24,15 @@ import {
 } from "../model/worldmodel";
 import { hashWorldModel } from "../model/hash";
 import { ensureClockwise } from "../model/geometry";
+import { makeRng } from "../rng";
 import { computeDerived } from "./derive";
 import { generateZoneMask } from "./ground";
 import { runPaving } from "./paving";
 import { createSiteContext } from "./parcels";
 import { buildParcelBuilding, SINGLE_BUILD_OPTIONS } from "./buildings";
+import { expandCenterBuilding } from "./center";
+import { AXIS_HEIGHT_FACTOR } from "./plazas";
+import { AXES_JITTER } from "./siting";
 import {
   buildFarmlandFacility,
   buildPierFacility,
@@ -408,9 +413,143 @@ function buildSinglePierWorld(seed: string, params: Params): WorldModel {
   return model;
 }
 
+// --- 中心建築対象の極小ワールド(契約「中心建築対象の合成規約」) ---
+/**
+ * 仮想の周辺最高点(一般建物の代表値 = 2 階+屋根相当)。周辺一般建物の
+ * 無い極小ワールドでもスカイライン契約(周辺最高点 × skylineRatio)の
+ * 比率が本番に近づくよう、合成入力として与える
+ */
+const CENTER_PERIPHERAL_TOP = 9;
+/**
+ * 中心建築対象の背面池。waterside 軸の成立(水辺近接度 = 1)と水際の
+ * 造形(水面プローブ・接地契約)のために常設する。centerPlan.footprint
+ * (最大 44 → 半辺 22)と重ならない距離に置く
+ */
+const CENTER_POND_FRONT_Z = 25; // 開放辺判定(waterside の背面開放・船小屋)が届く距離。footprint(半辺最大 22)とは重ならない
+const CENTER_POND_DEPTH = 16;
+const CENTER_POND_HALF_WIDTH = 30;
+
+/**
+ * 極小ワールドを合成し、本番の中心建築生成関数(`expandCenterBuilding`)
+ * のみで対象を 1 棟生成する。centerPlan は段4(立地)・段9(広場)が
+ * 確定する値に相当する最小限を合成する: axes は段4 と同一式・
+ * 同一ストリーム(`"siting/axes"`。水辺近接度は常設池のため 1)、
+ * heightHint は段9 と同一式(`AXIS_HEIGHT_FACTOR`)。
+ * 中庭 Plaza は `expandCenterBuilding` が本番どおり model.plazas へ追記する
+ */
+function buildSingleCenterWorld(seed: string, params: Params): WorldModel {
+  const model = createEmptyWorldModel(seed, params);
+  model.meta.derived = computeDerived(seed, params);
+  model.ground.boundary = createGalleryBoundary();
+  model.ground.size = WORLD_HALF_EXTENT * 2;
+  model.ground.zoneMask = generateZoneMask(seed, model.ground.size);
+
+  // 背面(+z)の常設池
+  const pondHalf = CENTER_POND_HALF_WIDTH;
+  const pz0 = CENTER_POND_FRONT_Z;
+  model.water.ponds = [
+    ensureClockwise([
+      { x: -pondHalf, z: pz0 },
+      { x: pondHalf, z: pz0 },
+      { x: pondHalf, z: pz0 + CENTER_POND_DEPTH },
+      { x: -pondHalf, z: pz0 + CENTER_POND_DEPTH },
+    ]),
+  ];
+
+  // centerPlan の合成(位置 = 原点、footprint = 軸平行正方形、
+  // facing = −π/2 = 他対象と同じ「正面が順光」の向き)
+  const half = model.meta.derived.centerFootprint / 2;
+  model.centerPlan.position = { x: 0, z: 0 };
+  model.centerPlan.footprint = ensureClockwise([
+    { x: -half, z: -half },
+    { x: half, z: -half },
+    { x: half, z: half },
+    { x: -half, z: half },
+  ]);
+  model.centerPlan.facing = -Math.PI / 2;
+
+  // 4軸スコア(段4 と同一式・同一ストリーム。implementation-spec 1.7節)
+  const rng = makeRng(seed, "siting/axes");
+  const monument = params.monumentality / 100;
+  const prosper = params.prosperity / 100;
+  const water = params.water / 100;
+  const settle = params.settlement / 100;
+  model.centerPlan.axes = {
+    arcane: Math.max(
+      0,
+      monument * model.meta.derived.centerArcaneBias +
+        rng.range(-AXES_JITTER, AXES_JITTER),
+    ),
+    authority: Math.max(
+      0,
+      monument * prosper + rng.range(-AXES_JITTER, AXES_JITTER),
+    ),
+    waterside: Math.max(
+      0,
+      monument * water * 1 + rng.range(-AXES_JITTER, AXES_JITTER),
+    ),
+    rustic: Math.max(
+      0,
+      (1 - monument) * (1 - settle) + rng.range(-AXES_JITTER, AXES_JITTER),
+    ),
+  };
+
+  // heightHint(段9 と同一式)
+  const axes = model.centerPlan.axes;
+  let dominant: keyof typeof AXIS_HEIGHT_FACTOR = "arcane";
+  let bestAxis = axes.arcane;
+  for (const key of ["authority", "waterside", "rustic"] as const) {
+    if (axes[key] > bestAxis) {
+      bestAxis = axes[key];
+      dominant = key;
+    }
+  }
+  model.centerPlan.heightHint =
+    model.meta.derived.centerHeight * AXIS_HEIGHT_FACTOR[dominant];
+
+  // スカイライン契約の入力: 仮想の周辺最高点を表す合成 Building 1 棟
+  // (model.buildings には含めない。expandCenterBuilding の引数のみ)
+  const peripheral: Building = {
+    id: "building/gallery-peripheral",
+    parcelId: null,
+    spanParcelIds: [],
+    role: "house",
+    footprint: [],
+    facing: 0,
+    floors: 2,
+    roof: { type: "gable", pitch: 52 },
+    foundation: {
+      kind: "plinth",
+      plinthHeight: 0,
+      overWater: false,
+      bottomY: 0,
+    },
+    materials: { wall: "stone", roof: "tile", trim: "wood" },
+    parts: [
+      {
+        type: "wall",
+        transform: {
+          position: [0, 0, 0],
+          rotation: 0,
+          scale: [1, CENTER_PERIPHERAL_TOP, 1],
+        },
+        materialId: "stone",
+      },
+    ],
+  };
+
+  const ctx = createSiteContext(model);
+  model.buildings = [expandCenterBuilding(model, ctx, [peripheral]).building];
+
+  runSummary(model);
+  model.summary.hash = hashWorldModel(model);
+  return model;
+}
+
 /**
  * 対象id → 極小ワールド合成関数の対応表(契約「対象idの体系」)。
- * 一般建物の全 role(`BuildingRole` から "center" を除いた6つ)と、
+ * 一般建物の全 role(`BuildingRole` から "center" を除いた6つ)、
+ * 中心建築(`building/center`)、
  * 施設の全 7 kind(`facility/field` / `facility/pasture` / `facility/well` /
  * `facility/stall` / `facility/windmill` / `facility/watermill` /
  * `facility/pier`)を対象とする。
@@ -430,6 +569,7 @@ const GALLERY_TARGETS: Readonly<
     buildSingleBuildingWorld(seed, params, "warehouse"),
   "building/outskirt": (seed, params) =>
     buildSingleBuildingWorld(seed, params, "outskirt"),
+  "building/center": buildSingleCenterWorld,
   "facility/field": (seed, params) =>
     buildSingleFacilityWorld(seed, params, "field"),
   "facility/pasture": (seed, params) =>
